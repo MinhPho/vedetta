@@ -2,6 +2,7 @@ package camera
 
 import (
 	"context"
+	"sort"
 	"sync"
 
 	"github.com/rvben/watchpost/internal/config"
@@ -64,4 +65,19 @@ func (m *Manager) ListCameras() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// CameraStatuses returns the status of all managed cameras, sorted by name.
+func (m *Manager) CameraStatuses() []CameraStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	statuses := make([]CameraStatus, 0, len(m.cameras))
+	for _, cam := range m.cameras {
+		statuses = append(statuses, cam.Status())
+	}
+	sort.Slice(statuses, func(i, j int) bool {
+		return statuses[i].Name < statuses[j].Name
+	})
+	return statuses
 }

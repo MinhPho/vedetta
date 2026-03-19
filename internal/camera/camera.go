@@ -37,7 +37,16 @@ type Camera struct {
 	mu              sync.RWMutex
 	lastSnapshot    *image.RGBA
 	lastMotion      time.Time
+	lastFrameTime   time.Time
 	confirmedTracks map[int]bool
+}
+
+// CameraStatus represents the current status of a camera.
+type CameraStatus struct {
+	Name      string `json:"name"`
+	Online    bool   `json:"online"`
+	HasMotion bool   `json:"has_motion"`
+	LastFrame time.Time `json:"last_frame"`
 }
 
 func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, hwaccel *HWAccel) *Camera {
@@ -153,6 +162,7 @@ func (c *Camera) runFFmpeg(ctx context.Context) error {
 
 		c.mu.Lock()
 		c.lastSnapshot = img
+		c.lastFrameTime = time.Now()
 		c.mu.Unlock()
 
 		// Contour-based motion detection
@@ -196,6 +206,32 @@ func (c *Camera) runFFmpeg(ctx context.Context) error {
 				}
 			}
 		}
+	}
+}
+
+// IsOnline returns true if a frame was received within the last 10 seconds.
+func (c *Camera) IsOnline() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return !c.lastFrameTime.IsZero() && time.Since(c.lastFrameTime) < 10*time.Second
+}
+
+// HasMotion returns true if motion was detected within the last 5 seconds.
+func (c *Camera) HasMotion() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return !c.lastMotion.IsZero() && time.Since(c.lastMotion) < 5*time.Second
+}
+
+// Status returns the current status of the camera.
+func (c *Camera) Status() CameraStatus {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return CameraStatus{
+		Name:      c.config.Name,
+		Online:    !c.lastFrameTime.IsZero() && time.Since(c.lastFrameTime) < 10*time.Second,
+		HasMotion: !c.lastMotion.IsZero() && time.Since(c.lastMotion) < 5*time.Second,
+		LastFrame: c.lastFrameTime,
 	}
 }
 
