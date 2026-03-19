@@ -37,7 +37,56 @@ func (r *Recorder) runCleanup() {
 
 	r.cleanSegments(segmentCutoff)
 	r.cleanClips(eventCutoff)
+	r.enforceStorageCap()
 	r.cleanEmptyDirs()
+}
+
+// enforceStorageCap deletes the oldest segments until total storage is under the configured cap.
+func (r *Recorder) enforceStorageCap() {
+	cap := r.config.MaxStorageBytes
+	if cap <= 0 {
+		return
+	}
+
+	totalBytes, err := r.db.TotalStorageBytes()
+	if err != nil {
+		slog.Error("failed to query total storage for cap enforcement", "error", err)
+		return
+	}
+
+	if totalBytes <= cap {
+		return
+	}
+
+	slog.Warn("storage exceeds cap, removing oldest segments",
+		"total", totalBytes,
+		"cap", cap,
+	)
+
+	for _, cameraName := range r.listCameras() {
+		segments := r.segments.AllSegments(cameraName)
+		for _, seg := range segments {
+			if totalBytes <= cap {
+				return
+			}
+
+			info, err := os.Stat(seg.Path)
+			if err != nil {
+				continue
+			}
+			size := info.Size()
+
+			slog.Debug("removing segment for storage cap",
+				"camera", cameraName,
+				"path", seg.Path,
+			)
+			if err := r.segments.RemoveSegment(cameraName, seg.Path); err != nil {
+				slog.Error("failed to remove segment", "path", seg.Path, "error", err)
+				continue
+			}
+			totalBytes -= size
+		}
+	}
 }
 
 func (r *Recorder) cleanSegments(cutoff time.Time) {
