@@ -25,9 +25,10 @@ type Segment struct {
 
 // SegmentRecorder continuously records RTSP streams into fixed-length segments.
 type SegmentRecorder struct {
-	config  config.RecordingConfig
-	baseDir string
-	db      *storage.DB
+	config     config.RecordingConfig
+	baseDir    string
+	db         *storage.DB
+	audioCodec map[string]string // camera name → detected audio codec (e.g. "aac", "pcm_alaw")
 }
 
 func NewSegmentRecorder(cfg config.RecordingConfig, db *storage.DB) *SegmentRecorder {
@@ -36,9 +37,10 @@ func NewSegmentRecorder(cfg config.RecordingConfig, db *storage.DB) *SegmentReco
 		baseDir = abs
 	}
 	return &SegmentRecorder{
-		config:  cfg,
-		baseDir: baseDir,
-		db:      db,
+		config:     cfg,
+		baseDir:    baseDir,
+		db:         db,
+		audioCodec: make(map[string]string),
 	}
 }
 
@@ -50,7 +52,33 @@ func (sr *SegmentRecorder) StartRecording(ctx context.Context, cameraName, rtspU
 		return
 	}
 
+	// Probe the stream's audio codec so we can decide copy vs transcode
+	codec := probeAudioCodec(rtspURL)
+	sr.audioCodec[cameraName] = codec
+	slog.Info("detected audio codec", "camera", cameraName, "codec", codec)
+
 	go sr.recordLoop(ctx, cameraName, rtspURL, segDir)
+}
+
+// probeAudioCodec uses ffprobe to detect the audio codec of an RTSP stream.
+// Returns the codec name (e.g. "aac", "pcm_alaw") or empty string if no audio or probe fails.
+func probeAudioCodec(rtspURL string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ffprobe",
+		"-v", "error",
+		"-rtsp_transport", "tcp",
+		"-select_streams", "a:0",
+		"-show_entries", "stream=codec_name",
+		"-of", "csv=p=0",
+		rtspURL,
+	)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func (sr *SegmentRecorder) recordLoop(ctx context.Context, cameraName, rtspURL, segDir string) {
@@ -66,22 +94,42 @@ func (sr *SegmentRecorder) recordLoop(ctx context.Context, cameraName, rtspURL, 
 			slog.Error("failed to ensure segment directory", "dir", segDir, "error", err)
 		}
 
-		startTime := time.Now()
-		segPath := filepath.Join(segDir, fmt.Sprintf("%s.mp4", startTime.Format("2006-01-02_15-04-05")))
-
-		duration := sr.config.SegmentLength
-		if duration == 0 {
-			duration = 10 * time.Minute
+		segmentLen := sr.config.SegmentLength
+		if segmentLen == 0 {
+			segmentLen = 10 * time.Minute
 		}
+
+		// Align to clock boundaries: if segment length is 10m, align to :00, :10, :20, etc.
+		startTime := time.Now()
+		nextBoundary := startTime.Truncate(segmentLen).Add(segmentLen)
+		duration := nextBoundary.Sub(startTime)
+		if duration < 10*time.Second {
+			// Too close to boundary, skip to the next one
+			duration += segmentLen
+		}
+
+		segPath := filepath.Join(segDir, fmt.Sprintf("%s.mp4", startTime.Format("2006-01-02_15-04-05")))
 
 		slog.Debug("starting segment", "camera", cameraName, "path", segPath)
 
-		err := sr.recordSegment(ctx, rtspURL, segPath, duration)
+		err := sr.recordSegment(ctx, cameraName, rtspURL, segPath, duration)
 
 		endTime := time.Now()
 
 		// Register the segment even if ffmpeg exited early (partial segment)
 		if info, statErr := os.Stat(segPath); statErr == nil {
+			sizeBefore := info.Size()
+
+			// Remux fMP4 → regular MP4 with faststart for better playback and smaller size
+			if remuxErr := remuxToFaststart(segPath); remuxErr != nil {
+				slog.Warn("remux failed, keeping fragmented version", "path", segPath, "error", remuxErr)
+			}
+
+			// Re-stat after remux (size may have changed)
+			if remuxInfo, err := os.Stat(segPath); err == nil {
+				info = remuxInfo
+			}
+
 			rec := storage.SegmentRecord{
 				Camera:    cameraName,
 				Path:      segPath,
@@ -94,8 +142,11 @@ func (sr *SegmentRecorder) recordLoop(ctx context.Context, cameraName, rtspURL, 
 				slog.Error("failed to save segment to database", "path", segPath, "error", dbErr)
 			}
 
+			saved := sizeBefore - info.Size()
 			slog.Debug("segment completed", "camera", cameraName, "path", segPath,
-				"duration", endTime.Sub(startTime).Round(time.Second))
+				"duration", endTime.Sub(startTime).Round(time.Second),
+				"size", info.Size(),
+				"remux_saved", saved)
 		}
 
 		if err != nil {
@@ -112,32 +163,63 @@ func (sr *SegmentRecorder) recordLoop(ctx context.Context, cameraName, rtspURL, 
 	}
 }
 
-func (sr *SegmentRecorder) recordSegment(ctx context.Context, rtspURL, outputPath string, duration time.Duration) error {
+func (sr *SegmentRecorder) recordSegment(ctx context.Context, cameraName, rtspURL, outputPath string, duration time.Duration) error {
 	segCtx, cancel := context.WithTimeout(ctx, duration+30*time.Second)
 	defer cancel()
+
+	// Use -c:a copy when audio is already AAC (saves CPU), otherwise transcode
+	audioCodecArg := "aac"
+	if sr.audioCodec[cameraName] == "aac" {
+		audioCodecArg = "copy"
+	}
 
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "error",
 		"-rtsp_transport", "tcp",
 		"-use_wallclock_as_timestamps", "1",
-	}
-	// Note: hwaccel args are intentionally omitted here.
-	// Segment recording uses -c copy (remuxing), so no decoding occurs.
-	args = append(args,
 		"-i", rtspURL,
 		"-t", fmt.Sprintf("%.0f", duration.Seconds()),
 		"-c:v", "copy",
-		"-c:a", "aac",
+		"-c:a", audioCodecArg,
 		"-movflags", "frag_keyframe+empty_moov",
 		"-y",
 		outputPath,
-	)
+	}
 
 	cmd := exec.CommandContext(segCtx, "ffmpeg", args...)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg segment: %w: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// remuxToFaststart re-wraps a fragmented MP4 into a regular MP4 with the moov atom
+// at the front (faststart). This reduces file size (~10-15%) and enables instant playback.
+func remuxToFaststart(path string) error {
+	tmpPath := path + ".remux.mp4"
+
+	cmd := exec.Command("ffmpeg",
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", path,
+		"-c", "copy",
+		"-movflags", "+faststart",
+		"-y",
+		tmpPath,
+	)
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("ffmpeg remux: %w: %s", err, string(output))
+	}
+
+	// Atomic replace: rename tmp over the original
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename remuxed file: %w", err)
 	}
 
 	return nil

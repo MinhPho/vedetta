@@ -47,13 +47,14 @@ type DetectConfig struct {
 }
 
 type RecordingConfig struct {
-	Path          string        `yaml:"path"`
-	PreCapture    time.Duration `yaml:"pre_capture"`
-	PostCapture   time.Duration `yaml:"post_capture"`
-	RetainDays    int           `yaml:"retain_days"`
-	EventRetain   int           `yaml:"event_retain_days"` // Keep event clips longer than continuous
-	SegmentLength time.Duration `yaml:"segment_length"`
-	Continuous    bool          `yaml:"continuous"` // Record continuously, not just events
+	Path            string        `yaml:"path"`
+	PreCapture      time.Duration `yaml:"pre_capture"`
+	PostCapture     time.Duration `yaml:"post_capture"`
+	RetainDays      int           `yaml:"retain_days"`
+	EventRetain     int           `yaml:"event_retain_days"`  // Keep event clips longer than continuous
+	SegmentLength   time.Duration `yaml:"segment_length"`
+	Continuous      bool          `yaml:"continuous"`         // Record continuously, not just events
+	MaxStorageBytes int64         `yaml:"max_storage_bytes"`  // 0 = unlimited; triggers early cleanup when exceeded
 }
 
 type EventConfig struct {
