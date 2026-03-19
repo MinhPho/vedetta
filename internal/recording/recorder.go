@@ -14,6 +14,13 @@ import (
 	"github.com/rvben/watchpost/internal/storage"
 )
 
+// StorageStats contains aggregate storage information.
+type StorageStats struct {
+	TotalBytes   int64            `json:"total_bytes"`
+	SegmentCount int              `json:"segment_count"`
+	CameraStats  map[string]int64 `json:"camera_stats"`
+}
+
 // Recorder manages saving video clips for detected events.
 type Recorder struct {
 	config     config.RecordingConfig
@@ -98,4 +105,48 @@ func (r *Recorder) recordFromStream(ctx context.Context, rtspURL, outputPath str
 	}
 
 	return nil
+}
+
+// StorageStats queries the database for aggregate storage information.
+func (r *Recorder) StorageStats() StorageStats {
+	stats := StorageStats{
+		CameraStats: make(map[string]int64),
+	}
+
+	totalBytes, err := r.db.TotalSegmentBytes()
+	if err != nil {
+		slog.Error("failed to query total segment bytes", "error", err)
+	} else {
+		stats.TotalBytes = totalBytes
+	}
+
+	count, err := r.db.CountSegments()
+	if err != nil {
+		slog.Error("failed to query segment count", "error", err)
+	} else {
+		stats.SegmentCount = count
+	}
+
+	byCamera, err := r.db.SegmentBytesByCamera()
+	if err != nil {
+		slog.Error("failed to query segment bytes by camera", "error", err)
+	} else {
+		stats.CameraStats = byCamera
+	}
+
+	return stats
+}
+
+// ListSegmentsForDate returns segments for a camera on a specific date.
+func (r *Recorder) ListSegmentsForDate(cameraName string, date time.Time) []storage.SegmentRecord {
+	segments, err := r.db.GetSegmentsForDate(cameraName, date)
+	if err != nil {
+		slog.Error("failed to query segments for date",
+			"camera", cameraName,
+			"date", date,
+			"error", err,
+		)
+		return nil
+	}
+	return segments
 }
