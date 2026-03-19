@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watchpost</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="/" class="nav-brand">Watchpost</a>
+    <div class="nav-links">
+      <a href="/" class="nav-link active">Cameras</a>
+      <a href="/events.html" class="nav-link">Events</a>
+    </div>
+    <div class="nav-status">
+      <span class="status-dot online"></span>
+      <span>System Online</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-header">
+      <h1>Cameras</h1>
+    </header>
+
+    <div class="camera-grid"
+         hx-get="/partials/camera-grid"
+         hx-trigger="load, every 2s"
+         hx-swap="innerHTML">
+      <div class="loading">Loading cameras...</div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

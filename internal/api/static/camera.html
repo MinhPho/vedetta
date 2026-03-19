@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera - Watchpost</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="/" class="nav-brand">Watchpost</a>
+    <div class="nav-links">
+      <a href="/" class="nav-link active">Cameras</a>
+      <a href="/events.html" class="nav-link">Events</a>
+    </div>
+    <div class="nav-status">
+      <span class="status-dot online"></span>
+      <span>System Online</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-header">
+      <a href="/" class="back-link">Back to Cameras</a>
+      <h1 id="camera-title">Camera</h1>
+    </header>
+
+    <div class="camera-detail">
+      <div class="live-view-container">
+        <div class="live-view-controls">
+          <button id="btn-webrtc" class="btn btn-primary" onclick="startWebRTC()">WebRTC Live</button>
+          <button id="btn-mjpeg" class="btn btn-secondary" onclick="startMJPEG()">MJPEG Fallback</button>
+          <button id="btn-stop" class="btn btn-secondary" onclick="stopStream()" style="display:none">Stop</button>
+        </div>
+
+        <div class="live-view">
+          <video id="live-video" autoplay playsinline muted style="display:none"></video>
+          <img id="live-mjpeg" style="display:none" alt="MJPEG stream">
+          <img id="live-snapshot" alt="Latest snapshot" class="snapshot-img">
+        </div>
+      </div>
+
+      <section class="camera-events">
+        <h2>Recent Events</h2>
+        <div id="camera-events-list"
+             class="event-list"
+             hx-swap="innerHTML">
+          <div class="loading">Loading events...</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const cameraName = params.get('name');
+
+    if (cameraName) {
+      document.getElementById('camera-title').textContent = cameraName;
+      document.title = cameraName + ' - Watchpost';
+
+      // Load snapshot
+      const snap = document.getElementById('live-snapshot');
+      snap.src = '/api/cameras/' + encodeURIComponent(cameraName) + '/snapshot';
+      // Refresh snapshot every 2s when not streaming
+      setInterval(function() {
+        if (snap.style.display !== 'none') {
+          snap.src = '/api/cameras/' + encodeURIComponent(cameraName) + '/snapshot?t=' + Date.now();
+        }
+      }, 2000);
+
+      // Load recent events
+      const eventsList = document.getElementById('camera-events-list');
+      eventsList.setAttribute('hx-get', '/partials/events?camera=' + encodeURIComponent(cameraName) + '&limit=20');
+      eventsList.setAttribute('hx-trigger', 'load');
+      htmx.process(eventsList);
+    }
+  </script>
+</body>
+</html>

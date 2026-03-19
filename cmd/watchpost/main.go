@@ -19,6 +19,12 @@ import (
 )
 
 func main() {
+	// Handle subcommands before flag parsing
+	if len(os.Args) > 1 && os.Args[1] == "discover" {
+		runDiscover()
+		return
+	}
+
 	configPath := flag.String("config", "config.yml", "path to configuration file")
 	flag.Parse()
 
@@ -55,7 +61,15 @@ func main() {
 
 	detector := detect.New(cfg.Detect)
 	defer detector.Close()
-	recorder := recording.New(cfg.Recording, db)
+
+	hwaccel := camera.DetectHWAccel()
+	if hwaccel != nil {
+		slog.Info("hardware acceleration detected", "backend", hwaccel.Name)
+	} else {
+		slog.Info("no hardware acceleration available, using CPU decoding")
+	}
+
+	recorder := recording.New(cfg.Recording, db, hwaccel)
 
 	// Register cameras for recording
 	for _, cam := range cfg.Cameras {
@@ -75,7 +89,7 @@ func main() {
 
 	events := make(chan camera.Event, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, events)
+	manager := camera.NewManager(cfg.Cameras, detector, events, hwaccel)
 	manager.Start(ctx)
 
 	// Process events: record clips and publish to MQTT

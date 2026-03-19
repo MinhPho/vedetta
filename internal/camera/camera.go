@@ -27,20 +27,28 @@ type Event struct {
 
 // Camera manages a single RTSP camera stream.
 type Camera struct {
-	config   config.CameraConfig
-	detector *detect.Detector
-	events   chan<- Event
+	config         config.CameraConfig
+	detector       *detect.Detector
+	tracker        *detect.Tracker
+	motionDetector *detect.MotionDetector
+	events         chan<- Event
+	hwaccel        *HWAccel
 
-	mu           sync.RWMutex
-	lastSnapshot *image.RGBA
-	lastMotion   time.Time
+	mu              sync.RWMutex
+	lastSnapshot    *image.RGBA
+	lastMotion      time.Time
+	confirmedTracks map[int]bool
 }
 
-func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event) *Camera {
+func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, hwaccel *HWAccel) *Camera {
 	return &Camera{
-		config:   cfg,
-		detector: detector,
-		events:   events,
+		config:          cfg,
+		detector:        detector,
+		tracker:         detect.NewTracker(30, 3),
+		motionDetector:  detect.NewMotionDetector(25, 200, 0.05),
+		events:          events,
+		hwaccel:         hwaccel,
+		confirmedTracks: make(map[int]bool),
 	}
 }
 
@@ -98,16 +106,21 @@ func (c *Camera) runFFmpeg(ctx context.Context) error {
 	h := c.config.Detect.Height
 	fps := c.config.Detect.FPS
 
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	args := []string{
 		"-hide_banner",
 		"-loglevel", "error",
 		"-rtsp_transport", "tcp",
+	}
+	args = append(args, c.hwaccel.FFmpegArgs()...)
+	args = append(args,
 		"-i", c.config.URL,
 		"-vf", fmt.Sprintf("fps=%d,scale=%d:%d", fps, w, h),
 		"-pix_fmt", "rgb24",
 		"-f", "rawvideo",
 		"-",
 	)
+
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -120,7 +133,6 @@ func (c *Camera) runFFmpeg(ctx context.Context) error {
 
 	frameSize := w * h * 3 // RGB24
 	buf := make([]byte, frameSize)
-	var prevFrame []byte
 
 	for {
 		select {
@@ -143,34 +155,47 @@ func (c *Camera) runFFmpeg(ctx context.Context) error {
 		c.lastSnapshot = img
 		c.mu.Unlock()
 
-		// Motion detection
-		if prevFrame != nil {
-			motion := detect.MotionScore(prevFrame, buf)
-			if motion > c.detector.MotionThreshold() {
-				c.mu.Lock()
-				c.lastMotion = time.Now()
-				c.mu.Unlock()
+		// Contour-based motion detection
+		motionRegions := c.motionDetector.Detect(buf, w, h)
+		if len(motionRegions) > 0 {
+			c.mu.Lock()
+			c.lastMotion = time.Now()
+			c.mu.Unlock()
 
-				// Run object detection
-				detections := c.detector.Detect(img)
-				for _, d := range detections {
+			// Run object detection on the full frame when motion is detected.
+			// The motion regions tell us WHERE motion is, but the YOLO model
+			// expects a full frame (it handles its own letterboxing/scaling).
+			detections := c.detector.Detect(img)
+			tracked := c.tracker.Update(detections)
+
+			// Emit events for newly confirmed tracks
+			for _, obj := range tracked {
+				if !c.confirmedTracks[obj.TrackID] {
+					c.confirmedTracks[obj.TrackID] = true
 					c.events <- Event{
-						ID:         fmt.Sprintf("%s-%d", c.config.Name, time.Now().UnixMilli()),
+						ID:         fmt.Sprintf("%s-t%d-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli()),
 						CameraName: c.config.Name,
-						Label:      d.Label,
-						Score:      d.Score,
-						Box:        d.Box,
+						Label:      obj.Label,
+						Score:      obj.Score,
+						Box:        obj.Box,
 						Timestamp:  time.Now(),
 					}
 				}
 			}
-		}
 
-		// Keep a copy for next frame's motion comparison
-		if prevFrame == nil {
-			prevFrame = make([]byte, frameSize)
+			// Emit end events for deleted tracks
+			for _, obj := range c.tracker.DeletedTracks() {
+				delete(c.confirmedTracks, obj.TrackID)
+				c.events <- Event{
+					ID:         fmt.Sprintf("%s-t%d-end-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli()),
+					CameraName: c.config.Name,
+					Label:      obj.Label,
+					Score:      obj.Score,
+					Box:        obj.Box,
+					Timestamp:  time.Now(),
+				}
+			}
 		}
-		copy(prevFrame, buf)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/rvben/watchpost/internal/camera"
@@ -21,7 +22,7 @@ type Recorder struct {
 	cameraURLs map[string]string // camera name → record RTSP URL
 }
 
-func New(cfg config.RecordingConfig, db *storage.DB) *Recorder {
+func New(cfg config.RecordingConfig, db *storage.DB, hwaccel *camera.HWAccel) *Recorder {
 	if err := os.MkdirAll(cfg.Path, 0o755); err != nil {
 		slog.Error("failed to create recording directory", "path", cfg.Path, "error", err)
 	}
@@ -29,7 +30,7 @@ func New(cfg config.RecordingConfig, db *storage.DB) *Recorder {
 	return &Recorder{
 		config:     cfg,
 		db:         db,
-		segments:   NewSegmentRecorder(cfg),
+		segments:   NewSegmentRecorder(cfg, hwaccel, db),
 		cameraURLs: make(map[string]string),
 	}
 }
@@ -47,6 +48,8 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 	}
 
 	for name, url := range r.cameraURLs {
+		segDir := filepath.Join(r.config.Path, name, "segments")
+		r.segments.ScanExistingSegments(name, segDir)
 		r.segments.StartRecording(ctx, name, url)
 	}
 

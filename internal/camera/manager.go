@@ -13,24 +13,31 @@ type Manager struct {
 	cameras  map[string]*Camera
 	detector *detect.Detector
 	events   chan<- Event
+	hwaccel  *HWAccel
 	mu       sync.RWMutex
 }
 
-func NewManager(configs []config.CameraConfig, detector *detect.Detector, events chan<- Event) *Manager {
+func NewManager(configs []config.CameraConfig, detector *detect.Detector, events chan<- Event, hwaccel *HWAccel) *Manager {
 	m := &Manager{
 		cameras:  make(map[string]*Camera),
 		detector: detector,
 		events:   events,
+		hwaccel:  hwaccel,
 	}
 
 	for _, cfg := range configs {
 		if cfg.Enabled {
-			cam := NewCamera(cfg, detector, events)
+			cam := NewCamera(cfg, detector, events, hwaccel)
 			m.cameras[cfg.Name] = cam
 		}
 	}
 
 	return m
+}
+
+// HWAccelBackend returns the detected hardware acceleration, or nil for CPU-only.
+func (m *Manager) HWAccelBackend() *HWAccel {
+	return m.hwaccel
 }
 
 func (m *Manager) Start(ctx context.Context) {

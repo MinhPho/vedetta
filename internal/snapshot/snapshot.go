@@ -1,0 +1,162 @@
+package snapshot
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/jpeg"
+	"os"
+	"path/filepath"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
+
+	"github.com/rvben/watchpost/internal/detect"
+)
+
+// Label colors by detection class
+var labelColors = map[string]color.RGBA{
+	"person":    {R: 255, G: 0, B: 0, A: 255},       // Red
+	"car":       {R: 0, G: 0, B: 255, A: 255},        // Blue
+	"truck":     {R: 0, G: 100, B: 255, A: 255},      // Light blue
+	"bicycle":   {R: 255, G: 165, B: 0, A: 255},      // Orange
+	"motorcycle":{R: 255, G: 100, B: 0, A: 255},      // Dark orange
+	"bus":       {R: 100, G: 0, B: 255, A: 255},      // Purple
+	"cat":       {R: 0, G: 255, B: 0, A: 255},        // Green
+	"dog":       {R: 0, G: 200, B: 100, A: 255},      // Teal
+	"bird":      {R: 255, G: 255, B: 0, A: 255},      // Yellow
+}
+
+var defaultColor = color.RGBA{R: 0, G: 255, B: 255, A: 255} // Cyan
+
+// DrawDetections draws bounding boxes and labels onto an image.
+func DrawDetections(img *image.RGBA, detections []detect.Detection) *image.RGBA {
+	bounds := img.Bounds()
+	out := image.NewRGBA(bounds)
+	draw.Draw(out, bounds, img, bounds.Min, draw.Src)
+
+	for _, d := range detections {
+		c := colorForLabel(d.Label)
+		drawBox(out, d.Box, c)
+		label := fmt.Sprintf("%s %.0f%%", d.Label, d.Score*100)
+		drawLabel(out, d.Box[0], d.Box[1]-2, label, c)
+	}
+
+	return out
+}
+
+func colorForLabel(label string) color.RGBA {
+	if c, ok := labelColors[label]; ok {
+		return c
+	}
+	return defaultColor
+}
+
+// drawBox draws a 2-pixel thick rectangle on the image.
+func drawBox(img *image.RGBA, box [4]int, c color.RGBA) {
+	x1, y1, x2, y2 := box[0], box[1], box[2], box[3]
+	bounds := img.Bounds()
+
+	// Clamp to image bounds
+	if x1 < bounds.Min.X { x1 = bounds.Min.X }
+	if y1 < bounds.Min.Y { y1 = bounds.Min.Y }
+	if x2 > bounds.Max.X { x2 = bounds.Max.X }
+	if y2 > bounds.Max.Y { y2 = bounds.Max.Y }
+
+	thickness := 2
+
+	// Top edge
+	for t := 0; t < thickness; t++ {
+		y := y1 + t
+		if y >= bounds.Max.Y { break }
+		for x := x1; x < x2; x++ {
+			img.SetRGBA(x, y, c)
+		}
+	}
+	// Bottom edge
+	for t := 0; t < thickness; t++ {
+		y := y2 - 1 - t
+		if y < bounds.Min.Y { break }
+		for x := x1; x < x2; x++ {
+			img.SetRGBA(x, y, c)
+		}
+	}
+	// Left edge
+	for t := 0; t < thickness; t++ {
+		x := x1 + t
+		if x >= bounds.Max.X { break }
+		for y := y1; y < y2; y++ {
+			img.SetRGBA(x, y, c)
+		}
+	}
+	// Right edge
+	for t := 0; t < thickness; t++ {
+		x := x2 - 1 - t
+		if x < bounds.Min.X { break }
+		for y := y1; y < y2; y++ {
+			img.SetRGBA(x, y, c)
+		}
+	}
+}
+
+// drawLabel draws text with a background rectangle above a bounding box.
+func drawLabel(img *image.RGBA, x, y int, text string, c color.RGBA) {
+	face := basicfont.Face7x13
+	textWidth := font.MeasureString(face, text).Ceil()
+	textHeight := face.Metrics().Height.Ceil()
+
+	// Background rectangle
+	bgY := y - textHeight
+	if bgY < 0 {
+		bgY = 0
+		y = textHeight
+	}
+
+	for by := bgY; by < y; by++ {
+		for bx := x; bx < x+textWidth+4; bx++ {
+			if bx >= 0 && bx < img.Bounds().Max.X && by >= 0 && by < img.Bounds().Max.Y {
+				img.SetRGBA(bx, by, c)
+			}
+		}
+	}
+
+	// Draw text in contrasting color
+	textColor := color.RGBA{R: 0, G: 0, B: 0, A: 255}
+	if c.R < 128 && c.G < 128 && c.B < 128 {
+		textColor = color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	}
+
+	drawer := &font.Drawer{
+		Dst:  img,
+		Src:  image.NewUniform(textColor),
+		Face: face,
+		Dot:  fixed.P(x+2, y-2),
+	}
+	drawer.DrawString(text)
+}
+
+// SaveSnapshot encodes an image as JPEG and writes it to disk.
+func SaveSnapshot(img *image.RGBA, path string, quality int) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	defer f.Close()
+
+	if quality <= 0 || quality > 100 {
+		quality = 85
+	}
+
+	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: quality}); err != nil {
+		return fmt.Errorf("encode jpeg: %w", err)
+	}
+
+	return nil
+}
