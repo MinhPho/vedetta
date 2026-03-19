@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Event Detail - Watchpost</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="/" class="nav-brand">Watchpost</a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Cameras</a>
+      <a href="/events.html" class="nav-link active">Events</a>
+    </div>
+    <div class="nav-status">
+      <span class="status-dot online"></span>
+      <span>System Online</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-header">
+      <a href="/events.html" class="back-link">Back to Events</a>
+      <h1>Event Detail</h1>
+    </header>
+
+    <div id="event-detail" class="event-detail">
+      <div class="loading">Loading event...</div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    if (id) {
+      const el = document.getElementById('event-detail');
+      el.setAttribute('hx-get', '/partials/event/' + encodeURIComponent(id));
+      el.setAttribute('hx-trigger', 'load');
+      el.setAttribute('hx-swap', 'innerHTML');
+      htmx.process(el);
+    }
+  </script>
+</body>
+</html>

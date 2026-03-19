@@ -12,6 +12,7 @@ type Config struct {
 	Cameras   []CameraConfig  `yaml:"cameras"`
 	Detect    DetectConfig    `yaml:"detect"`
 	Recording RecordingConfig `yaml:"recording"`
+	Events    EventConfig     `yaml:"events"`
 	Storage   StorageConfig   `yaml:"storage"`
 	MQTT      MQTTConfig      `yaml:"mqtt"`
 	API       APIConfig       `yaml:"api"`
@@ -55,6 +56,12 @@ type RecordingConfig struct {
 	Continuous    bool          `yaml:"continuous"` // Record continuously, not just events
 }
 
+type EventConfig struct {
+	CooldownSeconds int    `yaml:"cooldown_seconds"`
+	SnapshotPath    string `yaml:"snapshot_path"`
+	SnapshotQuality int    `yaml:"snapshot_quality"`
+}
+
 type StorageConfig struct {
 	DBPath string `yaml:"db_path"`
 }
@@ -92,6 +99,11 @@ func Load(path string) (*Config, error) {
 			EventRetain:   30,
 			SegmentLength: 10 * time.Minute,
 			Continuous:    true,
+		},
+		Events: EventConfig{
+			CooldownSeconds: 30,
+			SnapshotPath:    "./snapshots",
+			SnapshotQuality: 85,
 		},
 		Storage: StorageConfig{
 			DBPath: "./watchpost.db",

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Events - Watchpost</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="/" class="nav-brand">Watchpost</a>
+    <div class="nav-links">
+      <a href="/" class="nav-link">Cameras</a>
+      <a href="/events.html" class="nav-link active">Events</a>
+    </div>
+    <div class="nav-status">
+      <span class="status-dot online"></span>
+      <span>System Online</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-header">
+      <h1>Events</h1>
+    </header>
+
+    <div class="filter-bar">
+      <label for="filter-camera">Camera</label>
+      <select id="filter-camera" name="camera"
+              hx-get="/partials/events"
+              hx-trigger="change"
+              hx-target="#event-list"
+              hx-include="#filter-camera, #filter-label">
+        <option value="">All Cameras</option>
+      </select>
+
+      <label for="filter-label">Label</label>
+      <select id="filter-label" name="label"
+              hx-get="/partials/events"
+              hx-trigger="change"
+              hx-target="#event-list"
+              hx-include="#filter-camera, #filter-label">
+        <option value="">All Labels</option>
+        <option value="person">Person</option>
+        <option value="car">Car</option>
+        <option value="dog">Dog</option>
+        <option value="cat">Cat</option>
+      </select>
+    </div>
+
+    <div id="event-list" class="event-list"
+         hx-get="/partials/events"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="loading">Loading events...</div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    // Populate camera filter from API
+    fetch('/api/cameras')
+      .then(r => r.json())
+      .then(data => {
+        const select = document.getElementById('filter-camera');
+        (data.cameras || []).forEach(name => {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          select.appendChild(opt);
+        });
+      });
+  </script>
+</body>
+</html>

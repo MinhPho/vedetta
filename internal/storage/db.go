@@ -3,10 +3,21 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/rvben/watchpost/internal/camera"
 	_ "modernc.org/sqlite"
 )
+
+// SegmentRecord represents a recorded video segment stored in the database.
+type SegmentRecord struct {
+	ID        int64
+	Camera    string
+	Path      string
+	StartTime time.Time
+	EndTime   time.Time
+	SizeBytes int64
+}
 
 // DB wraps SQLite for event storage.
 type DB struct {
@@ -51,6 +62,17 @@ func migrate(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_events_camera ON events(camera);
 		CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_events_label ON events(label);
+
+		CREATE TABLE IF NOT EXISTS segments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			camera TEXT NOT NULL,
+			path TEXT NOT NULL UNIQUE,
+			start_time DATETIME NOT NULL,
+			end_time DATETIME NOT NULL,
+			size_bytes INTEGER DEFAULT 0
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_segments_camera_time ON segments(camera, start_time);
 	`)
 	return err
 }
@@ -124,4 +146,83 @@ func (d *DB) QueryEvents(cameraName, label string, limit int) ([]camera.Event, e
 	}
 
 	return events, rows.Err()
+}
+
+// SaveSegment inserts or replaces a segment record in the database.
+func (d *DB) SaveSegment(seg SegmentRecord) error {
+	_, err := d.db.Exec(`
+		INSERT OR REPLACE INTO segments (camera, path, start_time, end_time, size_bytes)
+		VALUES (?, ?, ?, ?, ?)`,
+		seg.Camera, seg.Path, seg.StartTime, seg.EndTime, seg.SizeBytes,
+	)
+	return err
+}
+
+// QuerySegments returns segments for a camera that overlap the given time range.
+func (d *DB) QuerySegments(cameraName string, from, to time.Time) ([]SegmentRecord, error) {
+	rows, err := d.db.Query(`
+		SELECT id, camera, path, start_time, end_time, size_bytes
+		FROM segments
+		WHERE camera = ? AND start_time < ? AND end_time > ?
+		ORDER BY start_time`,
+		cameraName, to, from,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanSegments(rows)
+}
+
+// DeleteSegment removes a segment record by path.
+func (d *DB) DeleteSegment(path string) error {
+	_, err := d.db.Exec("DELETE FROM segments WHERE path = ?", path)
+	return err
+}
+
+// GetAllSegments returns all segment records for a given camera.
+func (d *DB) GetAllSegments(cameraName string) ([]SegmentRecord, error) {
+	rows, err := d.db.Query(`
+		SELECT id, camera, path, start_time, end_time, size_bytes
+		FROM segments
+		WHERE camera = ?
+		ORDER BY start_time`,
+		cameraName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanSegments(rows)
+}
+
+// GetSegmentByPath returns a single segment record by its file path, or nil if not found.
+func (d *DB) GetSegmentByPath(path string) (*SegmentRecord, error) {
+	row := d.db.QueryRow(`
+		SELECT id, camera, path, start_time, end_time, size_bytes
+		FROM segments WHERE path = ?`, path)
+
+	var seg SegmentRecord
+	err := row.Scan(&seg.ID, &seg.Camera, &seg.Path, &seg.StartTime, &seg.EndTime, &seg.SizeBytes)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &seg, nil
+}
+
+func scanSegments(rows *sql.Rows) ([]SegmentRecord, error) {
+	var segments []SegmentRecord
+	for rows.Next() {
+		var seg SegmentRecord
+		if err := rows.Scan(&seg.ID, &seg.Camera, &seg.Path, &seg.StartTime, &seg.EndTime, &seg.SizeBytes); err != nil {
+			return nil, err
+		}
+		segments = append(segments, seg)
+	}
+	return segments, rows.Err()
 }
