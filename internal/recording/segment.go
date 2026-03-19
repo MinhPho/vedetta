@@ -283,6 +283,16 @@ func (sr *SegmentRecorder) AllSegments(cameraName string) []Segment {
 func (sr *SegmentRecorder) ScanExistingSegments(cameraName, segDir string) {
 	slog.Info("scanning existing segments", "camera", cameraName, "dir", segDir)
 
+	// Clean up stale remux temp files from interrupted shutdowns
+	tempEntries, _ := os.ReadDir(segDir)
+	for _, entry := range tempEntries {
+		if strings.HasSuffix(entry.Name(), ".remux.mp4") {
+			tmpPath := filepath.Join(segDir, entry.Name())
+			slog.Warn("removing stale remux temp file", "path", tmpPath)
+			os.Remove(tmpPath)
+		}
+	}
+
 	// Build set of files on disk
 	diskFiles := make(map[string]os.FileInfo)
 	entries, err := os.ReadDir(segDir)

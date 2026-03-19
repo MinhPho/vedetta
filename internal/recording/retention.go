@@ -43,7 +43,7 @@ func (r *Recorder) runCleanup() {
 
 // enforceStorageCap deletes the oldest segments until total storage is under the configured cap.
 func (r *Recorder) enforceStorageCap() {
-	cap := r.config.MaxStorageBytes
+	cap := r.config.MaxStorageBytes()
 	if cap <= 0 {
 		return
 	}
