@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -47,14 +49,20 @@ type DetectConfig struct {
 }
 
 type RecordingConfig struct {
-	Path            string        `yaml:"path"`
-	PreCapture      time.Duration `yaml:"pre_capture"`
-	PostCapture     time.Duration `yaml:"post_capture"`
-	RetainDays      int           `yaml:"retain_days"`
-	EventRetain     int           `yaml:"event_retain_days"`  // Keep event clips longer than continuous
-	SegmentLength   time.Duration `yaml:"segment_length"`
-	Continuous      bool          `yaml:"continuous"`         // Record continuously, not just events
-	MaxStorageBytes int64         `yaml:"max_storage_bytes"`  // 0 = unlimited; triggers early cleanup when exceeded
+	Path          string        `yaml:"path"`
+	PreCapture    time.Duration `yaml:"pre_capture"`
+	PostCapture   time.Duration `yaml:"post_capture"`
+	RetainDays    int           `yaml:"retain_days"`
+	EventRetain   int           `yaml:"event_retain_days"` // Keep event clips longer than continuous
+	SegmentLength time.Duration `yaml:"segment_length"`
+	Continuous    bool          `yaml:"continuous"`        // Record continuously, not just events
+	MaxStorage    string        `yaml:"max_storage"`       // Human-readable max storage (e.g. "10GB", "500MB"); 0 or empty = unlimited
+	maxStorageBytes int64
+}
+
+// MaxStorageBytes returns the parsed max storage limit in bytes.
+func (r *RecordingConfig) MaxStorageBytes() int64 {
+	return r.maxStorageBytes
 }
 
 type EventConfig struct {
@@ -119,6 +127,14 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	if cfg.Recording.MaxStorage != "" {
+		bytes, err := parseByteSize(cfg.Recording.MaxStorage)
+		if err != nil {
+			return nil, fmt.Errorf("recording.max_storage: %w", err)
+		}
+		cfg.Recording.maxStorageBytes = bytes
+	}
+
 	if len(cfg.Cameras) == 0 {
 		return nil, fmt.Errorf("at least one camera must be configured")
 	}
@@ -147,4 +163,40 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseByteSize parses human-readable byte sizes like "10GB", "500MB", "1TB".
+func parseByteSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+
+	s = strings.ToUpper(s)
+
+	multipliers := map[string]int64{
+		"B":  1,
+		"KB": 1024,
+		"MB": 1024 * 1024,
+		"GB": 1024 * 1024 * 1024,
+		"TB": 1024 * 1024 * 1024 * 1024,
+	}
+
+	for suffix, mult := range multipliers {
+		if strings.HasSuffix(s, suffix) {
+			numStr := strings.TrimSpace(strings.TrimSuffix(s, suffix))
+			val, err := strconv.ParseFloat(numStr, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid size %q: %w", s, err)
+			}
+			return int64(val * float64(mult)), nil
+		}
+	}
+
+	// Try as plain number (bytes)
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid size %q: expected format like '10GB', '500MB'", s)
+	}
+	return val, nil
 }
