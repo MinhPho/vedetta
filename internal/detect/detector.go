@@ -5,10 +5,8 @@ import (
 	"image"
 	"log/slog"
 	"os"
-	"runtime"
 
 	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/detect/onnxruntime"
 )
 
 // Detection represents a single detected object.
@@ -18,10 +16,11 @@ type Detection struct {
 	Box   [4]int // x1, y1, x2, y2
 }
 
-// Detector runs object detection on image frames using a pure Go ONNX runtime.
+// Detector runs object detection on image frames.
+// It selects the best available backend automatically.
 type Detector struct {
 	config  config.DetectConfig
-	session *onnxruntime.Session
+	backend Backend
 	enabled bool
 }
 
@@ -38,7 +37,7 @@ func New(cfg config.DetectConfig) *Detector {
 	}
 
 	d.enabled = true
-	slog.Info("object detection initialized", "backend", detectBackend())
+	slog.Info("object detection initialized", "backend", d.backend.Name())
 
 	return d
 }
@@ -53,33 +52,21 @@ func (d *Detector) Detect(img *image.RGBA) []Detection {
 		return nil
 	}
 
-	// Preprocess: resize to 640x640, normalize, convert to CHW tensor
 	inputData, scale, padX, padY := prepareInput(img)
 
-	// Create input tensor [1, 3, 640, 640]
-	input := onnxruntime.NewTensor([]int64{1, 3, modelInputSize, modelInputSize}, inputData)
-
-	// Run inference
-	outputs, err := d.session.Run(map[string]*onnxruntime.Tensor{
-		"images": input,
-	})
+	output, err := d.backend.Run(inputData)
 	if err != nil {
 		slog.Error("inference failed", "error", err)
 		return nil
 	}
 
-	output, ok := outputs["output0"]
-	if !ok {
-		slog.Error("inference produced no output0 tensor")
-		return nil
-	}
-
-	// Postprocess: extract detections, apply NMS
-	return processOutput(output.Data, d.config.ScoreThreshold, scale, padX, padY)
+	return processOutput(output, d.config.ScoreThreshold, scale, padX, padY)
 }
 
 func (d *Detector) Close() {
-	// Pure Go runtime has no external resources to clean up
+	if d.backend != nil {
+		d.backend.Close()
+	}
 }
 
 func (d *Detector) init(cfg config.DetectConfig) error {
@@ -88,18 +75,45 @@ func (d *Detector) init(cfg config.DetectConfig) error {
 		return fmt.Errorf("load model: %w", err)
 	}
 
-	session, err := onnxruntime.NewSession(modelData)
+	backend, err := selectBackend(cfg.Backend, modelData)
 	if err != nil {
-		return fmt.Errorf("create session: %w", err)
+		return err
 	}
 
-	d.session = session
+	d.backend = backend
 	return nil
 }
 
-// loadModelData resolves model bytes from config path, embedded data, or auto-download.
+// selectBackend picks the best available backend based on config and build tags.
+func selectBackend(preference string, modelData []byte) (Backend, error) {
+	switch preference {
+	case "go":
+		return NewGoBackend(modelData)
+
+	case "onnxruntime_c":
+		b, err := NewCAPIBackend(modelData)
+		if err != nil {
+			return nil, fmt.Errorf("C ONNX Runtime backend: %w", err)
+		}
+		return b, nil
+
+	case "", "auto":
+		// Try C ONNX Runtime first (faster), fall back to pure Go.
+		b, err := NewCAPIBackend(modelData)
+		if err == nil {
+			slog.Info("auto-selected C ONNX Runtime backend")
+			return b, nil
+		}
+		slog.Info("C ONNX Runtime not available, using pure Go backend", "reason", err.Error())
+		return NewGoBackend(modelData)
+
+	default:
+		return nil, fmt.Errorf("unknown backend %q: use \"auto\", \"go\", or \"onnxruntime_c\"", preference)
+	}
+}
+
+// loadModelData resolves model bytes from config path, embedded data, or common locations.
 func (d *Detector) loadModelData(modelPath string) ([]byte, error) {
-	// 1. Explicit model path from config
 	if modelPath != "" {
 		slog.Info("loading model from path", "path", modelPath)
 		data, err := os.ReadFile(modelPath)
@@ -109,13 +123,11 @@ func (d *Detector) loadModelData(modelPath string) ([]byte, error) {
 		return data, nil
 	}
 
-	// 2. Embedded model (set via go:embed build tag)
 	if len(embeddedModel) > 0 {
 		slog.Info("using embedded model")
 		return embeddedModel, nil
 	}
 
-	// 3. Check common locations
 	candidates := []string{
 		"yolov8n.onnx",
 		"/tmp/yolov8n.onnx",
@@ -128,13 +140,4 @@ func (d *Detector) loadModelData(modelPath string) ([]byte, error) {
 	}
 
 	return nil, fmt.Errorf("no model found: set detect.model_path in config, embed with build tag, or place yolov8n.onnx in working directory")
-}
-
-func detectBackend() string {
-	switch runtime.GOOS {
-	case "darwin":
-		return "pure Go + Apple Accelerate BLAS"
-	default:
-		return "pure Go"
-	}
 }
