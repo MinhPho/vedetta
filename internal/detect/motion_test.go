@@ -189,7 +189,8 @@ func TestBoxBlur3x3(t *testing.T) {
 		100, 200, 100,
 		100, 100, 100,
 	}
-	result := boxBlur3x3(src, 3, 3)
+	result := make([]uint8, 9)
+	boxBlur3x3(src, result, 3, 3)
 
 	// Center pixel should average all 9 neighbors: (8*100 + 200) / 9 = 111
 	center := result[4]
@@ -202,5 +203,22 @@ func TestBoxBlur3x3(t *testing.T) {
 	expected := (100 + 100 + 100 + 200) / 4
 	if corner != uint8(expected) {
 		t.Errorf("expected corner %d, got %d", expected, corner)
+	}
+}
+
+func BenchmarkMotionDetector_Detect(b *testing.B) {
+	w, h := 320, 240
+	md := NewMotionDetector(25, 50, 0.05)
+
+	bg := makeRGB(w, h, 50, 50, 50)
+	md.Detect(bg, w, h) // initialize background
+
+	frame := makeRGB(w, h, 50, 50, 50)
+	drawRect(frame, w, 80, 60, 240, 180, 200, 200, 200)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		md.Detect(frame, w, h)
 	}
 }
