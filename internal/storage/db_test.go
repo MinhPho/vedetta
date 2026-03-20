@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
+	"github.com/rvben/vedetta/internal/camera"
 )
 
 func newTestDB(t *testing.T) *DB {

@@ -1,4 +1,4 @@
-// Watchpost — Control Room Noir
+// Vedetta — Control Room Noir
 // Vanilla JS for WebRTC, timeline, keyboard shortcuts, and UI interactions
 
 'use strict';
@@ -471,7 +471,7 @@ function setView(mode) {
     stopBirdseye();
   }
 
-  localStorage.setItem('watchpost-view', mode);
+  localStorage.setItem('vedetta-view', mode);
 }
 
 function startBirdseye() {
@@ -551,7 +551,7 @@ function refreshBirdseye() {
 
 // Restore saved view preference on page load
 (function() {
-  var saved = localStorage.getItem('watchpost-view');
+  var saved = localStorage.getItem('vedetta-view');
   if (saved === 'birdseye') {
     // Defer to after DOM is ready
     if (document.readyState === 'loading') {
@@ -878,7 +878,7 @@ document.addEventListener('keydown', function(e) {
 
 // ─── Theme Toggle ───
 function initTheme() {
-  var saved = localStorage.getItem('watchpost-theme');
+  var saved = localStorage.getItem('vedetta-theme');
   if (saved === 'light') {
     document.documentElement.setAttribute('data-theme', 'light');
   }
@@ -895,7 +895,7 @@ function toggleTheme() {
     document.documentElement.removeAttribute('data-theme');
   }
 
-  localStorage.setItem('watchpost-theme', next);
+  localStorage.setItem('vedetta-theme', next);
   updateThemeUI();
 }
 
@@ -956,7 +956,7 @@ document.addEventListener('visibilitychange', function() {
     stopGridSnapshotRefresh();
     stopStatsRefresh();
   } else {
-    if (localStorage.getItem('watchpost-view') === 'birdseye') {
+    if (localStorage.getItem('vedetta-view') === 'birdseye') {
       var birdseyeGrid = el('birdseye-grid');
       if (birdseyeGrid && birdseyeGrid.style.display !== 'none') {
         startBirdseye();

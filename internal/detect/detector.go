@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/rvben/watchpost/internal/config"
+	"github.com/rvben/vedetta/internal/config"
 )
 
 // Detection represents a single detected object.

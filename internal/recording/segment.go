@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/storage"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/storage"
 )
 
 // Segment represents a recorded video file covering a time range.

@@ -31,13 +31,13 @@ recording:
   event_retain_days: 30     # keep event clips longer
 
 storage:
-  db_path: ./watchpost.db
+  db_path: ./vedetta.db
 
 mqtt:
   enabled: false
   host: 127.0.0.1
   port: 1883
-  topic: watchpost
+  topic: vedetta
 
 api:
   host: 0.0.0.0

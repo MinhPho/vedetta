@@ -61,17 +61,17 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/rvben/watchpost:${{ github.ref_name }}
-            ghcr.io/rvben/watchpost:latest
+            ghcr.io/rvben/vedetta:${{ github.ref_name }}
+            ghcr.io/rvben/vedetta:latest
 
       - name: Build release binaries
         run: |
-          GOOS=linux GOARCH=amd64 go build -o watchpost-linux-amd64 ./cmd/watchpost
-          GOOS=linux GOARCH=arm64 go build -o watchpost-linux-arm64 ./cmd/watchpost
+          GOOS=linux GOARCH=amd64 go build -o vedetta-linux-amd64 ./cmd/vedetta
+          GOOS=linux GOARCH=arm64 go build -o vedetta-linux-arm64 ./cmd/vedetta
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            watchpost-linux-amd64
-            watchpost-linux-arm64
+            vedetta-linux-amd64
+            vedetta-linux-arm64
           generate_release_notes: true

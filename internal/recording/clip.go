@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
+	"github.com/rvben/vedetta/internal/camera"
 )
 
 // ExtractClip creates an event clip by concatenating relevant segments

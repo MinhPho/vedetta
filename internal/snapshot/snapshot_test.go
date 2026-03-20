@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/rvben/watchpost/internal/detect"
+	"github.com/rvben/vedetta/internal/detect"
 )
 
 func testFrame(w, h int) *image.RGBA {

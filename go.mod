@@ -1,4 +1,4 @@
-module github.com/rvben/watchpost
+module github.com/rvben/vedetta
 
 go 1.26.1
 

@@ -178,8 +178,8 @@ cameras:
 	}
 
 	// Storage defaults
-	if cfg.Storage.DBPath != "./watchpost.db" {
-		t.Errorf("db_path = %q, want ./watchpost.db", cfg.Storage.DBPath)
+	if cfg.Storage.DBPath != "./vedetta.db" {
+		t.Errorf("db_path = %q, want ./vedetta.db", cfg.Storage.DBPath)
 	}
 
 	// API defaults

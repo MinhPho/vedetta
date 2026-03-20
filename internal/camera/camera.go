@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/detect"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/detect"
 )
 
 // Event represents a detected object event from a camera.

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
+	"github.com/rvben/vedetta/internal/camera"
 )
 
 func TestSanitizeName(t *testing.T) {
@@ -33,22 +33,22 @@ func TestSanitizeName(t *testing.T) {
 }
 
 func TestEventTopicFormat(t *testing.T) {
-	baseTopic := "watchpost"
+	baseTopic := "vedetta"
 	cameraName := "front-door"
 
 	got := fmt.Sprintf("%s/events/%s", baseTopic, cameraName)
-	want := "watchpost/events/front-door"
+	want := "vedetta/events/front-door"
 	if got != want {
 		t.Errorf("event topic = %q, want %q", got, want)
 	}
 }
 
 func TestCameraStatusTopicFormat(t *testing.T) {
-	baseTopic := "watchpost"
+	baseTopic := "vedetta"
 	cameraName := "backyard"
 
 	got := fmt.Sprintf("%s/camera/%s/status", baseTopic, cameraName)
-	want := "watchpost/camera/backyard/status"
+	want := "vedetta/camera/backyard/status"
 	if got != want {
 		t.Errorf("status topic = %q, want %q", got, want)
 	}
@@ -87,13 +87,13 @@ func TestEventPayloadSerialization(t *testing.T) {
 
 func TestDiscoveryBinarySensorPayload(t *testing.T) {
 	cameraName := "front-door"
-	baseTopic := "watchpost"
-	objectID := fmt.Sprintf("watchpost_%s", sanitizeName(cameraName))
+	baseTopic := "vedetta"
+	objectID := fmt.Sprintf("vedetta_%s", sanitizeName(cameraName))
 
 	device := haDevice{
-		Identifiers:  []string{"watchpost_" + sanitizeName(cameraName)},
-		Name:         "Watchpost " + cameraName,
-		Manufacturer: "Watchpost",
+		Identifiers:  []string{"vedetta_" + sanitizeName(cameraName)},
+		Name:         "Vedetta " + cameraName,
+		Manufacturer: "Vedetta",
 		Model:        "NVR",
 	}
 
@@ -118,14 +118,14 @@ func TestDiscoveryBinarySensorPayload(t *testing.T) {
 		t.Fatalf("unmarshal discovery: %v", err)
 	}
 
-	if decoded["unique_id"] != "watchpost_front_door_status" {
-		t.Errorf("unique_id = %v, want %q", decoded["unique_id"], "watchpost_front_door_status")
+	if decoded["unique_id"] != "vedetta_front_door_status" {
+		t.Errorf("unique_id = %v, want %q", decoded["unique_id"], "vedetta_front_door_status")
 	}
-	if decoded["state_topic"] != "watchpost/camera/front-door/status" {
-		t.Errorf("state_topic = %v, want %q", decoded["state_topic"], "watchpost/camera/front-door/status")
+	if decoded["state_topic"] != "vedetta/camera/front-door/status" {
+		t.Errorf("state_topic = %v, want %q", decoded["state_topic"], "vedetta/camera/front-door/status")
 	}
-	if decoded["availability_topic"] != "watchpost/availability" {
-		t.Errorf("availability_topic = %v, want %q", decoded["availability_topic"], "watchpost/availability")
+	if decoded["availability_topic"] != "vedetta/availability" {
+		t.Errorf("availability_topic = %v, want %q", decoded["availability_topic"], "vedetta/availability")
 	}
 	if decoded["device_class"] != "connectivity" {
 		t.Errorf("device_class = %v, want %q", decoded["device_class"], "connectivity")
@@ -138,8 +138,8 @@ func TestDiscoveryBinarySensorPayload(t *testing.T) {
 	if !ok {
 		t.Fatal("device field is not a map")
 	}
-	if deviceMap["manufacturer"] != "Watchpost" {
-		t.Errorf("manufacturer = %v, want %q", deviceMap["manufacturer"], "Watchpost")
+	if deviceMap["manufacturer"] != "Vedetta" {
+		t.Errorf("manufacturer = %v, want %q", deviceMap["manufacturer"], "Vedetta")
 	}
 	if deviceMap["model"] != "NVR" {
 		t.Errorf("model = %v, want %q", deviceMap["model"], "NVR")
@@ -151,9 +151,9 @@ func TestDiscoveryDeviceTriggerPayload(t *testing.T) {
 	baseTopic := "myhome"
 
 	device := haDevice{
-		Identifiers:  []string{"watchpost_" + sanitizeName(cameraName)},
-		Name:         "Watchpost " + cameraName,
-		Manufacturer: "Watchpost",
+		Identifiers:  []string{"vedetta_" + sanitizeName(cameraName)},
+		Name:         "Vedetta " + cameraName,
+		Manufacturer: "Vedetta",
 		Model:        "NVR",
 	}
 
@@ -188,23 +188,23 @@ func TestDiscoveryDeviceTriggerPayload(t *testing.T) {
 
 func TestDiscoveryTopicFormat(t *testing.T) {
 	cameraName := "front-door"
-	objectID := fmt.Sprintf("watchpost_%s", sanitizeName(cameraName))
+	objectID := fmt.Sprintf("vedetta_%s", sanitizeName(cameraName))
 
 	sensorTopic := fmt.Sprintf("homeassistant/binary_sensor/%s/config", objectID)
-	if sensorTopic != "homeassistant/binary_sensor/watchpost_front_door/config" {
+	if sensorTopic != "homeassistant/binary_sensor/vedetta_front_door/config" {
 		t.Errorf("sensor topic = %q", sensorTopic)
 	}
 
 	triggerTopic := fmt.Sprintf("homeassistant/device_automation/%s_detection/config", objectID)
-	if triggerTopic != "homeassistant/device_automation/watchpost_front_door_detection/config" {
+	if triggerTopic != "homeassistant/device_automation/vedetta_front_door_detection/config" {
 		t.Errorf("trigger topic = %q", triggerTopic)
 	}
 }
 
 func TestAvailabilityTopicFormat(t *testing.T) {
-	baseTopic := "watchpost"
+	baseTopic := "vedetta"
 	got := baseTopic + "/availability"
-	if got != "watchpost/availability" {
+	if got != "vedetta/availability" {
 		t.Errorf("availability topic = %q", got)
 	}
 
