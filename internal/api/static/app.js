@@ -74,6 +74,9 @@ async function startWebRTC() {
       if (state === 'failed' || state === 'disconnected') {
         toast('WebRTC connection lost', 'error');
         stopStream();
+        webrtcAutoReconnect();
+      } else if (state === 'connected') {
+        webrtcReconnectAttempts = 0;
       }
     };
 
@@ -197,9 +200,18 @@ function initTimeline() {
   updateTimelineDate();
   updatePlayheadToNow();
   fetchTimelineData();
+  startPlayheadAnimation();
 
   const track = el('timeline-track');
   if (!track) return;
+
+  // Add hover cursor element
+  var cursor = document.createElement('div');
+  cursor.className = 'timeline-cursor';
+  var cursorTime = document.createElement('span');
+  cursorTime.className = 'timeline-cursor-time';
+  cursor.appendChild(cursorTime);
+  track.appendChild(cursor);
 
   let dragging = false;
 
@@ -210,6 +222,22 @@ function initTimeline() {
 
   track.addEventListener('mousemove', function(e) {
     if (dragging) scrubTimeline(e);
+    // Update hover cursor position and time
+    var rect = track.getBoundingClientRect();
+    var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    cursor.style.left = (pct * 100) + '%';
+    var totalMin = pct * 24 * 60;
+    var h = Math.floor(totalMin / 60);
+    var m = Math.floor(totalMin % 60);
+    cursorTime.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  });
+
+  track.addEventListener('mouseleave', function() {
+    cursor.style.display = 'none';
+  });
+
+  track.addEventListener('mouseenter', function() {
+    cursor.style.display = '';
   });
 
   document.addEventListener('mouseup', function() { dragging = false; });
@@ -281,6 +309,14 @@ function updateTimelineDate() {
     label.textContent = timelineDate.toLocaleDateString('en-US', {
       weekday: 'short', month: 'short', day: 'numeric'
     });
+  }
+
+  // Update hidden date input
+  var dateInput = el('timeline-date-input');
+  if (dateInput) {
+    dateInput.value = timelineDate.getFullYear() + '-' +
+      String(timelineDate.getMonth() + 1).padStart(2, '0') + '-' +
+      String(timelineDate.getDate()).padStart(2, '0');
   }
 }
 
@@ -772,7 +808,7 @@ document.addEventListener('keydown', function(e) {
 
   switch (e.key) {
     case '?':
-      toast('Shortcuts: W=WebRTC, M=MJPEG, S=Stop, L=Live, P=PiP, F=Fullscreen, D=Download, Esc=Back');
+      toggleShortcutModal();
       break;
     case 'w':
     case 'W':
@@ -815,7 +851,9 @@ document.addEventListener('keydown', function(e) {
       break;
     }
     case 'Escape':
-      if (document.fullscreenElement) {
+      if (el('shortcut-modal') && el('shortcut-modal').classList.contains('open')) {
+        closeShortcutModal();
+      } else if (document.fullscreenElement) {
         document.exitFullscreen();
       } else if (playbackMode) {
         returnToLive();
@@ -977,3 +1015,262 @@ document.addEventListener('htmx:afterSwap', function(e) {
     card.classList.add('fade-in', 'stagger-' + Math.min(i + 1, 4));
   });
 });
+
+// ─── Keyboard Shortcut Modal ───
+function toggleShortcutModal() {
+  var backdrop = el('shortcut-backdrop');
+  var modal = el('shortcut-modal');
+  if (!backdrop || !modal) return;
+
+  var isOpen = modal.classList.contains('open');
+  if (isOpen) {
+    closeShortcutModal();
+  } else {
+    openShortcutModal();
+  }
+}
+
+function openShortcutModal() {
+  var backdrop = el('shortcut-backdrop');
+  var modal = el('shortcut-modal');
+  if (!backdrop || !modal) return;
+
+  backdrop.classList.add('open');
+  modal.classList.add('open');
+  // Trap focus
+  modal.querySelector('button')?.focus();
+}
+
+function closeShortcutModal() {
+  var backdrop = el('shortcut-backdrop');
+  var modal = el('shortcut-modal');
+  if (!backdrop || !modal) return;
+
+  backdrop.classList.remove('open');
+  modal.classList.remove('open');
+}
+
+// Close modal on Escape (handled in keydown handler via existing Escape case)
+// Close modal on backdrop click
+document.addEventListener('click', function(e) {
+  if (e.target && e.target.id === 'shortcut-backdrop') {
+    closeShortcutModal();
+  }
+});
+
+// ─── Real-time Playhead Animation ───
+var playheadRAF = null;
+
+function startPlayheadAnimation() {
+  if (playheadRAF) cancelAnimationFrame(playheadRAF);
+
+  function tick() {
+    if (!playbackMode) {
+      var playhead = el('timeline-playhead');
+      if (playhead) {
+        var now = new Date();
+        var today = new Date();
+        if (timelineDate.toDateString() === today.toDateString()) {
+          var pct = (now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60) / (24 * 60) * 100;
+          playhead.style.left = pct + '%';
+          playhead.style.display = '';
+        }
+      }
+    }
+    playheadRAF = requestAnimationFrame(tick);
+  }
+  tick();
+}
+
+// ─── Infinite Scroll for Events ───
+var infiniteScrollObserver = null;
+var eventsOffset = 0;
+var eventsLoading = false;
+var eventsExhausted = false;
+
+function initInfiniteScroll() {
+  var gallery = el('events-gallery');
+  if (!gallery) return;
+
+  eventsOffset = 0;
+  eventsExhausted = false;
+  eventsLoading = false;
+
+  // Watch for initial load completion, then set up sentinel
+  var checkReady = setInterval(function() {
+    var cards = gallery.querySelectorAll('.event-card');
+    if (cards.length > 0 || gallery.querySelector('.empty-state')) {
+      clearInterval(checkReady);
+      eventsOffset = cards.length;
+      if (cards.length >= 50) {
+        addScrollSentinel();
+      }
+    }
+  }, 500);
+}
+
+function addScrollSentinel() {
+  var gallery = el('events-gallery');
+  if (!gallery || gallery.querySelector('.scroll-sentinel')) return;
+
+  var sentinel = document.createElement('div');
+  sentinel.className = 'scroll-sentinel';
+  sentinel.innerHTML = '<div class="loading-spinner"></div>';
+  gallery.appendChild(sentinel);
+
+  if (infiniteScrollObserver) infiniteScrollObserver.disconnect();
+  infiniteScrollObserver = new IntersectionObserver(function(entries) {
+    if (entries[0].isIntersecting && !eventsLoading && !eventsExhausted) {
+      loadMoreEvents();
+    }
+  }, { rootMargin: '200px' });
+
+  infiniteScrollObserver.observe(sentinel);
+}
+
+function loadMoreEvents() {
+  if (eventsLoading || eventsExhausted) return;
+  eventsLoading = true;
+
+  var labelChip = document.querySelector('.chip[data-filter="label"].active');
+  var cameraChip = document.querySelector('.chip[data-filter="camera"].active');
+
+  var url = '/partials/events-gallery?limit=50&offset=' + eventsOffset;
+  if (labelChip && labelChip.dataset.value) {
+    url += '&label=' + encodeURIComponent(labelChip.dataset.value);
+  }
+  if (cameraChip && cameraChip.dataset.value) {
+    url += '&camera=' + encodeURIComponent(cameraChip.dataset.value);
+  }
+
+  fetch(url)
+    .then(function(resp) { return resp.text(); })
+    .then(function(html) {
+      var gallery = el('events-gallery');
+      if (!gallery) return;
+
+      // Remove old sentinel
+      var oldSentinel = gallery.querySelector('.scroll-sentinel');
+      if (oldSentinel) oldSentinel.remove();
+
+      // Parse and count new cards
+      var tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      var newCards = tmp.querySelectorAll('.event-card');
+
+      if (newCards.length === 0) {
+        eventsExhausted = true;
+        eventsLoading = false;
+        return;
+      }
+
+      // Append new cards with stagger animation
+      newCards.forEach(function(card, i) {
+        card.classList.add('fade-in', 'stagger-' + Math.min(i + 1, 4));
+        gallery.appendChild(card);
+      });
+
+      eventsOffset += newCards.length;
+      eventsLoading = false;
+
+      // Add new sentinel if we got a full page
+      if (newCards.length >= 50) {
+        addScrollSentinel();
+      }
+    })
+    .catch(function(err) {
+      console.error('Failed to load more events:', err);
+      eventsLoading = false;
+    });
+}
+
+// ─── Event Search ───
+var searchDebounceTimer = null;
+
+function initEventSearch() {
+  var input = el('event-search');
+  if (!input) return;
+
+  input.addEventListener('input', function() {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(function() {
+      reloadEvents();
+    }, 300);
+  });
+}
+
+// Patch reloadEvents to include search term
+var _origReloadEvents = typeof reloadEvents === 'function' ? reloadEvents : null;
+
+function reloadEventsWithSearch() {
+  var gallery = el('events-gallery');
+  if (!gallery) return;
+
+  var labelChip = document.querySelector('.chip[data-filter="label"].active');
+  var cameraChip = document.querySelector('.chip[data-filter="camera"].active');
+  var searchInput = el('event-search');
+
+  var url = '/partials/events-gallery?limit=50';
+  if (labelChip && labelChip.dataset.value) {
+    url += '&label=' + encodeURIComponent(labelChip.dataset.value);
+  }
+  if (cameraChip && cameraChip.dataset.value) {
+    url += '&camera=' + encodeURIComponent(cameraChip.dataset.value);
+  }
+  if (searchInput && searchInput.value.trim()) {
+    url += '&q=' + encodeURIComponent(searchInput.value.trim());
+  }
+
+  // Reset infinite scroll state
+  eventsOffset = 0;
+  eventsExhausted = false;
+
+  htmx.ajax('GET', url, { target: '#events-gallery', swap: 'innerHTML' });
+}
+
+// Override reloadEvents to include search
+reloadEvents = function() {
+  reloadEventsWithSearch();
+};
+
+// ─── Timeline Date Picker ───
+function openTimelineDatePicker() {
+  var input = el('timeline-date-input');
+  if (input) {
+    input.showPicker();
+  }
+}
+
+function onTimelineDatePick(input) {
+  if (!input.value) return;
+  var parts = input.value.split('-');
+  timelineDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  updateTimelineDate();
+  updatePlayheadToNow();
+  fetchTimelineData();
+}
+
+// ─── WebRTC Auto-Reconnect ───
+var webrtcReconnectAttempts = 0;
+var webrtcMaxReconnect = 3;
+var webrtcReconnectTimer = null;
+
+function webrtcAutoReconnect() {
+  if (webrtcReconnectAttempts >= webrtcMaxReconnect) {
+    toast('WebRTC reconnect failed after ' + webrtcMaxReconnect + ' attempts', 'error');
+    webrtcReconnectAttempts = 0;
+    return;
+  }
+
+  webrtcReconnectAttempts++;
+  var delay = Math.min(1000 * Math.pow(2, webrtcReconnectAttempts - 1), 8000);
+  toast('Reconnecting WebRTC (' + webrtcReconnectAttempts + '/' + webrtcMaxReconnect + ')...');
+
+  webrtcReconnectTimer = setTimeout(function() {
+    startWebRTC().then(function() {
+      webrtcReconnectAttempts = 0;
+    }).catch(function() {
+      webrtcAutoReconnect();
+    });
+  }, delay);
+}
