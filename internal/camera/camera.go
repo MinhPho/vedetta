@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -39,6 +42,7 @@ type Camera struct {
 	frameW, frameH  int
 	lastMotion      time.Time
 	lastFrameTime   time.Time
+	lastSnapshotSave time.Time
 	confirmedTracks map[int]bool
 }
 
@@ -84,9 +88,88 @@ func (c *Camera) LastSnapshot() *image.RGBA {
 	return rawToRGBA(c.rawFrame, c.frameW, c.frameH)
 }
 
+// snapshotPath returns the path for the cached latest snapshot.
+func (c *Camera) snapshotPath() string {
+	return filepath.Join("recordings", c.config.Name, "latest.jpg")
+}
+
+// loadCachedSnapshot loads the last saved snapshot from disk so offline cameras
+// still have an image to show.
+func (c *Camera) loadCachedSnapshot() {
+	path := c.snapshotPath()
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	img, err := jpeg.Decode(f)
+	if err != nil {
+		slog.Warn("failed to decode cached snapshot", "camera", c.config.Name, "error", err)
+		return
+	}
+
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	rgb := make([]byte, w*h*3)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			off := ((y-bounds.Min.Y)*w + (x - bounds.Min.X)) * 3
+			rgb[off] = byte(r >> 8)
+			rgb[off+1] = byte(g >> 8)
+			rgb[off+2] = byte(b >> 8)
+		}
+	}
+
+	c.mu.Lock()
+	c.rawFrame = rgb
+	c.frameW = w
+	c.frameH = h
+	c.mu.Unlock()
+	slog.Info("loaded cached snapshot", "camera", c.config.Name)
+}
+
+// saveCachedSnapshot writes the current frame to disk (throttled to every 30s).
+func (c *Camera) saveCachedSnapshot() {
+	c.mu.RLock()
+	if c.rawFrame == nil {
+		c.mu.RUnlock()
+		return
+	}
+	if time.Since(c.lastSnapshotSave) < 30*time.Second {
+		c.mu.RUnlock()
+		return
+	}
+	img := rawToRGBA(c.rawFrame, c.frameW, c.frameH)
+	c.mu.RUnlock()
+
+	path := c.snapshotPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return
+	}
+	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: 80}); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return
+	}
+	f.Close()
+	os.Rename(tmp, path)
+
+	c.mu.Lock()
+	c.lastSnapshotSave = time.Now()
+	c.mu.Unlock()
+}
+
 // Start begins reading frames from the RTSP stream.
 func (c *Camera) Start(ctx context.Context) {
 	slog.Info("starting camera", "name", c.config.Name, "url", c.config.URL)
+	c.loadCachedSnapshot()
 
 	go c.readFrames(ctx)
 }
@@ -173,6 +256,9 @@ func (c *Camera) runFFmpeg(ctx context.Context) error {
 		c.frameH = h
 		c.lastFrameTime = time.Now()
 		c.mu.Unlock()
+
+		// Periodically save snapshot to disk for offline display
+		c.saveCachedSnapshot()
 
 		// Contour-based motion detection
 		motionRegions := c.motionDetector.Detect(buf, w, h)
