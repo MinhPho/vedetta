@@ -27,10 +27,10 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 	mgr := camera.NewManager(nil, nil, nil, nil)
 	rec := recording.New(config.RecordingConfig{
 		Path: t.TempDir(),
-	}, db)
+	}, db, nil)
 
 	apiCfg := config.APIConfig{Host: "127.0.0.1", Port: 0}
-	srv := New(apiCfg, db, mgr, rec)
+	srv := New(apiCfg, db, mgr, rec, nil)
 	return srv, db
 }
 
@@ -428,8 +428,8 @@ func TestHandleSystemAPI(t *testing.T) {
 	if body["version"] != "0.1.0" {
 		t.Errorf("version = %v, want %q", body["version"], "0.1.0")
 	}
-	if body["hwaccel"] != "none" {
-		t.Errorf("hwaccel = %v, want %q", body["hwaccel"], "none")
+	if body["decoder"] != "native Go" {
+		t.Errorf("decoder = %v, want %q", body["decoder"], "native Go")
 	}
 	if body["cameras"].(float64) != 0 {
 		t.Errorf("cameras = %v, want 0", body["cameras"])

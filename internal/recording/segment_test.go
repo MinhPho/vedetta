@@ -17,7 +17,7 @@ func newTestSegmentRecorder(t *testing.T) *SegmentRecorder {
 		t.Fatalf("failed to create test database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return NewSegmentRecorder(config.RecordingConfig{}, db)
+	return NewSegmentRecorder(config.RecordingConfig{}, db, nil)
 }
 
 func seedSegments(t *testing.T, sr *SegmentRecorder, segments []storage.SegmentRecord) {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/detect"
+	"github.com/rvben/vedetta/internal/rtsp"
 )
 
 // Manager manages all camera streams.
@@ -14,21 +16,21 @@ type Manager struct {
 	cameras  map[string]*Camera
 	detector *detect.Detector
 	events   chan<- Event
-	hwaccel  *HWAccel
+	hub      *rtsp.Hub
 	mu       sync.RWMutex
 }
 
-func NewManager(configs []config.CameraConfig, detector *detect.Detector, events chan<- Event, hwaccel *HWAccel) *Manager {
+func NewManager(configs []config.CameraConfig, detector *detect.Detector, events chan<- Event, hub *rtsp.Hub) *Manager {
 	m := &Manager{
 		cameras:  make(map[string]*Camera),
 		detector: detector,
 		events:   events,
-		hwaccel:  hwaccel,
+		hub:      hub,
 	}
 
 	for _, cfg := range configs {
 		if cfg.Enabled {
-			cam := NewCamera(cfg, detector, events, hwaccel)
+			cam := NewCamera(cfg, detector, events, hub)
 			m.cameras[cfg.Name] = cam
 		}
 	}
@@ -36,17 +38,21 @@ func NewManager(configs []config.CameraConfig, detector *detect.Detector, events
 	return m
 }
 
-// HWAccelBackend returns the detected hardware acceleration, or nil for CPU-only.
-func (m *Manager) HWAccelBackend() *HWAccel {
-	return m.hwaccel
-}
-
 func (m *Manager) Start(ctx context.Context) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	first := true
 	for _, cam := range m.cameras {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
 		cam.Start(ctx)
+		first = false
 	}
 }
 

@@ -1,13 +1,21 @@
 package stream
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pion/webrtc/v4"
+	"github.com/rvben/vedetta/internal/rtsp"
 )
 
 func TestSDPOfferAnswerExchange(t *testing.T) {
-	sm := NewStreamManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hub := rtsp.NewHub(ctx)
+	defer hub.Close()
+
+	sm := NewStreamManager(hub)
 	defer sm.Close()
 
 	// Create a client peer connection to generate an offer
@@ -39,38 +47,28 @@ func TestSDPOfferAnswerExchange(t *testing.T) {
 		t.Fatalf("failed to set local description: %v", err)
 	}
 
-	// HandleOffer will fail because there's no real RTSP stream,
-	// but we can test the SDP parsing logic by checking it gets
-	// past the peer connection setup phase.
-	// We use a dummy RTSP URL — the ffmpeg will fail but the SDP
-	// exchange itself should work up to that point.
-	_, err = sm.HandleOffer("test-cam", "rtsp://invalid:554/stream", offer)
-	// We expect an error because ffmpeg can't connect, but the SDP
-	// parsing should have worked
-	if err == nil {
-		t.Log("HandleOffer succeeded (ffmpeg likely available)")
-	} else {
-		t.Logf("HandleOffer returned expected error (no ffmpeg/stream): %v", err)
-	}
-}
-
-func TestFindFreeUDPPort(t *testing.T) {
-	port, err := findFreeUDPPort()
+	// HandleOffer should succeed for the SDP exchange part,
+	// even though the RTSP source won't have actual video.
+	answer, err := sm.HandleOffer("test-cam", "rtsp://invalid:554/stream", offer)
 	if err != nil {
-		t.Fatalf("failed to find free UDP port: %v", err)
-	}
-	if port <= 0 || port > 65535 {
-		t.Fatalf("invalid port: %d", port)
+		t.Logf("HandleOffer returned error (expected, no stream): %v", err)
+	} else {
+		if answer.Type != webrtc.SDPTypeAnswer {
+			t.Errorf("expected SDP answer type, got %v", answer.Type)
+		}
 	}
 }
 
 func TestNewStreamManager(t *testing.T) {
-	sm := NewStreamManager()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hub := rtsp.NewHub(ctx)
+	defer hub.Close()
+
+	sm := NewStreamManager(hub)
 	if sm == nil {
 		t.Fatal("NewStreamManager returned nil")
-	}
-	if sm.sessions == nil {
-		t.Fatal("sessions map not initialized")
 	}
 	sm.Close()
 }

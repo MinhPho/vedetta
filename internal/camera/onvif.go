@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os/exec"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/bluenviron/gortsplib/v5"
+	"github.com/bluenviron/gortsplib/v5/pkg/base"
 )
 
 // DiscoveredCamera represents a camera found via ONVIF WS-Discovery.
@@ -274,45 +277,36 @@ func ProbeRTSPForBrand(ip string, port int, manufacturer string) ([]StreamProfil
 	return profiles, nil
 }
 
-// testRTSPURL uses ffprobe to check if an RTSP URL is reachable.
-func testRTSPURL(url string) bool {
-	cmd := exec.Command("ffprobe",
-		"-v", "quiet",
-		"-rtsp_transport", "tcp",
-		"-i", url,
-		"-show_entries", "stream=codec_type",
-		"-of", "csv=p=0",
-	)
-
-	// 3 second timeout for probe
-	output, err := runWithTimeout(cmd, 3*time.Second)
+// testRTSPURL uses gortsplib Describe to check if an RTSP URL is reachable.
+func testRTSPURL(rtspURL string) bool {
+	u, err := url.Parse(rtspURL)
 	if err != nil {
 		return false
 	}
 
-	return strings.Contains(string(output), "video")
-}
-
-// runWithTimeout runs a command with a timeout and returns its output.
-func runWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
-	done := make(chan struct{})
-	var output []byte
-	var cmdErr error
-
-	go func() {
-		output, cmdErr = cmd.CombinedOutput()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return output, cmdErr
-	case <-time.After(timeout):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		return nil, fmt.Errorf("command timed out after %v", timeout)
+	proto := gortsplib.ProtocolTCP
+	c := &gortsplib.Client{
+		Scheme:       u.Scheme,
+		Host:         u.Host,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		Protocol:     &proto,
 	}
+
+	err = c.Start()
+	if err != nil {
+		return false
+	}
+	defer c.Close()
+
+	_, _, err = c.Describe(&base.URL{
+		Scheme:   u.Scheme,
+		Host:     u.Host,
+		Path:     u.Path,
+		RawQuery: u.RawQuery,
+		User:     u.User,
+	})
+	return err == nil
 }
 
 // GenerateConfig produces a YAML config snippet for discovered cameras.
