@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
-	"github.com/rvben/watchpost/internal/detect"
-	"github.com/rvben/watchpost/internal/snapshot"
+	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/detect"
+	"github.com/rvben/vedetta/internal/snapshot"
 )
 
 // Config holds event manager settings.

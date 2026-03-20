@@ -1,4 +1,4 @@
-# Watchpost Roadmap
+# Vedetta Roadmap
 
 ## Phase 1: Core Excellence (MVP that's actually usable)
 
@@ -59,14 +59,14 @@
 - [ ] ONVIF WS-Discovery probe
 - [ ] Get stream URLs from ONVIF profiles
 - [ ] Suggest camera config from discovered devices
-- [ ] `watchpost discover` CLI command
+- [ ] `vedetta discover` CLI command
 - [ ] Support Tapo, Reolink, Hikvision, Dahua ONVIF
 
 ### 2.4 Configuration
 - [ ] YAML validation with helpful error messages
 - [ ] Hot-reload on config file change (fsnotify)
-- [ ] `watchpost validate` CLI command
-- [ ] `watchpost init` interactive setup wizard
+- [ ] `vedetta validate` CLI command
+- [ ] `vedetta init` interactive setup wizard
 
 ## Phase 3: Integration & Polish
 
@@ -89,7 +89,7 @@
 - [ ] Health check endpoint with detailed status
 
 ### 3.4 Distribution
-- [ ] Homebrew formula (`brew install watchpost`)
+- [ ] Homebrew formula (`brew install vedetta`)
 - [ ] APT/RPM packages
 - [ ] Docker image (optional, for those who want it)
 - [ ] GitHub Releases with cross-compiled binaries

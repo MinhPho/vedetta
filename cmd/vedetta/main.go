@@ -10,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rvben/watchpost/internal/api"
-	"github.com/rvben/watchpost/internal/camera"
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/detect"
-	"github.com/rvben/watchpost/internal/mqtt"
-	"github.com/rvben/watchpost/internal/recording"
-	"github.com/rvben/watchpost/internal/storage"
+	"github.com/rvben/vedetta/internal/api"
+	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/detect"
+	"github.com/rvben/vedetta/internal/mqtt"
+	"github.com/rvben/vedetta/internal/recording"
+	"github.com/rvben/vedetta/internal/storage"
 )
 
 func main() {
@@ -155,7 +155,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("watchpost started", "cameras", len(cfg.Cameras))
+	slog.Info("vedetta started", "cameras", len(cfg.Cameras))
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

@@ -1,6 +1,6 @@
-# Watchpost
+# Vedetta
 
-Watchpost is an open-source Network Video Recorder (NVR) written in Go. Inspired by [Frigate](https://frigate.video), it ships as a single binary with no Python dependency.
+Vedetta is an open-source Network Video Recorder (NVR) written in Go. Inspired by [Frigate](https://frigate.video), it ships as a single binary with no Python dependency.
 
 ## Features
 
@@ -12,7 +12,7 @@ Watchpost is an open-source Network Video Recorder (NVR) written in Go. Inspired
 - **Live streaming** -- WebRTC with MJPEG fallback
 - **Web dashboard** -- dark theme, htmx + vanilla JS, no build step
 - **Home Assistant** -- MQTT integration with auto-discovery
-- **ONVIF discovery** -- find cameras on the network (`watchpost discover`)
+- **ONVIF discovery** -- find cameras on the network (`vedetta discover`)
 - **Hardware acceleration** -- VAAPI, VideoToolbox, CUDA (auto-detected)
 - **Per-camera zones** -- filter which objects matter in each zone
 - **Storage management** -- max storage cap, automatic cleanup
@@ -28,23 +28,23 @@ Watchpost is an open-source Network Video Recorder (NVR) written in Go. Inspired
 make build
 
 # Run with a config file
-./build/watchpost -config config.yml
+./build/vedetta -config config.yml
 ```
 
 ### Docker
 
 ```sh
 docker run -d \
-  --name watchpost \
+  --name vedetta \
   -v /path/to/config.yml:/config.yml \
   -v /path/to/recordings:/recordings \
   -p 5050:5050 \
-  ghcr.io/rvben/watchpost:latest
+  ghcr.io/rvben/vedetta:latest
 ```
 
 ## Configuration
 
-Watchpost is configured with a single YAML file. See [`config.example.yml`](config.example.yml) for a complete example.
+Vedetta is configured with a single YAML file. See [`config.example.yml`](config.example.yml) for a complete example.
 
 ### Cameras
 
@@ -98,7 +98,7 @@ recording:
 
 ```yaml
 storage:
-  db_path: ./watchpost.db
+  db_path: ./vedetta.db
 ```
 
 ### MQTT
@@ -108,7 +108,7 @@ mqtt:
   enabled: false
   host: 127.0.0.1
   port: 1883
-  topic: watchpost
+  topic: vedetta
 ```
 
 ### API
@@ -130,16 +130,16 @@ Common RTSP URL formats for popular camera brands:
 | **Hikvision** | `rtsp://user:pass@IP:554/Streaming/Channels/101` | `rtsp://user:pass@IP:554/Streaming/Channels/102` |
 | **Dahua** | `rtsp://user:pass@IP:554/cam/realmonitor?channel=1&subtype=0` | `rtsp://user:pass@IP:554/cam/realmonitor?channel=1&subtype=1` |
 
-Use `watchpost discover` to scan the local network for ONVIF-compatible cameras and print their RTSP URLs.
+Use `vedetta discover` to scan the local network for ONVIF-compatible cameras and print their RTSP URLs.
 
 ## MQTT / Home Assistant
 
-When MQTT is enabled, Watchpost publishes Home Assistant auto-discovery messages so cameras and sensors appear automatically.
+When MQTT is enabled, Vedetta publishes Home Assistant auto-discovery messages so cameras and sensors appear automatically.
 
-The default topic prefix is `watchpost`. Messages are published under:
+The default topic prefix is `vedetta`. Messages are published under:
 
-- `watchpost/<camera>/detection` -- object detection events
-- `homeassistant/binary_sensor/watchpost_<camera>/config` -- auto-discovery
+- `vedetta/<camera>/detection` -- object detection events
+- `homeassistant/binary_sensor/vedetta_<camera>/config` -- auto-discovery
 
 ## API Endpoints
 

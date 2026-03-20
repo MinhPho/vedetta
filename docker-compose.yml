@@ -1,8 +1,8 @@
 services:
-  watchpost:
+  vedetta:
     build: .
-    image: ghcr.io/rvben/watchpost:latest
-    container_name: watchpost
+    image: ghcr.io/rvben/vedetta:latest
+    container_name: vedetta
     restart: unless-stopped
 
     # Host networking is required for:
@@ -14,7 +14,7 @@ services:
 
     volumes:
       - ./config.yml:/config/config.yml:ro
-      - watchpost-data:/data
+      - vedetta-data:/data
 
     environment:
       - TZ=${TZ:-UTC}
@@ -27,4 +27,4 @@ services:
       start_period: 10s
 
 volumes:
-  watchpost-data:
+  vedetta-data:

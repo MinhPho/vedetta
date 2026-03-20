@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/storage"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/storage"
 )
 
 func newTestSegmentRecorder(t *testing.T) *SegmentRecorder {

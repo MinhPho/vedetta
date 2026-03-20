@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/recording"
-	"github.com/rvben/watchpost/internal/storage"
+	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/recording"
+	"github.com/rvben/vedetta/internal/storage"
 )
 
 // newTestServer creates a Server backed by an in-memory SQLite database

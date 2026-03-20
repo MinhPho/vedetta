@@ -3,7 +3,7 @@ package camera
 import (
 	"testing"
 
-	"github.com/rvben/watchpost/internal/config"
+	"github.com/rvben/vedetta/internal/config"
 )
 
 func TestSnapshotRGB24_NoFrame(t *testing.T) {

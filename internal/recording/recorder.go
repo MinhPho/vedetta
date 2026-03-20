@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/storage"
+	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/storage"
 )
 
 // StorageStats contains aggregate storage information.

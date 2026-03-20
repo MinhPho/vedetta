@@ -1,15 +1,15 @@
 .PHONY: build build-capi run test bench lint clean fmt check docker-build docker-push
 
-BINARY := watchpost
+BINARY := vedetta
 BUILD_DIR := ./build
-DOCKER_IMAGE := ghcr.io/rvben/watchpost
+DOCKER_IMAGE := ghcr.io/rvben/vedetta
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 build:
-	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/watchpost
+	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
 
 build-capi:
-	go build -tags cgo_onnxruntime -o $(BUILD_DIR)/$(BINARY) ./cmd/watchpost
+	go build -tags cgo_onnxruntime -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
 
 run: build
 	$(BUILD_DIR)/$(BINARY) -config config.example.yml
@@ -25,7 +25,7 @@ lint:
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f watchpost.db
+	rm -f vedetta.db
 
 fmt:
 	gofmt -w .

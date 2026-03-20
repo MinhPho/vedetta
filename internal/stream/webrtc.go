@@ -74,7 +74,7 @@ func (sm *StreamManager) HandleOffer(cameraName, rtspURL string, offer webrtc.Se
 	videoTrack, err := webrtc.NewTrackLocalStaticRTP(
 		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264},
 		"video",
-		fmt.Sprintf("watchpost-%s", cameraName),
+		fmt.Sprintf("vedetta-%s", cameraName),
 	)
 	if err != nil {
 		_ = pc.Close()

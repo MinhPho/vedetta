@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rvben/watchpost/internal/detect"
+	"github.com/rvben/vedetta/internal/detect"
 )
 
 func newTestManager(cooldownSec int) *Manager {
 	return NewManager(Config{
 		CooldownSeconds: cooldownSec,
-		SnapshotPath:    "/tmp/watchpost-test-snapshots",
+		SnapshotPath:    "/tmp/vedetta-test-snapshots",
 		SnapshotQuality: 50,
 	})
 }

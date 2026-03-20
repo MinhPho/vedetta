@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/rvben/watchpost/internal/camera"
+	"github.com/rvben/vedetta/internal/camera"
 	_ "modernc.org/sqlite"
 )
 

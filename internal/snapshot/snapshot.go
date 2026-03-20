@@ -14,7 +14,7 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
-	"github.com/rvben/watchpost/internal/detect"
+	"github.com/rvben/vedetta/internal/detect"
 )
 
 // Label colors by detection class

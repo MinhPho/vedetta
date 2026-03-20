@@ -1,8 +1,8 @@
-# Watchpost Architecture
+# Vedetta Architecture
 
 ## Overview
 
-Watchpost is a native, cross-platform NVR (Network Video Recorder) with real-time AI
+Vedetta is a native, cross-platform NVR (Network Video Recorder) with real-time AI
 object detection. Written in Go for single-binary distribution.
 
 ## Design Principles
@@ -58,7 +58,7 @@ object detection. Written in Go for single-binary distribution.
 
 ## Key Differences from Frigate
 
-| Aspect | Frigate | Watchpost |
+| Aspect | Frigate | Vedetta |
 |--------|---------|-----------|
 | Distribution | Docker-only | Single binary |
 | Language | Python glue + C++ ML | Go + ONNX Runtime |
@@ -72,7 +72,7 @@ object detection. Written in Go for single-binary distribution.
 ## Directory Structure
 
 ```
-cmd/watchpost/          Entry point
+cmd/vedetta/          Entry point
 internal/
 ├── api/                HTTP API + WebSocket
 ├── camera/             RTSP stream management

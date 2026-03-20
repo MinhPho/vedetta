@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/rvben/watchpost/internal/detect/onnxruntime"
+	"github.com/rvben/vedetta/internal/detect/onnxruntime"
 )
 
 // GoBackend is the pure Go ONNX inference engine. It requires no external

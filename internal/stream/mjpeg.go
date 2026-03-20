@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	mjpegBoundary = "watchpostframe"
+	mjpegBoundary = "vedettaframe"
 	mjpegFPS      = 5
 )
 

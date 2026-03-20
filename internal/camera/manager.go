@@ -5,8 +5,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/rvben/watchpost/internal/config"
-	"github.com/rvben/watchpost/internal/detect"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/detect"
 )
 
 // Manager manages all camera streams.

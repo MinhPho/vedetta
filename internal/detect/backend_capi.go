@@ -183,7 +183,7 @@ func NewCAPIBackend(modelData []byte) (*CAPIBackend, error) {
 		return nil, fmt.Errorf("onnxruntime C API: failed to get API")
 	}
 
-	envName := C.CString("watchpost")
+	envName := C.CString("vedetta")
 	defer C.free(unsafe.Pointer(envName))
 	if err := b.check(C.ort_CreateEnv(b.api, C.ORT_LOGGING_LEVEL_WARNING, envName, &b.env)); err != nil {
 		b.Close()

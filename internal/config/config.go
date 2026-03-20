@@ -116,7 +116,7 @@ func Load(path string) (*Config, error) {
 			SnapshotQuality: 85,
 		},
 		Storage: StorageConfig{
-			DBPath: "./watchpost.db",
+			DBPath: "./vedetta.db",
 		},
 		API: APIConfig{
 			Host: "0.0.0.0",

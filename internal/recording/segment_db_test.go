@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rvben/watchpost/internal/storage"
+	"github.com/rvben/vedetta/internal/storage"
 )
 
 func TestSaveSegmentAndQueryRoundtrip(t *testing.T) {

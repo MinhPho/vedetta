@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/rvben/watchpost/internal/camera"
-	"github.com/rvben/watchpost/internal/config"
+	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/config"
 )
 
 // Publisher defines the interface for MQTT publishing operations.
@@ -29,14 +29,14 @@ type Client struct {
 func New(cfg config.MQTTConfig) (*Client, error) {
 	topic := cfg.Topic
 	if topic == "" {
-		topic = "watchpost"
+		topic = "vedetta"
 	}
 
 	availabilityTopic := topic + "/availability"
 
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(fmt.Sprintf("tcp://%s:%d", cfg.Host, cfg.Port)).
-		SetClientID("watchpost").
+		SetClientID("vedetta").
 		SetAutoReconnect(true).
 		SetWill(availabilityTopic, "offline", 1, true)
 
@@ -111,12 +111,12 @@ func (c *Client) PublishDiscovery(cameraNames []string) {
 }
 
 func (c *Client) publishCameraDiscovery(cameraName string) {
-	objectID := fmt.Sprintf("watchpost_%s", sanitizeName(cameraName))
+	objectID := fmt.Sprintf("vedetta_%s", sanitizeName(cameraName))
 
 	device := haDevice{
-		Identifiers:  []string{"watchpost_" + sanitizeName(cameraName)},
-		Name:         "Watchpost " + cameraName,
-		Manufacturer: "Watchpost",
+		Identifiers:  []string{"vedetta_" + sanitizeName(cameraName)},
+		Name:         "Vedetta " + cameraName,
+		Manufacturer: "Vedetta",
 		Model:        "NVR",
 	}
 
