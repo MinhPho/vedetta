@@ -8,10 +8,14 @@ package onnxruntime
 import "C"
 
 // sgemm uses Apple's Accelerate framework for SIMD-optimized matrix multiply.
-// C = A × B where A is (m×k), B is (k×n), C is (m×n).
+// For small matrices, falls back to pure Go to avoid CGo overhead.
 func sgemm(a []float32, b []float32, m, n, k int) []float32 {
-	c := make([]float32, m*n)
+	c := getGemmBuffer(m * n)
 	if m == 0 || n == 0 || k == 0 {
+		return c
+	}
+	if m*n < sgemmThreshold {
+		sgemmPureGo(a, b, c, m, n, k)
 		return c
 	}
 	C.cblas_sgemm(

@@ -125,3 +125,25 @@ func TestRunYOLOv8nInference(t *testing.T) {
 
 	t.Log("inference completed successfully")
 }
+
+func BenchmarkYOLOv8nInference(b *testing.B) {
+	modelData, err := os.ReadFile("/tmp/yolov8n.onnx")
+	if err != nil {
+		b.Skip("YOLOv8n model not found at /tmp/yolov8n.onnx")
+	}
+
+	session, err := NewSession(modelData)
+	if err != nil {
+		b.Fatal("create session:", err)
+	}
+
+	input := NewTensor([]int64{1, 3, 640, 640}, nil)
+
+	// Warm up
+	session.Run(map[string]*Tensor{"images": input})
+
+	b.ResetTimer()
+	for range b.N {
+		session.Run(map[string]*Tensor{"images": input})
+	}
+}

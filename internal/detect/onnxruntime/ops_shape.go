@@ -80,7 +80,7 @@ func opConcat(inputs []*Tensor, attrs *Attributes) ([]*Tensor, error) {
 	outShape := make([]int64, ndim)
 	copy(outShape, inputs[0].Shape)
 	for _, inp := range inputs[1:] {
-		for d := 0; d < ndim; d++ {
+		for d := range ndim {
 			if d == axis {
 				outShape[d] += inp.Shape[d]
 			} else if inp.Shape[d] != outShape[d] {
@@ -89,29 +89,32 @@ func opConcat(inputs []*Tensor, attrs *Attributes) ([]*Tensor, error) {
 		}
 	}
 
-	out := NewTensor(outShape, nil)
-	outStrides := out.Strides()
+	out := newTensorUninit(outShape)
 
-	// For each input, copy blocks along the concat axis
-	axisOffset := int64(0)
-	for _, inp := range inputs {
-		inpStrides := inp.Strides()
-		size := inp.Size()
-		for i := 0; i < size; i++ {
-			// Decompose flat index into coordinates
-			rem := int64(i)
-			outIdx := int64(0)
-			for d := 0; d < ndim; d++ {
-				coord := rem / inpStrides[d]
-				rem %= inpStrides[d]
-				if d == axis {
-					coord += axisOffset
-				}
-				outIdx += coord * outStrides[d]
-			}
-			out.Data[outIdx] = inp.Data[i]
+	// Compute outerSize (product of dims before axis) and innerSize (product of dims after axis)
+	outerSize := 1
+	for d := 0; d < axis; d++ {
+		outerSize *= int(outShape[d])
+	}
+	innerSize := 1
+	for d := axis + 1; d < ndim; d++ {
+		innerSize *= int(outShape[d])
+	}
+
+	// Total output axis size for stride computation
+	outAxisSize := int(outShape[axis])
+
+	// For each outer position, copy contiguous blocks from each input
+	for outer := range outerSize {
+		axisOffset := 0
+		for _, inp := range inputs {
+			inpAxisSize := int(inp.Shape[axis])
+			blockSize := inpAxisSize * innerSize
+			srcBase := outer * blockSize
+			dstBase := outer*outAxisSize*innerSize + axisOffset*innerSize
+			copy(out.Data[dstBase:dstBase+blockSize], inp.Data[srcBase:srcBase+blockSize])
+			axisOffset += inpAxisSize
 		}
-		axisOffset += inp.Shape[axis]
 	}
 
 	return []*Tensor{out}, nil
@@ -261,34 +264,36 @@ func opSplit(inputs []*Tensor, attrs *Attributes) ([]*Tensor, error) {
 	}
 
 	results := make([]*Tensor, len(splits))
-	offset := int64(0)
-	inStrides := data.Strides()
 
+	// Compute outerSize (product of dims before axis) and innerSize (product of dims after axis)
+	outerSize := 1
+	for d := 0; d < axis; d++ {
+		outerSize *= int(data.Shape[d])
+	}
+	innerSize := 1
+	for d := axis + 1; d < ndim; d++ {
+		innerSize *= int(data.Shape[d])
+	}
+	inAxisSize := int(dimSize)
+
+	axisOffset := 0
 	for si, splitSize := range splits {
+		ss := int(splitSize)
 		outShape := make([]int64, ndim)
 		copy(outShape, data.Shape)
 		outShape[axis] = splitSize
 
 		out := NewTensor(outShape, nil)
-		outStrides := out.Strides()
-		outSize := out.Size()
+		blockSize := ss * innerSize
 
-		for i := 0; i < outSize; i++ {
-			rem := int64(i)
-			inIdx := int64(0)
-			for d := 0; d < ndim; d++ {
-				coord := rem / outStrides[d]
-				rem %= outStrides[d]
-				if d == axis {
-					coord += offset
-				}
-				inIdx += coord * inStrides[d]
-			}
-			out.Data[i] = data.Data[inIdx]
+		for outer := range outerSize {
+			srcBase := outer*inAxisSize*innerSize + axisOffset*innerSize
+			dstBase := outer * blockSize
+			copy(out.Data[dstBase:dstBase+blockSize], data.Data[srcBase:srcBase+blockSize])
 		}
 
 		results[si] = out
-		offset += splitSize
+		axisOffset += ss
 	}
 
 	return results, nil

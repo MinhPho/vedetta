@@ -70,26 +70,86 @@ func opMaxPool(inputs []*Tensor, attrs *Attributes) ([]*Tensor, error) {
 		outW = (W+padLeft+padRight-effKW)/strideW + 1
 	}
 
-	output := NewTensor([]int64{int64(N), int64(C), int64(outH), int64(outW)}, nil)
+	output := newTensorUninit([]int64{int64(N), int64(C), int64(outH), int64(outW)})
 
-	for n := 0; n < N; n++ {
-		for c := 0; c < C; c++ {
-			for oh := 0; oh < outH; oh++ {
-				for ow := 0; ow < outW; ow++ {
-					maxVal := float32(math.Inf(-1))
-					for kh := 0; kh < kH; kh++ {
-						ih := oh*strideH - padTop + kh*dilH
-						for kw := 0; kw < kW; kw++ {
-							iw := ow*strideW - padLeft + kw*dilW
-							if ih >= 0 && ih < H && iw >= 0 && iw < W {
-								v := x.Data[((n*C+c)*H+ih)*W+iw]
+	noPad := padTop == 0 && padLeft == 0 && padBottom == 0 && padRight == 0
+	noDil := dilH == 1 && dilW == 1
+
+	if noPad && noDil && ceilMode == 0 && kH == 2 && kW == 2 && strideH == 2 && strideW == 2 {
+		// Fast path for common 2×2 stride 2 max pool (no padding)
+		for n := range N {
+			for c := range C {
+				inBase := (n*C + c) * H * W
+				outBase := (n*C + c) * outH * outW
+				for oh := range outH {
+					ih := oh * 2
+					r0 := inBase + ih*W
+					r1 := r0 + W
+					for ow := range outW {
+						iw := ow * 2
+						v0 := x.Data[r0+iw]
+						v1 := x.Data[r0+iw+1]
+						v2 := x.Data[r1+iw]
+						v3 := x.Data[r1+iw+1]
+						m := v0
+						if v1 > m {
+							m = v1
+						}
+						if v2 > m {
+							m = v2
+						}
+						if v3 > m {
+							m = v3
+						}
+						output.Data[outBase+oh*outW+ow] = m
+					}
+				}
+			}
+		}
+	} else if noPad && noDil && ceilMode == 0 {
+		// No padding, no dilation: skip bounds checks entirely
+		for n := range N {
+			for c := range C {
+				inBase := (n*C + c) * H * W
+				outBase := (n*C + c) * outH * outW
+				for oh := range outH {
+					for ow := range outW {
+						maxVal := float32(math.Inf(-1))
+						for kh := range kH {
+							ih := oh*strideH + kh
+							rowBase := inBase + ih*W
+							for kw := range kW {
+								v := x.Data[rowBase+ow*strideW+kw]
 								if v > maxVal {
 									maxVal = v
 								}
 							}
 						}
+						output.Data[outBase+oh*outW+ow] = maxVal
 					}
-					output.Data[((n*C+c)*outH+oh)*outW+ow] = maxVal
+				}
+			}
+		}
+	} else {
+		for n := range N {
+			for c := range C {
+				for oh := range outH {
+					for ow := range outW {
+						maxVal := float32(math.Inf(-1))
+						for kh := range kH {
+							ih := oh*strideH - padTop + kh*dilH
+							for kw := range kW {
+								iw := ow*strideW - padLeft + kw*dilW
+								if ih >= 0 && ih < H && iw >= 0 && iw < W {
+									v := x.Data[((n*C+c)*H+ih)*W+iw]
+									if v > maxVal {
+										maxVal = v
+									}
+								}
+							}
+						}
+						output.Data[((n*C+c)*outH+oh)*outW+ow] = maxVal
+					}
 				}
 			}
 		}

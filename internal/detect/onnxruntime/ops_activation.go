@@ -11,25 +11,52 @@ func init() {
 	Register("Softmax", opSoftmax)
 }
 
+// sigmoidLUT is a lookup table for sigmoid over [-8, 8] with 2048 entries.
+// Using a LUT with linear interpolation is ~10x faster than math.Exp.
+var sigmoidLUT [sigmoidLUTSize + 1]float32
+
+const (
+	sigmoidLUTSize = 2048
+	sigmoidLUTMin  = -8.0
+	sigmoidLUTMax  = 8.0
+	sigmoidLUTRange = sigmoidLUTMax - sigmoidLUTMin
+	sigmoidLUTScale = sigmoidLUTSize / sigmoidLUTRange
+)
+
+func init() {
+	for i := range sigmoidLUTSize + 1 {
+		x := sigmoidLUTMin + float64(i)/float64(sigmoidLUTSize)*sigmoidLUTRange
+		sigmoidLUT[i] = float32(1.0 / (1.0 + math.Exp(-x)))
+	}
+}
+
 func opSigmoid(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 	if len(inputs) < 1 {
 		return nil, fmt.Errorf("Sigmoid requires 1 input, got %d", len(inputs))
 	}
 	x := inputs[0]
-	out := NewTensor(x.Shape, nil)
+	out := newTensorUninit(x.Shape)
 
 	for i, v := range x.Data {
-		// Clamp to avoid overflow in exp()
-		clamped := v
-		if clamped < -88 {
-			clamped = -88
-		} else if clamped > 88 {
-			clamped = 88
-		}
-		out.Data[i] = 1.0 / (1.0 + float32(math.Exp(float64(-clamped))))
+		out.Data[i] = fastSigmoid(v)
 	}
 
 	return []*Tensor{out}, nil
+}
+
+// fastSigmoid computes 1/(1+exp(-x)) using a lookup table with linear interpolation.
+func fastSigmoid(x float32) float32 {
+	if x <= sigmoidLUTMin {
+		return sigmoidLUT[0]
+	}
+	if x >= sigmoidLUTMax {
+		return sigmoidLUT[sigmoidLUTSize]
+	}
+	// Map x to LUT index
+	pos := (x - sigmoidLUTMin) * sigmoidLUTScale
+	idx := int(pos)
+	frac := pos - float32(idx)
+	return sigmoidLUT[idx] + frac*(sigmoidLUT[idx+1]-sigmoidLUT[idx])
 }
 
 func opRelu(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
@@ -37,11 +64,13 @@ func opRelu(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 		return nil, fmt.Errorf("Relu requires 1 input, got %d", len(inputs))
 	}
 	x := inputs[0]
-	out := NewTensor(x.Shape, nil)
+	out := newTensorUninit(x.Shape)
 
 	for i, v := range x.Data {
 		if v > 0 {
 			out.Data[i] = v
+		} else {
+			out.Data[i] = 0
 		}
 	}
 
