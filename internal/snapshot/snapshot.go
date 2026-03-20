@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"bufio"
 	"fmt"
 	"image"
 	"image/color"
@@ -31,20 +32,25 @@ var labelColors = map[string]color.RGBA{
 
 var defaultColor = color.RGBA{R: 0, G: 255, B: 255, A: 255} // Cyan
 
-// DrawDetections draws bounding boxes and labels onto an image.
+// DrawDetections draws bounding boxes and labels onto a copy of the image.
 func DrawDetections(img *image.RGBA, detections []detect.Detection) *image.RGBA {
 	bounds := img.Bounds()
 	out := image.NewRGBA(bounds)
 	draw.Draw(out, bounds, img, bounds.Min, draw.Src)
 
-	for _, d := range detections {
-		c := colorForLabel(d.Label)
-		drawBox(out, d.Box, c)
-		label := fmt.Sprintf("%s %.0f%%", d.Label, d.Score*100)
-		drawLabel(out, d.Box[0], d.Box[1]-2, label, c)
-	}
+	DrawDetectionsInPlace(out, detections)
 
 	return out
+}
+
+// DrawDetectionsInPlace draws bounding boxes and labels directly onto the image.
+func DrawDetectionsInPlace(img *image.RGBA, detections []detect.Detection) {
+	for _, d := range detections {
+		c := colorForLabel(d.Label)
+		drawBox(img, d.Box, c)
+		label := fmt.Sprintf("%s %.0f%%", d.Label, d.Score*100)
+		drawLabel(img, d.Box[0], d.Box[1]-2, label, c)
+	}
 }
 
 func colorForLabel(label string) color.RGBA {
@@ -54,49 +60,81 @@ func colorForLabel(label string) color.RGBA {
 	return defaultColor
 }
 
-// drawBox draws a 2-pixel thick rectangle on the image.
+// drawBox draws a 2-pixel thick rectangle on the image using direct Pix slice access.
 func drawBox(img *image.RGBA, box [4]int, c color.RGBA) {
 	x1, y1, x2, y2 := box[0], box[1], box[2], box[3]
 	bounds := img.Bounds()
 
 	// Clamp to image bounds
-	if x1 < bounds.Min.X { x1 = bounds.Min.X }
-	if y1 < bounds.Min.Y { y1 = bounds.Min.Y }
-	if x2 > bounds.Max.X { x2 = bounds.Max.X }
-	if y2 > bounds.Max.Y { y2 = bounds.Max.Y }
+	if x1 < bounds.Min.X {
+		x1 = bounds.Min.X
+	}
+	if y1 < bounds.Min.Y {
+		y1 = bounds.Min.Y
+	}
+	if x2 > bounds.Max.X {
+		x2 = bounds.Max.X
+	}
+	if y2 > bounds.Max.Y {
+		y2 = bounds.Max.Y
+	}
 
+	if x1 >= x2 || y1 >= y2 {
+		return
+	}
+
+	stride := img.Stride
+	pix := img.Pix
+	minX := bounds.Min.X
+	minY := bounds.Min.Y
 	thickness := 2
+
+	setPixel := func(x, y int) {
+		off := (y-minY)*stride + (x-minX)*4
+		pix[off] = c.R
+		pix[off+1] = c.G
+		pix[off+2] = c.B
+		pix[off+3] = c.A
+	}
 
 	// Top edge
 	for t := 0; t < thickness; t++ {
 		y := y1 + t
-		if y >= bounds.Max.Y { break }
+		if y >= bounds.Max.Y {
+			break
+		}
 		for x := x1; x < x2; x++ {
-			img.SetRGBA(x, y, c)
+			setPixel(x, y)
 		}
 	}
 	// Bottom edge
 	for t := 0; t < thickness; t++ {
 		y := y2 - 1 - t
-		if y < bounds.Min.Y { break }
+		if y < bounds.Min.Y {
+			break
+		}
 		for x := x1; x < x2; x++ {
-			img.SetRGBA(x, y, c)
+			setPixel(x, y)
 		}
 	}
 	// Left edge
 	for t := 0; t < thickness; t++ {
 		x := x1 + t
-		if x >= bounds.Max.X { break }
+		if x >= bounds.Max.X {
+			break
+		}
 		for y := y1; y < y2; y++ {
-			img.SetRGBA(x, y, c)
+			setPixel(x, y)
 		}
 	}
 	// Right edge
 	for t := 0; t < thickness; t++ {
 		x := x2 - 1 - t
-		if x < bounds.Min.X { break }
+		if x < bounds.Min.X {
+			break
+		}
 		for y := y1; y < y2; y++ {
-			img.SetRGBA(x, y, c)
+			setPixel(x, y)
 		}
 	}
 }
@@ -148,14 +186,24 @@ func SaveSnapshot(img *image.RGBA, path string, quality int) error {
 	if err != nil {
 		return fmt.Errorf("create file: %w", err)
 	}
-	defer f.Close()
 
 	if quality <= 0 || quality > 100 {
 		quality = 85
 	}
 
-	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: quality}); err != nil {
+	w := bufio.NewWriter(f)
+	if err := jpeg.Encode(w, img, &jpeg.Options{Quality: quality}); err != nil {
+		f.Close()
 		return fmt.Errorf("encode jpeg: %w", err)
+	}
+
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return fmt.Errorf("flush buffer: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close file: %w", err)
 	}
 
 	return nil
