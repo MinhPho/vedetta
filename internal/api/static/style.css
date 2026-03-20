@@ -77,6 +77,93 @@
   --dur-slow: 350ms;
 }
 
+/* ─── Light Theme ─── */
+[data-theme="light"] {
+  --void: #f0f2f5;
+  --base: #ffffff;
+  --surface-1: #f8f9fa;
+  --surface-2: #f0f2f5;
+  --surface-3: #e8eaed;
+  --surface-raised: #ffffff;
+  --surface-overlay: rgba(255, 255, 255, 0.92);
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --border-accent: rgba(0, 151, 167, 0.3);
+
+  --text-primary: #1a1a2e;
+  --text-secondary: #5a6577;
+  --text-tertiary: #8b95a5;
+  --text-inverse: #ffffff;
+
+  --cyan: #0097a7;
+  --cyan-dim: #00838f;
+  --cyan-glow: rgba(0, 151, 167, 0.12);
+  --cyan-ghost: rgba(0, 151, 167, 0.06);
+
+  --green: #2e7d32;
+  --green-dim: rgba(46, 125, 50, 0.12);
+  --red: #c62828;
+  --red-dim: rgba(198, 40, 40, 0.12);
+  --amber: #f57f17;
+  --amber-dim: rgba(245, 127, 23, 0.12);
+
+  --label-person: #0097a7;
+  --label-car: #1565c0;
+  --label-dog: #f57f17;
+  --label-cat: #7b1fa2;
+}
+
+[data-theme="light"] .topnav {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .bottom-tabs {
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .toast {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .cam-live-badge,
+[data-theme="light"] .event-label-badge,
+[data-theme="light"] .event-score-badge,
+[data-theme="light"] .cam-fps {
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .event-label-badge.person { color: var(--label-person); }
+[data-theme="light"] .event-label-badge.car { color: var(--label-car); }
+[data-theme="light"] .event-label-badge.dog { color: var(--label-dog); }
+[data-theme="light"] .event-label-badge.cat { color: var(--label-cat); }
+[data-theme="light"] .event-score-badge { color: var(--green); }
+
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
+
+/* ─── Connection Status ─── */
+.conn-status {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.conn-dot.ok { background: var(--green); }
+.conn-dot.error { background: var(--red); animation: pulse-dot 1s infinite; }
+
 /* ─── Reset ─── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -816,6 +903,30 @@ input, select { font-family: inherit; }
   color: var(--text-tertiary);
 }
 
+/* Timeline tooltip */
+.timeline-tooltip {
+  position: absolute;
+  bottom: calc(100% - 2.5rem);
+  padding: 0.375rem 0.625rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.timeline-tooltip strong {
+  text-transform: capitalize;
+  color: var(--cyan);
+}
+
 /* ─── Buttons ─── */
 .btn {
   display: inline-flex;
@@ -1200,6 +1311,55 @@ kbd {
   }
   .stat-card:first-child { border-radius: var(--radius-md) var(--radius-md) 0 0 !important; }
   .stat-card:last-child { border-radius: 0 0 var(--radius-md) var(--radius-md) !important; }
+}
+
+/* ─── Transitions & Animations ─── */
+
+/* Page enter animation */
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.page {
+  animation: page-enter var(--dur-normal) var(--ease-out) both;
+}
+
+/* Fade-in for cards loaded via htmx */
+.fade-in {
+  animation: fade-in var(--dur-normal) var(--ease-out) both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.10s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.20s; }
+
+/* htmx swap transitions */
+.htmx-swapping {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--dur-fast) var(--ease-out),
+              transform var(--dur-fast) var(--ease-out);
+}
+
+.htmx-settling {
+  transition: opacity var(--dur-normal) var(--ease-out),
+              transform var(--dur-normal) var(--ease-out);
+}
+
+/* Snapshot crossfade: prevent flash on htmx refresh */
+.cam-preview img {
+  transition: opacity var(--dur-normal) var(--ease-out);
+}
+
+.cam-preview img.crossfade-hold {
+  opacity: 1 !important;
 }
 
 /* ─── Print ─── */

@@ -195,6 +195,7 @@ function initTimeline() {
   timelineDate = new Date();
   updateTimelineDate();
   updatePlayheadToNow();
+  fetchTimelineData();
 
   const track = el('timeline-track');
   if (!track) return;
@@ -250,12 +251,14 @@ function timelineNav(delta) {
   timelineDate.setDate(timelineDate.getDate() + delta);
   updateTimelineDate();
   updatePlayheadToNow();
+  fetchTimelineData();
 }
 
 function timelineToday() {
   timelineDate = new Date();
   updateTimelineDate();
   updatePlayheadToNow();
+  fetchTimelineData();
 }
 
 function updateTimelineDate() {
@@ -290,6 +293,114 @@ function updatePlayheadToNow() {
     playhead.style.left = '0%';
     playhead.style.display = 'none';
   }
+}
+
+function fetchTimelineData() {
+  var name = getCameraName();
+  if (!name) return;
+
+  var dateStr = timelineDate.getFullYear() + '-' +
+    String(timelineDate.getMonth() + 1).padStart(2, '0') + '-' +
+    String(timelineDate.getDate()).padStart(2, '0');
+
+  fetch('/api/cameras/' + encodeURIComponent(name) + '/timeline?date=' + dateStr)
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function(data) {
+      renderTimelineSegments(data.segments || []);
+      renderTimelineEvents(data.events || []);
+    })
+    .catch(function(err) {
+      console.error('Timeline fetch error:', err);
+    });
+}
+
+function renderTimelineSegments(segments) {
+  var track = el('timeline-track');
+  if (!track) return;
+
+  // Remove existing segments
+  track.querySelectorAll('.timeline-segment').forEach(function(s) { s.remove(); });
+
+  segments.forEach(function(seg) {
+    var start = new Date(seg.start_time);
+    var end = new Date(seg.end_time);
+    var startPct = (start.getUTCHours() * 60 + start.getUTCMinutes()) / (24 * 60) * 100;
+    var endPct = (end.getUTCHours() * 60 + end.getUTCMinutes()) / (24 * 60) * 100;
+    var widthPct = endPct - startPct;
+    if (widthPct < 0.1) widthPct = 0.1;
+
+    var div = document.createElement('div');
+    div.className = 'timeline-segment';
+    div.style.left = startPct + '%';
+    div.style.width = widthPct + '%';
+    track.insertBefore(div, track.querySelector('.timeline-playhead'));
+  });
+}
+
+function renderTimelineEvents(events) {
+  var track = el('timeline-track');
+  if (!track) return;
+
+  // Remove existing event markers and tooltips
+  track.querySelectorAll('.timeline-event').forEach(function(e) { e.remove(); });
+  document.querySelectorAll('.timeline-tooltip').forEach(function(t) { t.remove(); });
+
+  events.forEach(function(evt) {
+    var ts = new Date(evt.timestamp);
+    var pct = (ts.getUTCHours() * 60 + ts.getUTCMinutes()) / (24 * 60) * 100;
+    var timeStr = String(ts.getUTCHours()).padStart(2, '0') + ':' +
+      String(ts.getUTCMinutes()).padStart(2, '0') + ':' +
+      String(ts.getUTCSeconds()).padStart(2, '0');
+    var scoreStr = Math.round(evt.score * 100) + '%';
+
+    var dot = document.createElement('div');
+    dot.className = 'timeline-event ' + evt.label;
+    dot.style.left = pct + '%';
+    dot.title = evt.label + ' at ' + timeStr + ' (' + scoreStr + ')';
+
+    dot.addEventListener('mouseenter', function(e) {
+      showTimelineTooltip(dot, evt.label, timeStr, scoreStr);
+    });
+
+    dot.addEventListener('mouseleave', function() {
+      hideTimelineTooltip();
+    });
+
+    dot.addEventListener('click', function(e) {
+      e.stopPropagation();
+      location.href = '/event.html?id=' + encodeURIComponent(evt.id);
+    });
+
+    track.insertBefore(dot, track.querySelector('.timeline-playhead'));
+  });
+}
+
+function showTimelineTooltip(anchor, label, time, score) {
+  hideTimelineTooltip();
+
+  var tooltip = document.createElement('div');
+  tooltip.className = 'timeline-tooltip';
+  tooltip.innerHTML = '<strong>' + label + '</strong><br>' + time + '<br>' + score;
+
+  var container = el('timeline-container');
+  if (!container) return;
+  container.appendChild(tooltip);
+
+  var anchorRect = anchor.getBoundingClientRect();
+  var containerRect = container.getBoundingClientRect();
+  var tooltipWidth = tooltip.offsetWidth;
+
+  var left = anchorRect.left + anchorRect.width / 2 - containerRect.left - tooltipWidth / 2;
+  left = Math.max(4, Math.min(left, containerRect.width - tooltipWidth - 4));
+
+  tooltip.style.left = left + 'px';
+}
+
+function hideTimelineTooltip() {
+  document.querySelectorAll('.timeline-tooltip').forEach(function(t) { t.remove(); });
 }
 
 // ─── Filter Chips ───
@@ -364,15 +475,11 @@ function renderCalendar() {
     const cell = document.createElement('button');
     cell.className = 'calendar-day';
     cell.textContent = d;
+    cell.dataset.day = d;
 
     const cellDate = new Date(year, month, d);
     if (cellDate.toDateString() === today.toDateString()) {
       cell.classList.add('today');
-    }
-
-    // Has data check would come from the API
-    if (cellDate <= today) {
-      cell.classList.add('has-data');
     }
 
     cell.onclick = function() {
@@ -383,6 +490,39 @@ function renderCalendar() {
 
     grid.appendChild(cell);
   }
+
+  // Fetch real recording days from API
+  const monthStr = year + '-' + String(month + 1).padStart(2, '0');
+  const camera = el('rec-camera')?.value || '';
+  let url = '/api/recordings/calendar?month=' + monthStr;
+  if (camera) url += '&camera=' + encodeURIComponent(camera);
+
+  fetch(url)
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      const daysWithData = new Set(data.days || []);
+      grid.querySelectorAll('.calendar-day[data-day]').forEach(function(cell) {
+        const day = parseInt(cell.dataset.day, 10);
+        if (daysWithData.has(day)) {
+          cell.classList.add('has-data');
+        }
+      });
+
+      // Auto-select: today if it has data, otherwise most recent day with data
+      const todayDay = (today.getFullYear() === year && today.getMonth() === month) ? today.getDate() : null;
+      let selectDay = null;
+      if (todayDay && daysWithData.has(todayDay)) {
+        selectDay = todayDay;
+      } else if (daysWithData.size > 0) {
+        selectDay = Math.max.apply(null, Array.from(daysWithData));
+      }
+
+      if (selectDay) {
+        const btn = grid.querySelector('.calendar-day[data-day="' + selectDay + '"]');
+        if (btn) btn.click();
+      }
+    })
+    .catch(function(err) { console.error('Failed to load calendar data:', err); });
 }
 
 function loadRecordingsForDate(date) {
@@ -398,10 +538,7 @@ function loadRecordingsForDate(date) {
 }
 
 function loadRecordings() {
-  const selected = document.querySelector('.calendar-day.selected');
-  if (selected) {
-    selected.click();
-  }
+  renderCalendar();
 }
 
 // ─── Keyboard Shortcuts ───
@@ -433,6 +570,16 @@ document.addEventListener('keydown', function(e) {
     case 'F':
       if (el('live-viewport')) toggleFullscreen();
       break;
+    case 'ArrowLeft': {
+      var prev = document.querySelector('[data-prev-id]');
+      if (prev) { location.href = prev.href; e.preventDefault(); }
+      break;
+    }
+    case 'ArrowRight': {
+      var next = document.querySelector('[data-next-id]');
+      if (next) { location.href = next.href; e.preventDefault(); }
+      break;
+    }
     case 'Escape':
       if (document.fullscreenElement) {
         document.exitFullscreen();
@@ -455,12 +602,135 @@ document.addEventListener('keydown', function(e) {
   }
 });
 
-// ─── HTMX error handling ───
+// ─── Theme Toggle ───
+function initTheme() {
+  var saved = localStorage.getItem('watchpost-theme');
+  if (saved === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+  updateThemeUI();
+}
+
+function toggleTheme() {
+  var current = document.documentElement.getAttribute('data-theme');
+  var next = current === 'light' ? 'dark' : 'light';
+
+  if (next === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+
+  localStorage.setItem('watchpost-theme', next);
+  updateThemeUI();
+}
+
+function updateThemeUI() {
+  var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  var iconDark = document.getElementById('theme-icon-dark');
+  var iconLight = document.getElementById('theme-icon-light');
+  var meta = document.querySelector('meta[name="theme-color"]');
+
+  if (iconDark) iconDark.style.display = isLight ? 'none' : '';
+  if (iconLight) iconLight.style.display = isLight ? '' : 'none';
+  if (meta) meta.setAttribute('content', isLight ? '#ffffff' : '#0a0e14');
+}
+
+initTheme();
+
+// ─── Connection Status ───
+var connDebounceTimer = null;
+
+function setConnStatus(ok) {
+  var dot = document.getElementById('conn-dot');
+  var label = document.getElementById('conn-label');
+  if (!dot || !label) return;
+
+  if (ok) {
+    dot.className = 'conn-dot ok';
+    label.textContent = 'Connected';
+  } else {
+    dot.className = 'conn-dot error';
+    label.textContent = 'Reconnecting...';
+  }
+}
+
+document.addEventListener('htmx:sendError', function() {
+  clearTimeout(connDebounceTimer);
+  setConnStatus(false);
+});
+
 document.addEventListener('htmx:responseError', function(e) {
   console.error('HTMX error:', e.detail);
+  clearTimeout(connDebounceTimer);
+  setConnStatus(false);
+});
+
+document.addEventListener('htmx:afterRequest', function(e) {
+  if (!e.detail.failed) {
+    clearTimeout(connDebounceTimer);
+    connDebounceTimer = setTimeout(function() {
+      setConnStatus(true);
+    }, 300);
+  }
 });
 
 // ─── Page visibility: pause updates when hidden ───
 document.addEventListener('visibilitychange', function() {
   // htmx will handle this via polling triggers
+});
+
+// ─── Snapshot Crossfade ───
+// Capture current image sources before camera grid swap to prevent flash
+let cachedSnapshotSrcs = {};
+
+document.addEventListener('htmx:beforeSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'camera-grid') {
+    cachedSnapshotSrcs = {};
+    var imgs = e.detail.target.querySelectorAll('.cam-preview img');
+    imgs.forEach(function(img) {
+      if (img.src && img.naturalWidth > 0) {
+        cachedSnapshotSrcs[img.src] = true;
+      }
+    });
+  }
+});
+
+document.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'camera-grid') {
+    var imgs = e.detail.target.querySelectorAll('.cam-preview img');
+    imgs.forEach(function(img) {
+      if (cachedSnapshotSrcs[img.src]) {
+        // Same image, skip the fade — hold at full opacity
+        img.classList.add('crossfade-hold');
+        setTimeout(function() { img.classList.remove('crossfade-hold'); }, 50);
+      }
+    });
+    cachedSnapshotSrcs = {};
+  }
+});
+
+// ─── Staggered Fade-In ───
+// Apply fade-in classes to cards after htmx swaps
+document.addEventListener('htmx:afterSwap', function(e) {
+  var target = e.detail.target;
+  if (!target) return;
+
+  // Stagger stat cards
+  var statCards = target.querySelectorAll('.stat-card');
+  statCards.forEach(function(card, i) {
+    card.classList.add('fade-in', 'stagger-' + Math.min(i + 1, 4));
+  });
+
+  // Stagger camera cards
+  var camCards = target.querySelectorAll('.cam-card');
+  camCards.forEach(function(card, i) {
+    card.classList.add('fade-in', 'stagger-' + Math.min(i + 1, 4));
+  });
+
+  // Stagger event cards
+  var eventCards = target.querySelectorAll('.event-card');
+  eventCards.forEach(function(card, i) {
+    card.classList.add('fade-in', 'stagger-' + Math.min(i + 1, 4));
+  });
 });
