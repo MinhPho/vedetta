@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func newTestDB(t *testing.T) *DB {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -37,6 +38,20 @@ func makeSegment(cam, path string, start, end time.Time, size int64) SegmentReco
 		StartTime: start,
 		EndTime:   end,
 		SizeBytes: size,
+	}
+}
+
+func mustSaveEvent(t *testing.T, db *DB, e camera.Event) {
+	t.Helper()
+	if err := db.SaveEvent(e); err != nil {
+		t.Fatalf("SaveEvent(%s): %v", e.ID, err)
+	}
+}
+
+func mustSaveSegment(t *testing.T, db *DB, s SegmentRecord) {
+	t.Helper()
+	if err := db.SaveSegment(s); err != nil {
+		t.Fatalf("SaveSegment(%s): %v", s.Path, err)
 	}
 }
 
@@ -143,9 +158,9 @@ func TestQueryEvents_FilterByCamera(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveEvent(makeEvent("e1", "cam1", "person", 0.9, ts))
-	db.SaveEvent(makeEvent("e2", "cam2", "person", 0.8, ts))
-	db.SaveEvent(makeEvent("e3", "cam1", "car", 0.7, ts))
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam2", "person", 0.8, ts))
+	mustSaveEvent(t, db, makeEvent("e3", "cam1", "car", 0.7, ts))
 
 	events, err := db.QueryEvents("cam1", "", 0, 0)
 	if err != nil {
@@ -165,9 +180,9 @@ func TestQueryEvents_FilterByLabel(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveEvent(makeEvent("e1", "cam1", "person", 0.9, ts))
-	db.SaveEvent(makeEvent("e2", "cam1", "car", 0.8, ts))
-	db.SaveEvent(makeEvent("e3", "cam2", "person", 0.7, ts))
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "car", 0.8, ts))
+	mustSaveEvent(t, db, makeEvent("e3", "cam2", "person", 0.7, ts))
 
 	events, err := db.QueryEvents("", "person", 0, 0)
 	if err != nil {
@@ -188,7 +203,7 @@ func TestQueryEvents_WithLimit(t *testing.T) {
 	ts := time.Now().UTC()
 
 	for i := range 5 {
-		db.SaveEvent(makeEvent("e"+string(rune('0'+i)), "cam1", "person", 0.9, ts.Add(time.Duration(i)*time.Minute)))
+		mustSaveEvent(t, db, makeEvent("e"+string(rune('0'+i)), "cam1", "person", 0.9, ts.Add(time.Duration(i)*time.Minute)))
 	}
 
 	events, err := db.QueryEvents("", "", 2, 0)
@@ -204,10 +219,10 @@ func TestQueryEvents_FilterByCameraAndLabel(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveEvent(makeEvent("e1", "cam1", "person", 0.9, ts))
-	db.SaveEvent(makeEvent("e2", "cam1", "car", 0.8, ts))
-	db.SaveEvent(makeEvent("e3", "cam2", "person", 0.7, ts))
-	db.SaveEvent(makeEvent("e4", "cam2", "car", 0.6, ts))
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "car", 0.8, ts))
+	mustSaveEvent(t, db, makeEvent("e3", "cam2", "person", 0.7, ts))
+	mustSaveEvent(t, db, makeEvent("e4", "cam2", "car", 0.6, ts))
 
 	events, err := db.QueryEvents("cam1", "person", 0, 0)
 	if err != nil {
@@ -227,9 +242,9 @@ func TestQueryEvents_OrderByTimestampDesc(t *testing.T) {
 	t2 := time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC)
 	t3 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-	db.SaveEvent(makeEvent("e1", "cam1", "person", 0.9, t1))
-	db.SaveEvent(makeEvent("e2", "cam1", "person", 0.9, t3))
-	db.SaveEvent(makeEvent("e3", "cam1", "person", 0.9, t2))
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, t1))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "person", 0.9, t3))
+	mustSaveEvent(t, db, makeEvent("e3", "cam1", "person", 0.9, t2))
 
 	events, err := db.QueryEvents("", "", 0, 0)
 	if err != nil {
@@ -246,9 +261,9 @@ func TestCountEventsToday(t *testing.T) {
 	today := now.Truncate(24 * time.Hour).Add(1 * time.Hour) // 01:00 today
 	yesterday := today.Add(-25 * time.Hour)
 
-	db.SaveEvent(makeEvent("today1", "cam1", "person", 0.9, today))
-	db.SaveEvent(makeEvent("today2", "cam1", "car", 0.8, today.Add(time.Hour)))
-	db.SaveEvent(makeEvent("yesterday1", "cam1", "person", 0.7, yesterday))
+	mustSaveEvent(t, db, makeEvent("today1", "cam1", "person", 0.9, today))
+	mustSaveEvent(t, db, makeEvent("today2", "cam1", "car", 0.8, today.Add(time.Hour)))
+	mustSaveEvent(t, db, makeEvent("yesterday1", "cam1", "person", 0.7, yesterday))
 
 	count, err := db.CountEventsToday()
 	if err != nil {
@@ -262,7 +277,7 @@ func TestCountEventsToday(t *testing.T) {
 func TestUpdateEventClipPath(t *testing.T) {
 	db := newTestDB(t)
 	ev := makeEvent("clip-test", "cam1", "person", 0.9, time.Now().UTC())
-	db.SaveEvent(ev)
+	mustSaveEvent(t, db, ev)
 
 	if err := db.UpdateEventClipPath("clip-test", "/clips/new.mp4"); err != nil {
 		t.Fatalf("UpdateEventClipPath: %v", err)
@@ -277,7 +292,7 @@ func TestUpdateEventClipPath(t *testing.T) {
 func TestUpdateEventSnapshotPath(t *testing.T) {
 	db := newTestDB(t)
 	ev := makeEvent("snap-test", "cam1", "person", 0.9, time.Now().UTC())
-	db.SaveEvent(ev)
+	mustSaveEvent(t, db, ev)
 
 	if err := db.UpdateEventSnapshotPath("snap-test", "/snapshots/new.jpg"); err != nil {
 		t.Fatalf("UpdateEventSnapshotPath: %v", err)
@@ -295,7 +310,7 @@ func TestGetSegmentByPath_Found(t *testing.T) {
 	db := newTestDB(t)
 	start := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 	seg := makeSegment("cam1", "/recordings/cam1/seg001.mp4", start, start.Add(5*time.Minute), 5000)
-	db.SaveSegment(seg)
+	mustSaveSegment(t, db, seg)
 
 	got, err := db.GetSegmentByPath("/recordings/cam1/seg001.mp4")
 	if err != nil {
@@ -328,9 +343,9 @@ func TestGetSegmentsForDate(t *testing.T) {
 	march20 := time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)
 	march21 := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
 
-	db.SaveSegment(makeSegment("cam1", "/seg1.mp4", march20, march20.Add(5*time.Minute), 1000))
-	db.SaveSegment(makeSegment("cam1", "/seg2.mp4", march20.Add(time.Hour), march20.Add(time.Hour+5*time.Minute), 2000))
-	db.SaveSegment(makeSegment("cam1", "/seg3.mp4", march21, march21.Add(5*time.Minute), 3000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/seg1.mp4", march20, march20.Add(5*time.Minute), 1000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/seg2.mp4", march20.Add(time.Hour), march20.Add(time.Hour+5*time.Minute), 2000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/seg3.mp4", march21, march21.Add(5*time.Minute), 3000))
 
 	segs, err := db.GetSegmentsForDate("cam1", march20)
 	if err != nil {
@@ -345,8 +360,8 @@ func TestGetSegmentsForDate_DifferentCamera(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)
 
-	db.SaveSegment(makeSegment("cam1", "/seg1.mp4", ts, ts.Add(5*time.Minute), 1000))
-	db.SaveSegment(makeSegment("cam2", "/seg2.mp4", ts, ts.Add(5*time.Minute), 2000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/seg1.mp4", ts, ts.Add(5*time.Minute), 1000))
+	mustSaveSegment(t, db, makeSegment("cam2", "/seg2.mp4", ts, ts.Add(5*time.Minute), 2000))
 
 	segs, err := db.GetSegmentsForDate("cam1", ts)
 	if err != nil {
@@ -361,9 +376,9 @@ func TestTotalSegmentBytes(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveSegment(makeSegment("cam1", "/s1.mp4", ts, ts.Add(time.Minute), 1000))
-	db.SaveSegment(makeSegment("cam1", "/s2.mp4", ts, ts.Add(time.Minute), 2000))
-	db.SaveSegment(makeSegment("cam2", "/s3.mp4", ts, ts.Add(time.Minute), 3000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", ts, ts.Add(time.Minute), 1000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s2.mp4", ts, ts.Add(time.Minute), 2000))
+	mustSaveSegment(t, db, makeSegment("cam2", "/s3.mp4", ts, ts.Add(time.Minute), 3000))
 
 	total, err := db.TotalSegmentBytes()
 	if err != nil {
@@ -389,9 +404,9 @@ func TestSegmentBytesByCamera(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveSegment(makeSegment("cam1", "/s1.mp4", ts, ts.Add(time.Minute), 1000))
-	db.SaveSegment(makeSegment("cam1", "/s2.mp4", ts, ts.Add(time.Minute), 2000))
-	db.SaveSegment(makeSegment("cam2", "/s3.mp4", ts, ts.Add(time.Minute), 5000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", ts, ts.Add(time.Minute), 1000))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s2.mp4", ts, ts.Add(time.Minute), 2000))
+	mustSaveSegment(t, db, makeSegment("cam2", "/s3.mp4", ts, ts.Add(time.Minute), 5000))
 
 	result, err := db.SegmentBytesByCamera()
 	if err != nil {
@@ -409,9 +424,9 @@ func TestCountSegments(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveSegment(makeSegment("cam1", "/s1.mp4", ts, ts.Add(time.Minute), 100))
-	db.SaveSegment(makeSegment("cam1", "/s2.mp4", ts, ts.Add(time.Minute), 200))
-	db.SaveSegment(makeSegment("cam2", "/s3.mp4", ts, ts.Add(time.Minute), 300))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", ts, ts.Add(time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s2.mp4", ts, ts.Add(time.Minute), 200))
+	mustSaveSegment(t, db, makeSegment("cam2", "/s3.mp4", ts, ts.Add(time.Minute), 300))
 
 	count, err := db.CountSegments()
 	if err != nil {
@@ -436,7 +451,7 @@ func TestCountSegments_EmptyDB(t *testing.T) {
 func TestDeleteSegment(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
-	db.SaveSegment(makeSegment("cam1", "/del.mp4", ts, ts.Add(time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/del.mp4", ts, ts.Add(time.Minute), 100))
 
 	if err := db.DeleteSegment("/del.mp4"); err != nil {
 		t.Fatalf("DeleteSegment: %v", err)
@@ -454,9 +469,9 @@ func TestGetOldestSegments(t *testing.T) {
 	t2 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	t3 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	db.SaveSegment(makeSegment("cam1", "/s3.mp4", t3, t3.Add(time.Minute), 100))
-	db.SaveSegment(makeSegment("cam1", "/s1.mp4", t1, t1.Add(time.Minute), 100))
-	db.SaveSegment(makeSegment("cam1", "/s2.mp4", t2, t2.Add(time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s3.mp4", t3, t3.Add(time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", t1, t1.Add(time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s2.mp4", t2, t2.Add(time.Minute), 100))
 
 	segs, err := db.GetOldestSegments(2)
 	if err != nil {
@@ -478,11 +493,11 @@ func TestQuerySegments_TimeRange(t *testing.T) {
 	base := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 
 	// Segment from 12:00-12:05
-	db.SaveSegment(makeSegment("cam1", "/s1.mp4", base, base.Add(5*time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", base, base.Add(5*time.Minute), 100))
 	// Segment from 12:10-12:15
-	db.SaveSegment(makeSegment("cam1", "/s2.mp4", base.Add(10*time.Minute), base.Add(15*time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s2.mp4", base.Add(10*time.Minute), base.Add(15*time.Minute), 100))
 	// Segment from 12:20-12:25
-	db.SaveSegment(makeSegment("cam1", "/s3.mp4", base.Add(20*time.Minute), base.Add(25*time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s3.mp4", base.Add(20*time.Minute), base.Add(25*time.Minute), 100))
 
 	// Query range 12:03-12:12 should overlap s1 (ends at 12:05 > 12:03) and s2 (starts at 12:10 < 12:12)
 	segs, err := db.QuerySegments("cam1", base.Add(3*time.Minute), base.Add(12*time.Minute))
@@ -498,9 +513,9 @@ func TestGetAllSegments(t *testing.T) {
 	db := newTestDB(t)
 	ts := time.Now().UTC()
 
-	db.SaveSegment(makeSegment("cam1", "/a.mp4", ts, ts.Add(time.Minute), 100))
-	db.SaveSegment(makeSegment("cam1", "/b.mp4", ts.Add(time.Minute), ts.Add(2*time.Minute), 200))
-	db.SaveSegment(makeSegment("cam2", "/c.mp4", ts, ts.Add(time.Minute), 300))
+	mustSaveSegment(t, db, makeSegment("cam1", "/a.mp4", ts, ts.Add(time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/b.mp4", ts.Add(time.Minute), ts.Add(2*time.Minute), 200))
+	mustSaveSegment(t, db, makeSegment("cam2", "/c.mp4", ts, ts.Add(time.Minute), 300))
 
 	segs, err := db.GetAllSegments("cam1")
 	if err != nil {
@@ -508,5 +523,337 @@ func TestGetAllSegments(t *testing.T) {
 	}
 	if len(segs) != 2 {
 		t.Fatalf("got %d segments for cam1, want 2", len(segs))
+	}
+}
+
+// --- GetAdjacentEvents ---
+
+func TestGetAdjacentEvents_MiddleEvent(t *testing.T) {
+	db := newTestDB(t)
+	t1 := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	mustSaveEvent(t, db, makeEvent("oldest", "cam1", "person", 0.9, t1))
+	mustSaveEvent(t, db, makeEvent("middle", "cam1", "person", 0.9, t2))
+	mustSaveEvent(t, db, makeEvent("newest", "cam1", "person", 0.9, t3))
+
+	prev, next, err := db.GetAdjacentEvents("middle")
+	if err != nil {
+		t.Fatalf("GetAdjacentEvents: %v", err)
+	}
+	if prev != "oldest" {
+		t.Errorf("prevID = %q, want %q", prev, "oldest")
+	}
+	if next != "newest" {
+		t.Errorf("nextID = %q, want %q", next, "newest")
+	}
+}
+
+func TestGetAdjacentEvents_FirstEvent(t *testing.T) {
+	db := newTestDB(t)
+	t1 := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC)
+
+	mustSaveEvent(t, db, makeEvent("first", "cam1", "person", 0.9, t1))
+	mustSaveEvent(t, db, makeEvent("second", "cam1", "person", 0.9, t2))
+
+	prev, next, err := db.GetAdjacentEvents("first")
+	if err != nil {
+		t.Fatalf("GetAdjacentEvents: %v", err)
+	}
+	if prev != "" {
+		t.Errorf("prevID = %q, want empty string", prev)
+	}
+	if next != "second" {
+		t.Errorf("nextID = %q, want %q", next, "second")
+	}
+}
+
+func TestGetAdjacentEvents_LastEvent(t *testing.T) {
+	db := newTestDB(t)
+	t1 := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC)
+
+	mustSaveEvent(t, db, makeEvent("first", "cam1", "person", 0.9, t1))
+	mustSaveEvent(t, db, makeEvent("last", "cam1", "person", 0.9, t2))
+
+	prev, next, err := db.GetAdjacentEvents("last")
+	if err != nil {
+		t.Fatalf("GetAdjacentEvents: %v", err)
+	}
+	if prev != "first" {
+		t.Errorf("prevID = %q, want %q", prev, "first")
+	}
+	if next != "" {
+		t.Errorf("nextID = %q, want empty string", next)
+	}
+}
+
+func TestGetAdjacentEvents_NonexistentID(t *testing.T) {
+	db := newTestDB(t)
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, time.Now().UTC()))
+
+	prev, next, err := db.GetAdjacentEvents("nonexistent")
+	if err != nil {
+		t.Fatalf("GetAdjacentEvents: %v", err)
+	}
+	if prev != "" {
+		t.Errorf("prevID = %q, want empty string", prev)
+	}
+	if next != "" {
+		t.Errorf("nextID = %q, want empty string", next)
+	}
+}
+
+// --- GetRecordingDays ---
+
+func TestGetRecordingDays(t *testing.T) {
+	db := newTestDB(t)
+	march5 := time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC)
+	march10 := time.Date(2026, 3, 10, 10, 0, 0, 0, time.UTC)
+	march20 := time.Date(2026, 3, 20, 8, 0, 0, 0, time.UTC)
+
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", march5, march5.Add(5*time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s2.mp4", march10, march10.Add(5*time.Minute), 200))
+	mustSaveSegment(t, db, makeSegment("cam1", "/s3.mp4", march20, march20.Add(5*time.Minute), 300))
+
+	days, err := db.GetRecordingDays("cam1", 2026, 3)
+	if err != nil {
+		t.Fatalf("GetRecordingDays: %v", err)
+	}
+	if len(days) != 3 {
+		t.Fatalf("got %d days, want 3", len(days))
+	}
+	expected := []int{5, 10, 20}
+	for i, d := range days {
+		if d != expected[i] {
+			t.Errorf("days[%d] = %d, want %d", i, d, expected[i])
+		}
+	}
+}
+
+func TestGetRecordingDays_CameraFilter(t *testing.T) {
+	db := newTestDB(t)
+	march5 := time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC)
+	march10 := time.Date(2026, 3, 10, 10, 0, 0, 0, time.UTC)
+
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", march5, march5.Add(5*time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam2", "/s2.mp4", march10, march10.Add(5*time.Minute), 200))
+
+	days, err := db.GetRecordingDays("cam1", 2026, 3)
+	if err != nil {
+		t.Fatalf("GetRecordingDays: %v", err)
+	}
+	if len(days) != 1 {
+		t.Fatalf("got %d days, want 1", len(days))
+	}
+	if days[0] != 5 {
+		t.Errorf("days[0] = %d, want 5", days[0])
+	}
+}
+
+func TestGetRecordingDays_EmptyCamera_AllCameras(t *testing.T) {
+	db := newTestDB(t)
+	march5 := time.Date(2026, 3, 5, 14, 0, 0, 0, time.UTC)
+	march10 := time.Date(2026, 3, 10, 10, 0, 0, 0, time.UTC)
+
+	mustSaveSegment(t, db, makeSegment("cam1", "/s1.mp4", march5, march5.Add(5*time.Minute), 100))
+	mustSaveSegment(t, db, makeSegment("cam2", "/s2.mp4", march10, march10.Add(5*time.Minute), 200))
+
+	days, err := db.GetRecordingDays("", 2026, 3)
+	if err != nil {
+		t.Fatalf("GetRecordingDays: %v", err)
+	}
+	if len(days) != 2 {
+		t.Fatalf("got %d days, want 2", len(days))
+	}
+}
+
+func TestGetRecordingDays_NoData(t *testing.T) {
+	db := newTestDB(t)
+
+	days, err := db.GetRecordingDays("cam1", 2026, 6)
+	if err != nil {
+		t.Fatalf("GetRecordingDays: %v", err)
+	}
+	if len(days) != 0 {
+		t.Errorf("expected empty slice, got %v", days)
+	}
+}
+
+// --- QueryEventsForDate ---
+
+func TestQueryEventsForDate(t *testing.T) {
+	db := newTestDB(t)
+	march20_morning := time.Date(2026, 3, 20, 8, 0, 0, 0, time.UTC)
+	march20_evening := time.Date(2026, 3, 20, 20, 0, 0, 0, time.UTC)
+	march21 := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, march20_morning))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "car", 0.8, march20_evening))
+	mustSaveEvent(t, db, makeEvent("e3", "cam1", "person", 0.7, march21))
+
+	events, err := db.QueryEventsForDate("cam1", march20_morning)
+	if err != nil {
+		t.Fatalf("QueryEventsForDate: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+}
+
+func TestQueryEventsForDate_CameraFilter(t *testing.T) {
+	db := newTestDB(t)
+	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam2", "person", 0.8, ts))
+
+	events, err := db.QueryEventsForDate("cam1", ts)
+	if err != nil {
+		t.Fatalf("QueryEventsForDate: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].ID != "e1" {
+		t.Errorf("got ID %q, want e1", events[0].ID)
+	}
+}
+
+func TestQueryEventsForDate_NoEvents(t *testing.T) {
+	db := newTestDB(t)
+	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	events, err := db.QueryEventsForDate("cam1", ts)
+	if err != nil {
+		t.Fatalf("QueryEventsForDate: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected empty slice, got %v", events)
+	}
+}
+
+// --- CountEventsByLabel ---
+
+func TestCountEventsByLabel(t *testing.T) {
+	db := newTestDB(t)
+	ts := time.Now().UTC()
+
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "person", 0.8, ts.Add(time.Second)))
+	mustSaveEvent(t, db, makeEvent("e3", "cam1", "car", 0.7, ts.Add(2*time.Second)))
+	mustSaveEvent(t, db, makeEvent("e4", "cam2", "dog", 0.6, ts.Add(3*time.Second)))
+
+	result, err := db.CountEventsByLabel()
+	if err != nil {
+		t.Fatalf("CountEventsByLabel: %v", err)
+	}
+	if result["person"] != 2 {
+		t.Errorf("person count = %d, want 2", result["person"])
+	}
+	if result["car"] != 1 {
+		t.Errorf("car count = %d, want 1", result["car"])
+	}
+	if result["dog"] != 1 {
+		t.Errorf("dog count = %d, want 1", result["dog"])
+	}
+}
+
+func TestCountEventsByLabel_Empty(t *testing.T) {
+	db := newTestDB(t)
+
+	result, err := db.CountEventsByLabel()
+	if err != nil {
+		t.Fatalf("CountEventsByLabel: %v", err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected empty map, got %v", result)
+	}
+}
+
+// --- CountEventsByCamera ---
+
+func TestCountEventsByCamera(t *testing.T) {
+	db := newTestDB(t)
+	ts := time.Now().UTC()
+
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "car", 0.8, ts.Add(time.Second)))
+	mustSaveEvent(t, db, makeEvent("e3", "cam2", "person", 0.7, ts.Add(2*time.Second)))
+
+	result, err := db.CountEventsByCamera()
+	if err != nil {
+		t.Fatalf("CountEventsByCamera: %v", err)
+	}
+	if result["cam1"] != 2 {
+		t.Errorf("cam1 count = %d, want 2", result["cam1"])
+	}
+	if result["cam2"] != 1 {
+		t.Errorf("cam2 count = %d, want 1", result["cam2"])
+	}
+}
+
+// --- CountEvents ---
+
+func TestCountEvents(t *testing.T) {
+	db := newTestDB(t)
+	ts := time.Now().UTC()
+
+	mustSaveEvent(t, db, makeEvent("e1", "cam1", "person", 0.9, ts))
+	mustSaveEvent(t, db, makeEvent("e2", "cam1", "car", 0.8, ts.Add(time.Second)))
+	mustSaveEvent(t, db, makeEvent("e3", "cam2", "dog", 0.7, ts.Add(2*time.Second)))
+
+	count, err := db.CountEvents()
+	if err != nil {
+		t.Fatalf("CountEvents: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("count = %d, want 3", count)
+	}
+}
+
+func TestCountEvents_EmptyDB(t *testing.T) {
+	db := newTestDB(t)
+
+	count, err := db.CountEvents()
+	if err != nil {
+		t.Fatalf("CountEvents: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+}
+
+// --- QueryEvents with offset ---
+
+func TestQueryEvents_WithOffset(t *testing.T) {
+	db := newTestDB(t)
+	ts := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	// Insert 5 events with increasing timestamps
+	for i := range 5 {
+		mustSaveEvent(t, db, makeEvent(
+			fmt.Sprintf("ev%d", i),
+			"cam1", "person", 0.9,
+			ts.Add(time.Duration(i)*time.Minute),
+		))
+	}
+
+	// QueryEvents orders by timestamp DESC, so ev4 is first, ev0 is last.
+	// limit=2, offset=2 should return ev2 and ev1 (3rd and 4th in desc order).
+	events, err := db.QueryEvents("", "", 2, 2)
+	if err != nil {
+		t.Fatalf("QueryEvents with offset: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	if events[0].ID != "ev2" {
+		t.Errorf("events[0].ID = %q, want %q", events[0].ID, "ev2")
+	}
+	if events[1].ID != "ev1" {
+		t.Errorf("events[1].ID = %q, want %q", events[1].ID, "ev1")
 	}
 }
