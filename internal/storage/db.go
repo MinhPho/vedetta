@@ -81,6 +81,12 @@ func (d *DB) Close() error {
 	return d.db.Close()
 }
 
+// Ping checks database connectivity by executing a simple query.
+func (d *DB) Ping() error {
+	_, err := d.db.Exec("SELECT 1")
+	return err
+}
+
 func (d *DB) SaveEvent(event camera.Event) error {
 	_, err := d.db.Exec(`
 		INSERT INTO events (id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, snapshot_path, clip_path)
@@ -132,7 +138,7 @@ func (d *DB) QueryEvents(cameraName, label string, limit, offset int) ([]camera.
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []camera.Event
 	for rows.Next() {
@@ -159,7 +165,7 @@ func (d *DB) CountEventsByLabel() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]int)
 	for rows.Next() {
@@ -179,7 +185,7 @@ func (d *DB) CountEventsByCamera() (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]int)
 	for rows.Next() {
@@ -222,7 +228,7 @@ func (d *DB) QuerySegments(cameraName string, from, to time.Time) ([]SegmentReco
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanSegments(rows)
 }
@@ -245,7 +251,7 @@ func (d *DB) GetAllSegments(cameraName string) ([]SegmentRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanSegments(rows)
 }
@@ -323,7 +329,7 @@ func (d *DB) GetSegmentsForDate(cameraName string, date time.Time) ([]SegmentRec
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanSegments(rows)
 }
@@ -343,7 +349,7 @@ func (d *DB) QueryEventsForDate(cameraName string, date time.Time) ([]camera.Eve
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []camera.Event
 	for rows.Next() {
@@ -382,7 +388,7 @@ func (d *DB) SegmentBytesByCamera() (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	result := make(map[string]int64)
 	for rows.Next() {
@@ -406,7 +412,7 @@ func (d *DB) GetOldestSegments(limit int) ([]SegmentRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	return scanSegments(rows)
 }
@@ -414,27 +420,28 @@ func (d *DB) GetOldestSegments(limit int) ([]SegmentRecord, error) {
 // GetRecordingDays returns sorted day numbers that have segments for the given camera and month.
 // If camera is empty, returns days across all cameras.
 func (d *DB) GetRecordingDays(camera string, year int, month int) ([]int, error) {
-	yearMonth := fmt.Sprintf("%04d-%02d", year, month)
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
 
 	var rows *sql.Rows
 	var err error
 	if camera != "" {
 		rows, err = d.db.Query(`
-			SELECT DISTINCT CAST(strftime('%d', start_time) AS INTEGER) AS day
+			SELECT DISTINCT CAST(substr(start_time, 9, 2) AS INTEGER) AS day
 			FROM segments
-			WHERE camera = ? AND strftime('%Y-%m', start_time) = ?
-			ORDER BY day`, camera, yearMonth)
+			WHERE camera = ? AND start_time >= ? AND start_time < ?
+			ORDER BY day`, camera, monthStart, monthEnd)
 	} else {
 		rows, err = d.db.Query(`
-			SELECT DISTINCT CAST(strftime('%d', start_time) AS INTEGER) AS day
+			SELECT DISTINCT CAST(substr(start_time, 9, 2) AS INTEGER) AS day
 			FROM segments
-			WHERE strftime('%Y-%m', start_time) = ?
-			ORDER BY day`, yearMonth)
+			WHERE start_time >= ? AND start_time < ?
+			ORDER BY day`, monthStart, monthEnd)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var days []int
 	for rows.Next() {
