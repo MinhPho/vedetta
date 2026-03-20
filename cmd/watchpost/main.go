@@ -87,6 +87,17 @@ func main() {
 	recorder.StartContinuousRecording(ctx)
 	recorder.StartRetentionCleanup(ctx)
 
+	// Publish HA MQTT discovery for all enabled cameras
+	if mqttClient != nil {
+		var cameraNames []string
+		for _, cam := range cfg.Cameras {
+			if cam.Enabled {
+				cameraNames = append(cameraNames, cam.Name)
+			}
+		}
+		mqttClient.PublishDiscovery(cameraNames)
+	}
+
 	events := make(chan camera.Event, 100)
 
 	manager := camera.NewManager(cfg.Cameras, detector, events, hwaccel)
