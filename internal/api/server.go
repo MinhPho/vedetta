@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"image"
 	"image/jpeg"
 	"io/fs"
 	"log/slog"
@@ -226,7 +227,11 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	img := cam.LastSnapshot()
 	if img == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no snapshot available"})
+		// Return a 1x1 dark pixel so <img> tags don't break
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "no-cache")
+		placeholder := image.NewRGBA(image.Rect(0, 0, 1, 1))
+		_ = jpeg.Encode(w, placeholder, &jpeg.Options{Quality: 50})
 		return
 	}
 
