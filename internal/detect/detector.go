@@ -52,10 +52,18 @@ func (d *Detector) MotionThreshold() float64 {
 
 // Detect runs object detection on a frame and returns detections above threshold.
 // Safe for concurrent use — serializes access to the backend.
-func (d *Detector) Detect(img *image.RGBA) []Detection {
+// Recovers from panics in the inference backend to prevent server crashes.
+func (d *Detector) Detect(img *image.RGBA) (result []Detection) {
 	if !d.enabled {
 		return nil
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("inference panic recovered", "error", r)
+			result = nil
+		}
+	}()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -77,10 +85,18 @@ func (d *Detector) Detect(img *image.RGBA) []Detection {
 // DetectRGB24 runs object detection directly on RGB24 frame data,
 // avoiding the intermediate RGBA conversion.
 // Safe for concurrent use — serializes access to the backend.
-func (d *Detector) DetectRGB24(data []byte, w, h int) []Detection {
+// Recovers from panics in the inference backend to prevent server crashes.
+func (d *Detector) DetectRGB24(data []byte, w, h int) (result []Detection) {
 	if !d.enabled {
 		return nil
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("inference panic recovered", "error", r)
+			result = nil
+		}
+	}()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()

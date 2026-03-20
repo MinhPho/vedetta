@@ -54,6 +54,11 @@ func fastSigmoid(x float32) float32 {
 	}
 	pos := (x - sigmoidLUTMin) * sigmoidLUTScale
 	idx := int(pos)
+	// Clamp idx so that idx+1 stays within the LUT. Float32 rounding can
+	// produce pos == sigmoidLUTSize when x is just below sigmoidLUTMax.
+	if idx >= sigmoidLUTSize {
+		return sigmoidLUT[sigmoidLUTSize]
+	}
 	frac := pos - float32(idx)
 	return sigmoidLUT[idx] + frac*(sigmoidLUT[idx+1]-sigmoidLUT[idx])
 }
