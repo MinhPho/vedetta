@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rvben/watchpost/internal/api"
 	"github.com/rvben/watchpost/internal/camera"
@@ -102,6 +103,24 @@ func main() {
 
 	manager := camera.NewManager(cfg.Cameras, detector, events, hwaccel)
 	manager.Start(ctx)
+
+	// Periodically publish camera online/offline status to MQTT
+	if mqttClient != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					for _, st := range manager.CameraStatuses() {
+						mqttClient.PublishCameraStatus(st.Name, st.Online)
+					}
+				}
+			}
+		}()
+	}
 
 	// Process events: record clips and publish to MQTT
 	go func() {
