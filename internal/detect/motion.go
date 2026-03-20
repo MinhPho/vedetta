@@ -45,6 +45,13 @@ type MotionDetector struct {
 	minArea   int
 	bgAlpha   float64
 	bg        []float64 // background model (grayscale, one value per pixel)
+
+	// Pre-allocated working buffers, sized on first Detect call.
+	gray    []uint8
+	blurred []uint8
+	binary  []uint8
+	labels  []int
+	parent  []int
 }
 
 // NewMotionDetector creates a MotionDetector.
@@ -66,43 +73,56 @@ func (m *MotionDetector) Detect(frame []byte, width, height int) []MotionRegion 
 		return nil
 	}
 
+	// Ensure working buffers are allocated and correctly sized.
+	if cap(m.gray) < pixels {
+		m.gray = make([]uint8, pixels)
+		m.blurred = make([]uint8, pixels)
+		m.binary = make([]uint8, pixels)
+		m.labels = make([]int, pixels)
+	}
+	m.gray = m.gray[:pixels]
+	m.blurred = m.blurred[:pixels]
+	m.binary = m.binary[:pixels]
+	m.labels = m.labels[:pixels]
+
 	// Convert to grayscale
-	gray := make([]uint8, pixels)
 	for i := 0; i < pixels; i++ {
 		off := i * 3
 		// Fast luminance approximation: (R + G + G + B) >> 2
-		gray[i] = uint8((int(frame[off]) + int(frame[off+1])*2 + int(frame[off+2])) >> 2)
+		m.gray[i] = uint8((int(frame[off]) + int(frame[off+1])*2 + int(frame[off+2])) >> 2)
 	}
 
 	// Initialize background model on first frame
 	if m.bg == nil {
 		m.bg = make([]float64, pixels)
-		for i, v := range gray {
+		for i, v := range m.gray {
 			m.bg[i] = float64(v)
 		}
 		return nil
 	}
 
 	// Apply 3x3 box blur to reduce noise
-	blurred := boxBlur3x3(gray, width, height)
+	boxBlur3x3(m.gray, m.blurred, width, height)
 
-	// Compute absolute difference against background and threshold to binary
-	binary := make([]uint8, pixels)
+	// Compute absolute difference against background and threshold to binary.
+	// Zero the binary buffer and compute in one pass.
 	var totalFG int
 	for i := 0; i < pixels; i++ {
-		diff := float64(blurred[i]) - m.bg[i]
+		diff := float64(m.blurred[i]) - m.bg[i]
 		if diff < 0 {
 			diff = -diff
 		}
 		if diff > float64(m.threshold) {
-			binary[i] = 1
+			m.binary[i] = 1
 			totalFG++
+		} else {
+			m.binary[i] = 0
 		}
 	}
 
 	// Update background model with alpha blending
 	for i := 0; i < pixels; i++ {
-		m.bg[i] = m.bg[i]*(1-m.bgAlpha) + float64(blurred[i])*m.bgAlpha
+		m.bg[i] = m.bg[i]*(1-m.bgAlpha) + float64(m.blurred[i])*m.bgAlpha
 	}
 
 	if totalFG == 0 {
@@ -110,7 +130,7 @@ func (m *MotionDetector) Detect(frame []byte, width, height int) []MotionRegion 
 	}
 
 	// Connected component labeling to find contiguous motion regions
-	regions := connectedComponents(binary, width, height, m.minArea)
+	regions := m.connectedComponents(width, height)
 
 	// Compute score for each region
 	for i := range regions {
@@ -124,10 +144,9 @@ func (m *MotionDetector) Detect(frame []byte, width, height int) []MotionRegion 
 	return regions
 }
 
-// boxBlur3x3 applies a simple 3x3 box blur to a grayscale image.
-func boxBlur3x3(src []uint8, w, h int) []uint8 {
-	dst := make([]uint8, w*h)
-
+// boxBlur3x3 applies a simple 3x3 box blur from src into dst.
+// dst must be at least w*h in length.
+func boxBlur3x3(src, dst []uint8, w, h int) {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			var sum int
@@ -149,19 +168,30 @@ func boxBlur3x3(src []uint8, w, h int) []uint8 {
 			dst[y*w+x] = uint8(sum / count)
 		}
 	}
-	return dst
 }
 
-// connectedComponents performs two-pass connected component labeling on a
-// binary image and returns bounding boxes of components with area >= minArea.
-func connectedComponents(binary []uint8, w, h, minArea int) []MotionRegion {
-	labels := make([]int, w*h)
-	parent := []int{0} // index 0 unused, labels start at 1
+// connectedComponents performs two-pass connected component labeling on
+// m.binary and returns bounding boxes of components with area >= m.minArea.
+// It reuses m.labels and m.parent to avoid allocations.
+func (m *MotionDetector) connectedComponents(w, h int) []MotionRegion {
+	labels := m.labels
+	// Zero the labels buffer
+	for i := range labels {
+		labels[i] = 0
+	}
+
+	// Reuse parent slice: reset length to 1 (index 0 is unused, labels start at 1).
+	const initialParentCap = 64
+	if cap(m.parent) < initialParentCap {
+		m.parent = make([]int, 1, initialParentCap)
+	} else {
+		m.parent = m.parent[:1]
+	}
+	m.parent[0] = 0
+	parent := m.parent
 	nextLabel := 1
 
-	// find returns the root of the union-find tree
-	var find func(int) int
-	find = func(x int) int {
+	find := func(x int) int {
 		for parent[x] != x {
 			parent[x] = parent[parent[x]]
 			x = parent[x]
@@ -179,6 +209,8 @@ func connectedComponents(binary []uint8, w, h, minArea int) []MotionRegion {
 		}
 	}
 
+	binary := m.binary
+
 	// First pass: assign provisional labels
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -187,32 +219,37 @@ func connectedComponents(binary []uint8, w, h, minArea int) []MotionRegion {
 				continue
 			}
 
-			var neighbors []int
+			left := 0
+			above := 0
 			if x > 0 && labels[idx-1] > 0 {
-				neighbors = append(neighbors, labels[idx-1])
+				left = labels[idx-1]
 			}
 			if y > 0 && labels[idx-w] > 0 {
-				neighbors = append(neighbors, labels[idx-w])
+				above = labels[idx-w]
 			}
 
-			if len(neighbors) == 0 {
+			if left == 0 && above == 0 {
 				labels[idx] = nextLabel
 				parent = append(parent, nextLabel)
 				nextLabel++
+			} else if left > 0 && above == 0 {
+				labels[idx] = find(left)
+			} else if left == 0 && above > 0 {
+				labels[idx] = find(above)
 			} else {
-				minLabel := neighbors[0]
-				for _, n := range neighbors[1:] {
-					if find(n) < find(minLabel) {
-						minLabel = n
-					}
+				// Both neighbors labeled
+				minLabel := left
+				if find(above) < find(left) {
+					minLabel = above
 				}
 				labels[idx] = find(minLabel)
-				for _, n := range neighbors {
-					union(minLabel, n)
-				}
+				union(left, above)
 			}
 		}
 	}
+
+	// Save parent back in case append relocated it
+	m.parent = parent
 
 	// Second pass: resolve labels and collect bounding boxes
 	type bbox struct {
@@ -253,7 +290,7 @@ func connectedComponents(binary []uint8, w, h, minArea int) []MotionRegion {
 	// Filter by minimum area
 	var regions []MotionRegion
 	for _, b := range boxes {
-		if b.area >= minArea {
+		if b.area >= m.minArea {
 			regions = append(regions, MotionRegion{
 				Box:  [4]int{b.x1, b.y1, b.x2, b.y2},
 				Area: b.area,
