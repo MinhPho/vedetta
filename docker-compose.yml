@@ -1,0 +1,30 @@
+services:
+  watchpost:
+    build: .
+    image: ghcr.io/rvben/watchpost:latest
+    container_name: watchpost
+    restart: unless-stopped
+
+    # Host networking is required for:
+    # - Direct RTSP camera access on the local network
+    # - ONVIF device discovery via UDP multicast (port 3702)
+    # Without host networking, each camera's RTSP port must be
+    # explicitly forwarded and ONVIF discovery will not work.
+    network_mode: host
+
+    volumes:
+      - ./config.yml:/config/config.yml:ro
+      - watchpost-data:/data
+
+    environment:
+      - TZ=${TZ:-UTC}
+
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5050/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  watchpost-data:

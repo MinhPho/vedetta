@@ -1,0 +1,9 @@
+.git
+build/
+*.db
+recordings/
+snapshots/
+*.md
+.gitignore
+.dockerignore
+Makefile
