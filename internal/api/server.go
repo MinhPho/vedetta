@@ -18,6 +18,7 @@ import (
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/recording"
+	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
 	"github.com/rvben/vedetta/internal/stream"
 
@@ -39,13 +40,13 @@ type Server struct {
 	funcMap  template.FuncMap
 }
 
-func New(cfg config.APIConfig, db *storage.DB, cameras *camera.Manager, recorder *recording.Recorder) *Server {
+func New(cfg config.APIConfig, db *storage.DB, cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub) *Server {
 	s := &Server{
 		config:   cfg,
 		db:       db,
 		cameras:  cameras,
 		recorder: recorder,
-		streams:  stream.NewStreamManager(),
+		streams:  stream.NewStreamManager(hub),
 		mux:      http.NewServeMux(),
 	}
 
@@ -322,21 +323,16 @@ func (s *Server) handleSystemAPI(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
-	hwaccelName := "none"
-	if hw := s.cameras.HWAccelBackend(); hw != nil {
-		hwaccelName = hw.Name
-	}
-
 	totalBytes, _ := s.db.TotalStorageBytes()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":      "0.1.0",
-		"uptime":       time.Since(startTime).String(),
-		"hwaccel":      hwaccelName,
-		"cameras":      len(statuses),
-		"online":       onlineCount,
+		"version":       "0.1.0",
+		"uptime":        time.Since(startTime).String(),
+		"decoder":       "native Go",
+		"cameras":       len(statuses),
+		"online":        onlineCount,
 		"storage_bytes": totalBytes,
-		"storage":      formatBytes(totalBytes),
+		"storage":       formatBytes(totalBytes),
 	})
 }
 
@@ -785,10 +781,7 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
-	hwaccelName := "none"
-	if hw := s.cameras.HWAccelBackend(); hw != nil {
-		hwaccelName = hw.Name
-	}
+	decoderName := "native Go"
 
 	uptime := time.Since(startTime)
 	uptimeStr := formatDuration(uptime)
@@ -821,7 +814,7 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 	type sysData struct {
 		Version     string
 		Uptime      string
-		HWAccel     string
+		Decoder     string
 		GoVersion   string
 		CameraCount int
 		OnlineCount int
@@ -835,7 +828,7 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 	data := sysData{
 		Version:     "0.1.0",
 		Uptime:      uptimeStr,
-		HWAccel:     hwaccelName,
+		Decoder:     decoderName,
 		GoVersion:   runtime.Version(),
 		CameraCount: len(statuses),
 		OnlineCount: onlineCount,
@@ -862,7 +855,7 @@ const systemPartialTemplate = `<div class="sys-card">
   <div class="sys-card-body">
     <div class="sys-row"><span class="key">Version</span><span class="val">{{.Version}}</span></div>
     <div class="sys-row"><span class="key">Uptime</span><span class="val">{{.Uptime}}</span></div>
-    <div class="sys-row"><span class="key">HW Accel</span><span class="val">{{.HWAccel}}</span></div>
+    <div class="sys-row"><span class="key">Decoder</span><span class="val">{{.Decoder}}</span></div>
     <div class="sys-row"><span class="key">Go</span><span class="val">{{.GoVersion}}</span></div>
     <div class="sys-row"><span class="key">Cameras</span><span class="val">{{.CameraCount}} ({{.OnlineCount}} online)</span></div>
   </div>

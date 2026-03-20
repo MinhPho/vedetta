@@ -16,6 +16,7 @@ import (
 	"github.com/rvben/vedetta/internal/detect"
 	"github.com/rvben/vedetta/internal/mqtt"
 	"github.com/rvben/vedetta/internal/recording"
+	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
@@ -63,14 +64,13 @@ func main() {
 	detector := detect.New(cfg.Detect)
 	defer detector.Close()
 
-	hwaccel := camera.DetectHWAccel()
-	if hwaccel != nil {
-		slog.Info("hardware acceleration detected", "backend", hwaccel.Name)
-	} else {
-		slog.Info("no hardware acceleration available, using CPU decoding")
-	}
+	// Create RTSP Hub — central connection manager
+	hub := rtsp.NewHub(ctx)
+	defer hub.Close()
 
-	recorder := recording.New(cfg.Recording, db)
+	slog.Info("native Go media pipeline active (no ffmpeg required)")
+
+	recorder := recording.New(cfg.Recording, db, hub)
 
 	// Register cameras for recording
 	for _, cam := range cfg.Cameras {
@@ -101,7 +101,7 @@ func main() {
 
 	events := make(chan camera.Event, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, events, hwaccel)
+	manager := camera.NewManager(cfg.Cameras, detector, events, hub)
 	manager.Start(ctx)
 
 	// Periodically publish camera online/offline status to MQTT
@@ -147,7 +147,7 @@ func main() {
 		}
 	}()
 
-	server := api.New(cfg.API, db, manager, recorder)
+	server := api.New(cfg.API, db, manager, recorder, hub)
 	go func() {
 		if err := server.Start(); err != nil {
 			slog.Error("API server failed", "error", err)

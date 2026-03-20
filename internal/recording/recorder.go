@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
@@ -25,11 +25,12 @@ type StorageStats struct {
 type Recorder struct {
 	config     config.RecordingConfig
 	db         *storage.DB
+	hub        *rtsp.Hub
 	segments   *SegmentRecorder
 	cameraURLs map[string]string // camera name → record RTSP URL
 }
 
-func New(cfg config.RecordingConfig, db *storage.DB) *Recorder {
+func New(cfg config.RecordingConfig, db *storage.DB, hub *rtsp.Hub) *Recorder {
 	if err := os.MkdirAll(cfg.Path, 0o755); err != nil {
 		slog.Error("failed to create recording directory", "path", cfg.Path, "error", err)
 	}
@@ -37,7 +38,8 @@ func New(cfg config.RecordingConfig, db *storage.DB) *Recorder {
 	return &Recorder{
 		config:     cfg,
 		db:         db,
-		segments:   NewSegmentRecorder(cfg, db),
+		hub:        hub,
+		segments:   NewSegmentRecorder(cfg, db, hub),
 		cameraURLs: make(map[string]string),
 	}
 }
@@ -54,24 +56,31 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 		return
 	}
 
+	first := true
 	for name, url := range r.cameraURLs {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
 		segDir := filepath.Join(r.config.Path, name, "segments")
 		r.segments.ScanExistingSegments(name, segDir)
 		r.segments.StartRecording(ctx, name, url)
+		first = false
 	}
 
 	slog.Info("continuous recording started", "cameras", len(r.cameraURLs))
 }
 
 // SaveClip records a clip around the event timestamp.
-// It first tries to extract from existing segments, then falls back to direct recording.
 func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
 	clipPath, err := r.ExtractClip(ctx, event)
 	if err != nil {
 		return fmt.Errorf("extract clip: %w", err)
 	}
 
-	// Update the event with the clip path
 	if err := r.db.UpdateEventClipPath(event.ID, clipPath); err != nil {
 		slog.Error("failed to update event clip path", "error", err)
 	}
@@ -81,28 +90,6 @@ func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
 		"label", event.Label,
 		"path", clipPath,
 	)
-
-	return nil
-}
-
-// recordFromStream uses ffmpeg to capture a clip directly from RTSP.
-func (r *Recorder) recordFromStream(ctx context.Context, rtspURL, outputPath string, duration time.Duration) error {
-	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-hide_banner",
-		"-loglevel", "error",
-		"-rtsp_transport", "tcp",
-		"-i", rtspURL,
-		"-t", fmt.Sprintf("%.0f", duration.Seconds()),
-		"-c:v", "copy",
-		"-c:a", "aac",
-		"-movflags", "frag_keyframe+empty_moov",
-		"-y",
-		outputPath,
-	)
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ffmpeg record: %w: %s", err, string(output))
-	}
 
 	return nil
 }

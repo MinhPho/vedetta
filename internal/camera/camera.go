@@ -7,25 +7,26 @@ import (
 	"image/jpeg"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/detect"
+	"github.com/rvben/vedetta/internal/media"
+	"github.com/rvben/vedetta/internal/rtsp"
 )
 
 // Event represents a detected object event from a camera.
 type Event struct {
-	ID         string    `json:"id"`
-	CameraName string    `json:"camera"`
-	Label      string    `json:"label"`
-	Score      float32   `json:"score"`
-	Box        [4]int    `json:"box"` // x1, y1, x2, y2
-	Timestamp  time.Time `json:"timestamp"`
-	SnapshotPath string  `json:"snapshot_path,omitempty"`
-	ClipPath   string    `json:"clip_path,omitempty"`
+	ID           string    `json:"id"`
+	CameraName   string    `json:"camera"`
+	Label        string    `json:"label"`
+	Score        float32   `json:"score"`
+	Box          [4]int    `json:"box"` // x1, y1, x2, y2
+	Timestamp    time.Time `json:"timestamp"`
+	SnapshotPath string    `json:"snapshot_path,omitempty"`
+	ClipPath     string    `json:"clip_path,omitempty"`
 }
 
 // Camera manages a single RTSP camera stream.
@@ -35,33 +36,33 @@ type Camera struct {
 	tracker        *detect.Tracker
 	motionDetector *detect.MotionDetector
 	events         chan<- Event
-	hwaccel        *HWAccel
+	hub            *rtsp.Hub
 
-	mu              sync.RWMutex
-	rawFrame        []byte // RGB24 frame data, guarded by mu
-	frameW, frameH  int
-	lastMotion      time.Time
-	lastFrameTime   time.Time
+	mu               sync.RWMutex
+	rawFrame         []byte // RGB24 frame data, guarded by mu
+	frameW, frameH   int
+	lastMotion       time.Time
+	lastFrameTime    time.Time
 	lastSnapshotSave time.Time
-	confirmedTracks map[int]bool
+	confirmedTracks  map[int]bool
 }
 
 // CameraStatus represents the current status of a camera.
 type CameraStatus struct {
-	Name      string `json:"name"`
-	Online    bool   `json:"online"`
-	HasMotion bool   `json:"has_motion"`
+	Name      string    `json:"name"`
+	Online    bool      `json:"online"`
+	HasMotion bool      `json:"has_motion"`
 	LastFrame time.Time `json:"last_frame"`
 }
 
-func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, hwaccel *HWAccel) *Camera {
+func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, hub *rtsp.Hub) *Camera {
 	return &Camera{
 		config:          cfg,
 		detector:        detector,
 		tracker:         detect.NewTracker(30, 3),
 		motionDetector:  detect.NewMotionDetector(25, 200, 0.05),
 		events:          events,
-		hwaccel:         hwaccel,
+		hub:             hub,
 		confirmedTracks: make(map[int]bool),
 	}
 }
@@ -78,7 +79,6 @@ func (c *Camera) RecordURL() string {
 }
 
 // LastSnapshot converts the stored RGB24 frame to RGBA on demand.
-// Allocates only when called (typically by the API), not on every frame.
 func (c *Camera) LastSnapshot() *image.RGBA {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -166,7 +166,7 @@ func (c *Camera) saveCachedSnapshot() {
 	c.mu.Unlock()
 }
 
-// Start begins reading frames from the RTSP stream.
+// Start begins reading frames from the RTSP stream via the Hub.
 func (c *Camera) Start(ctx context.Context) {
 	slog.Info("starting camera", "name", c.config.Name, "url", c.config.URL)
 	c.loadCachedSnapshot()
@@ -174,131 +174,95 @@ func (c *Camera) Start(ctx context.Context) {
 	go c.readFrames(ctx)
 }
 
-// readFrames connects to the RTSP stream via ffmpeg and decodes frames.
+// readFrames connects to the RTSP stream via the Hub and processes detection frames.
 func (c *Camera) readFrames(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		if err := c.runFFmpeg(ctx); err != nil {
-			slog.Error("ffmpeg stream error, reconnecting",
-				"camera", c.config.Name,
-				"error", err,
-			)
-			// Wait before reconnecting
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
-			}
-		}
-	}
-}
-
-// runFFmpeg spawns an ffmpeg process that decodes RTSP to raw frames on stdout.
-func (c *Camera) runFFmpeg(ctx context.Context) error {
 	w := c.config.Detect.Width
 	h := c.config.Detect.Height
 	fps := c.config.Detect.FPS
 
-	args := []string{
-		"-hide_banner",
-		"-loglevel", "error",
-		"-rtsp_transport", "tcp",
-	}
-	args = append(args, c.hwaccel.FFmpegArgs()...)
-	args = append(args,
-		"-i", c.config.URL,
-		"-vf", fmt.Sprintf("fps=%d,scale=%d:%d", fps, w, h),
-		"-pix_fmt", "rgb24",
-		"-f", "rawvideo",
-		"-",
-	)
+	source := c.hub.GetOrCreate(c.config.URL)
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
+	// Wait for the source to connect and provide track info
+	var videoTrack *rtsp.TrackInfo
+	for {
+		videoTrack = source.VideoTrack()
+		if videoTrack != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start ffmpeg: %w", err)
-	}
-
-	frameSize := w * h * 3 // RGB24
-	buf := make([]byte, frameSize)
+	consumer := media.NewDetectConsumer(w, h, fps, videoTrack)
+	source.AddConsumer(consumer)
+	defer source.RemoveConsumer(consumer)
 
 	for {
 		select {
 		case <-ctx.Done():
-			_ = cmd.Process.Kill()
-			return ctx.Err()
-		default:
+			return
+		case frame := <-consumer.Frames():
+			c.processFrame(frame.Data, frame.Width, frame.Height)
 		}
+	}
+}
 
-		n, err := readFull(stdout, buf)
-		if err != nil || n != frameSize {
-			_ = cmd.Process.Kill()
-			return fmt.Errorf("read frame: %w (got %d bytes)", err, n)
-		}
+// processFrame handles a decoded RGB24 frame — motion detection + YOLO.
+func (c *Camera) processFrame(buf []byte, w, h int) {
+	frameSize := w * h * 3
 
-		// Store raw RGB24 frame for on-demand snapshot conversion.
+	// Store raw RGB24 frame for on-demand snapshot conversion.
+	c.mu.Lock()
+	if c.rawFrame == nil || len(c.rawFrame) != frameSize {
+		c.rawFrame = make([]byte, frameSize)
+	}
+	copy(c.rawFrame, buf)
+	c.frameW = w
+	c.frameH = h
+	c.lastFrameTime = time.Now()
+	c.mu.Unlock()
+
+	// Periodically save snapshot to disk for offline display
+	c.saveCachedSnapshot()
+
+	// Contour-based motion detection
+	motionRegions := c.motionDetector.Detect(buf, w, h)
+	if len(motionRegions) > 0 {
 		c.mu.Lock()
-		if c.rawFrame == nil || len(c.rawFrame) != frameSize {
-			c.rawFrame = make([]byte, frameSize)
-		}
-		copy(c.rawFrame, buf)
-		c.frameW = w
-		c.frameH = h
-		c.lastFrameTime = time.Now()
+		c.lastMotion = time.Now()
 		c.mu.Unlock()
 
-		// Periodically save snapshot to disk for offline display
-		c.saveCachedSnapshot()
+		detections := c.detector.DetectRGB24(buf, w, h)
+		tracked := c.tracker.Update(detections)
 
-		// Contour-based motion detection
-		motionRegions := c.motionDetector.Detect(buf, w, h)
-		if len(motionRegions) > 0 {
-			c.mu.Lock()
-			c.lastMotion = time.Now()
-			c.mu.Unlock()
-
-			// Run object detection directly from RGB24, skipping RGBA conversion.
-			// The motion regions tell us WHERE motion is, but the YOLO model
-			// expects a full frame (it handles its own letterboxing/scaling).
-			detections := c.detector.DetectRGB24(buf, w, h)
-			tracked := c.tracker.Update(detections)
-
-			// Emit events for newly confirmed tracks
-			for _, obj := range tracked {
-				if !c.confirmedTracks[obj.TrackID] {
-					c.confirmedTracks[obj.TrackID] = true
-					c.events <- Event{
-						ID:         fmt.Sprintf("%s-t%d-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli()),
-						CameraName: c.config.Name,
-						Label:      obj.Label,
-						Score:      obj.Score,
-						Box:        obj.Box,
-						Timestamp:  time.Now(),
-					}
-				}
-			}
-
-			// Emit end events for deleted tracks
-			for _, obj := range c.tracker.DeletedTracks() {
-				delete(c.confirmedTracks, obj.TrackID)
+		// Emit events for newly confirmed tracks
+		for _, obj := range tracked {
+			if !c.confirmedTracks[obj.TrackID] {
+				c.confirmedTracks[obj.TrackID] = true
 				c.events <- Event{
-					ID:         fmt.Sprintf("%s-t%d-end-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli()),
+					ID:         fmt.Sprintf("%s-t%d-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli()),
 					CameraName: c.config.Name,
 					Label:      obj.Label,
 					Score:      obj.Score,
 					Box:        obj.Box,
 					Timestamp:  time.Now(),
 				}
+			}
+		}
+
+		// Emit end events for deleted tracks
+		for _, obj := range c.tracker.DeletedTracks() {
+			delete(c.confirmedTracks, obj.TrackID)
+			c.events <- Event{
+				ID:         fmt.Sprintf("%s-t%d-end-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli()),
+				CameraName: c.config.Name,
+				Label:      obj.Label,
+				Score:      obj.Score,
+				Box:        obj.Box,
+				Timestamp:  time.Now(),
 			}
 		}
 	}
@@ -331,7 +295,6 @@ func (c *Camera) Status() CameraStatus {
 }
 
 // SnapshotRGB24 copies the raw RGB24 frame into dst and returns dimensions.
-// Returns false if no frame is available. dst must be large enough.
 func (c *Camera) SnapshotRGB24(dst []byte) (w, h int, ok bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -364,16 +327,4 @@ func rawToRGBA(data []byte, w, h int) *image.RGBA {
 		pix[di+3] = 255
 	}
 	return img
-}
-
-func readFull(r interface{ Read([]byte) (int, error) }, buf []byte) (int, error) {
-	total := 0
-	for total < len(buf) {
-		n, err := r.Read(buf[total:])
-		total += n
-		if err != nil {
-			return total, err
-		}
-	}
-	return total, nil
 }

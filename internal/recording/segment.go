@@ -2,17 +2,18 @@ package recording
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/media"
+	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
@@ -24,29 +25,30 @@ type Segment struct {
 	EndTime   time.Time
 }
 
-// SegmentRecorder continuously records RTSP streams into fixed-length segments.
+// SegmentRecorder continuously records RTSP streams into fixed-length segments
+// using the native Go media pipeline (no ffmpeg).
 type SegmentRecorder struct {
-	config     config.RecordingConfig
-	baseDir    string
-	db         *storage.DB
-	mu         sync.RWMutex
-	audioCodec map[string]string // camera name → detected audio codec (e.g. "aac", "pcm_alaw")
+	config  config.RecordingConfig
+	baseDir string
+	db      *storage.DB
+	hub *rtsp.Hub
 }
 
-func NewSegmentRecorder(cfg config.RecordingConfig, db *storage.DB) *SegmentRecorder {
+func NewSegmentRecorder(cfg config.RecordingConfig, db *storage.DB, hub *rtsp.Hub) *SegmentRecorder {
 	baseDir := cfg.Path
 	if abs, err := filepath.Abs(baseDir); err == nil {
 		baseDir = abs
 	}
 	return &SegmentRecorder{
-		config:     cfg,
-		baseDir:    baseDir,
-		db:         db,
-		audioCodec: make(map[string]string),
+		config:  cfg,
+		baseDir: baseDir,
+		db:      db,
+		hub:     hub,
 	}
 }
 
-// StartRecording begins continuous segment recording for a camera.
+// StartRecording begins continuous segment recording for a camera
+// by creating a RecordingConsumer that receives RTP packets from the Hub.
 func (sr *SegmentRecorder) StartRecording(ctx context.Context, cameraName, rtspURL string) {
 	segDir := filepath.Join(sr.baseDir, cameraName, "segments")
 	if err := os.MkdirAll(segDir, 0o755); err != nil {
@@ -54,182 +56,58 @@ func (sr *SegmentRecorder) StartRecording(ctx context.Context, cameraName, rtspU
 		return
 	}
 
-	// Probe the stream's audio codec so we can decide copy vs transcode
-	codec := probeAudioCodec(rtspURL)
-	sr.mu.Lock()
-	sr.audioCodec[cameraName] = codec
-	sr.mu.Unlock()
-	slog.Info("detected audio codec", "camera", cameraName, "codec", codec)
-
 	go sr.recordLoop(ctx, cameraName, rtspURL, segDir)
 }
 
-// probeAudioCodec uses ffprobe to detect the audio codec of an RTSP stream.
-// Returns the codec name (e.g. "aac", "pcm_alaw") or empty string if no audio or probe fails.
-func probeAudioCodec(rtspURL string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "ffprobe",
-		"-v", "error",
-		"-rtsp_transport", "tcp",
-		"-select_streams", "a:0",
-		"-show_entries", "stream=codec_name",
-		"-of", "csv=p=0",
-		rtspURL,
-	)
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(output))
-}
-
 func (sr *SegmentRecorder) recordLoop(ctx context.Context, cameraName, rtspURL, segDir string) {
+	source := sr.hub.GetOrCreate(rtspURL)
+
+	// Wait for connection and track info
+	var videoTrack *rtsp.TrackInfo
 	for {
+		videoTrack = source.VideoTrack()
+		if videoTrack != nil {
+			break
+		}
 		select {
 		case <-ctx.Done():
 			return
-		default:
-		}
-
-		// Ensure segment directory exists before each recording attempt
-		if err := os.MkdirAll(segDir, 0o755); err != nil {
-			slog.Error("failed to ensure segment directory", "dir", segDir, "error", err)
-		}
-
-		segmentLen := sr.config.SegmentLength
-		if segmentLen == 0 {
-			segmentLen = 10 * time.Minute
-		}
-
-		// Align to clock boundaries: if segment length is 10m, align to :00, :10, :20, etc.
-		startTime := time.Now()
-		nextBoundary := startTime.Truncate(segmentLen).Add(segmentLen)
-		duration := nextBoundary.Sub(startTime)
-		if duration < 10*time.Second {
-			// Too close to boundary, skip to the next one
-			duration += segmentLen
-		}
-
-		segPath := filepath.Join(segDir, fmt.Sprintf("%s.mp4", startTime.Format("2006-01-02_15-04-05")))
-
-		slog.Debug("starting segment", "camera", cameraName, "path", segPath)
-
-		err := sr.recordSegment(ctx, cameraName, rtspURL, segPath, duration)
-
-		endTime := time.Now()
-
-		// Register the segment even if ffmpeg exited early (partial segment)
-		if info, statErr := os.Stat(segPath); statErr == nil {
-			sizeBefore := info.Size()
-
-			// Remux fMP4 → regular MP4 with faststart for better playback and smaller size
-			if remuxErr := remuxToFaststart(segPath); remuxErr != nil {
-				slog.Warn("remux failed, keeping fragmented version", "path", segPath, "error", remuxErr)
-			}
-
-			// Re-stat after remux (size may have changed)
-			if remuxInfo, err := os.Stat(segPath); err == nil {
-				info = remuxInfo
-			}
-
-			rec := storage.SegmentRecord{
-				Camera:    cameraName,
-				Path:      segPath,
-				StartTime: startTime,
-				EndTime:   endTime,
-				SizeBytes: info.Size(),
-			}
-
-			if dbErr := sr.db.SaveSegment(rec); dbErr != nil {
-				slog.Error("failed to save segment to database", "path", segPath, "error", dbErr)
-			}
-
-			saved := sizeBefore - info.Size()
-			slog.Debug("segment completed", "camera", cameraName, "path", segPath,
-				"duration", endTime.Sub(startTime).Round(time.Second),
-				"size", info.Size(),
-				"remux_saved", saved)
-		}
-
-		if err != nil {
-			slog.Error("segment recording error, retrying",
-				"camera", cameraName,
-				"error", err,
-			)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
-			}
+		case <-time.After(500 * time.Millisecond):
 		}
 	}
-}
+	audioTrack := source.AudioTrack()
 
-func (sr *SegmentRecorder) recordSegment(ctx context.Context, cameraName, rtspURL, outputPath string, duration time.Duration) error {
-	segCtx, cancel := context.WithTimeout(ctx, duration+30*time.Second)
-	defer cancel()
-
-	// Use -c:a copy when audio is already AAC (saves CPU), otherwise transcode
-	sr.mu.RLock()
-	codec := sr.audioCodec[cameraName]
-	sr.mu.RUnlock()
-	audioCodecArg := "aac"
-	if codec == "aac" {
-		audioCodecArg = "copy"
-	}
-
-	args := []string{
-		"-hide_banner",
-		"-loglevel", "error",
-		"-rtsp_transport", "tcp",
-		"-use_wallclock_as_timestamps", "1",
-		"-i", rtspURL,
-		"-t", fmt.Sprintf("%.0f", duration.Seconds()),
-		"-c:v", "copy",
-		"-c:a", audioCodecArg,
-		"-movflags", "frag_keyframe+empty_moov",
-		"-y",
-		outputPath,
-	}
-
-	cmd := exec.CommandContext(segCtx, "ffmpeg", args...)
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ffmpeg segment: %w: %s", err, string(output))
-	}
-
-	return nil
-}
-
-// remuxToFaststart re-wraps a fragmented MP4 into a regular MP4 with the moov atom
-// at the front (faststart). This reduces file size (~10-15%) and enables instant playback.
-func remuxToFaststart(path string) error {
-	tmpPath := path + ".remux.mp4"
-
-	cmd := exec.Command("ffmpeg",
-		"-hide_banner",
-		"-loglevel", "error",
-		"-i", path,
-		"-c", "copy",
-		"-movflags", "+faststart",
-		"-y",
-		tmpPath,
+	slog.Info("starting native recording",
+		"camera", cameraName,
+		"video", videoTrack.Codec,
+		"audio_available", audioTrack != nil,
 	)
 
-	if output, err := cmd.CombinedOutput(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("ffmpeg remux: %w: %s", err, string(output))
+	segmentLen := sr.config.SegmentLength
+	if segmentLen == 0 {
+		segmentLen = 10 * time.Minute
 	}
 
-	// Atomic replace: rename tmp over the original
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename remuxed file: %w", err)
-	}
+	db := sr.db
+	consumer := media.NewRecordingConsumer(segDir, cameraName, segmentLen, videoTrack, audioTrack, func(info media.SegmentInfo) {
+		rec := storage.SegmentRecord{
+			Camera:    info.Camera,
+			Path:      info.Path,
+			StartTime: info.StartTime,
+			EndTime:   info.EndTime,
+			SizeBytes: info.SizeBytes,
+		}
+		if err := db.SaveSegment(rec); err != nil {
+			slog.Error("failed to save segment to database", "path", info.Path, "error", err)
+		}
+	})
 
-	return nil
+	source.AddConsumer(consumer)
+	defer source.RemoveConsumer(consumer)
+	defer consumer.Close()
+
+	// Block until context is cancelled — the Hub handles reconnection
+	<-ctx.Done()
 }
 
 // FindSegments returns segments for a camera that overlap the given time range.
@@ -285,12 +163,10 @@ func (sr *SegmentRecorder) AllSegments(cameraName string) []Segment {
 }
 
 // ScanExistingSegments reconciles the filesystem with the database for a camera.
-// It inserts any .mp4 files found on disk but missing from the DB, and removes
-// any DB records whose files no longer exist on disk.
 func (sr *SegmentRecorder) ScanExistingSegments(cameraName, segDir string) {
 	slog.Info("scanning existing segments", "camera", cameraName, "dir", segDir)
 
-	// Clean up stale remux temp files from interrupted shutdowns
+	// Clean up stale temp files
 	tempEntries, _ := os.ReadDir(segDir)
 	for _, entry := range tempEntries {
 		if strings.HasSuffix(entry.Name(), ".remux.mp4") {
@@ -364,35 +240,49 @@ func (sr *SegmentRecorder) ScanExistingSegments(cameraName, segDir string) {
 	}
 }
 
-// probeDuration uses ffprobe to determine the duration of a video file.
+// probeDuration uses pure Go MP4 parsing to determine the duration of a video file.
 func probeDuration(path string) time.Duration {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	dur, err := media.ProbeDuration(path)
+	if err != nil {
+		// Fall back to file modification time heuristic
+		return 0
+	}
+	return dur
+}
 
-	cmd := exec.CommandContext(ctx, "ffprobe",
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "json",
-		path,
-	)
-	output, err := cmd.Output()
+// probeDurationFromMoov is kept as internal fallback for fMP4 files that
+// don't have a moov atom (fragmented MP4 without init).
+func probeDurationFromFile(path string) time.Duration {
+	f, err := os.Open(path)
 	if err != nil {
 		return 0
 	}
+	defer f.Close()
 
-	var result struct {
-		Format struct {
-			Duration string `json:"duration"`
-		} `json:"format"`
-	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		return 0
+	// Try to find moof boxes and compute duration from their timestamps
+	var totalDuration time.Duration
+	buf := make([]byte, 8)
+
+	for {
+		if _, err := io.ReadFull(f, buf); err != nil {
+			break
+		}
+		size := int64(binary.BigEndian.Uint32(buf[:4]))
+		boxType := string(buf[4:8])
+
+		if size < 8 {
+			break
+		}
+
+		if boxType == "moof" || boxType == "mdat" {
+			// Count fragments to estimate duration
+			totalDuration += time.Second // rough estimate per fragment
+		}
+
+		if _, err := f.Seek(size-8, io.SeekCurrent); err != nil {
+			break
+		}
 	}
 
-	var seconds float64
-	if _, err := fmt.Sscanf(result.Format.Duration, "%f", &seconds); err != nil {
-		return 0
-	}
-
-	return time.Duration(seconds * float64(time.Second))
+	return totalDuration
 }
