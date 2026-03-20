@@ -4,15 +4,27 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vedetta"
-version = "0.0.1"
+version = "0.1.0"
 description = "Vedetta NVR — lightweight open-source network video recorder with object detection"
 readme = "README.md"
 license = "MIT"
 authors = [
     { name = "Ruben Jongejan", email = "ruben.jongejan@gmail.com" }
 ]
+keywords = ["nvr", "surveillance", "camera", "object-detection", "yolo", "rtsp", "security"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Home Automation",
+    "Topic :: System :: Monitoring",
+]
 urls.Homepage = "https://github.com/rvben/vedetta"
 urls.Repository = "https://github.com/rvben/vedetta"
+urls.Issues = "https://github.com/rvben/vedetta/issues"
 requires-python = ">=3.9"
 
 [tool.hatch.build.targets.wheel]
