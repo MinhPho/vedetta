@@ -1,0 +1,22 @@
+//go:build !cgo_onnxruntime
+
+package detect
+
+import "fmt"
+
+// CAPIBackend is a stub when built without the cgo_onnxruntime tag.
+// All methods return errors indicating the backend is unavailable.
+type CAPIBackend struct{}
+
+// NewCAPIBackend returns an error when built without the cgo_onnxruntime tag.
+func NewCAPIBackend(_ []byte) (*CAPIBackend, error) {
+	return nil, fmt.Errorf("C ONNX Runtime not available: build with -tags cgo_onnxruntime")
+}
+
+func (b *CAPIBackend) Run(_ []float32) ([]float32, error) {
+	return nil, fmt.Errorf("C ONNX Runtime not available")
+}
+
+func (b *CAPIBackend) Close() {}
+
+func (b *CAPIBackend) Name() string { return "ONNX Runtime (C API) [not compiled]" }

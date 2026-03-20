@@ -44,6 +44,7 @@ type Zone struct {
 
 type DetectConfig struct {
 	ModelPath       string  `yaml:"model_path"`
+	Backend         string  `yaml:"backend"`          // "auto" (default), "go", or "onnxruntime_c"
 	ScoreThreshold  float32 `yaml:"score_threshold"`
 	MotionThreshold float64 `yaml:"motion_threshold"`
 }
