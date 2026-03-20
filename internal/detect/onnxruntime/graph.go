@@ -12,6 +12,8 @@ type Session struct {
 	outputNames []string
 	// Execution order: nodes sorted so all inputs are available before use.
 	execOrder []*NodeProto
+	// cachedAttrs holds pre-parsed attributes per node (avoids re-parsing every inference).
+	cachedAttrs []*Attributes
 	// initializers holds pre-loaded weight tensors by name.
 	initializers map[string]*Tensor
 }
@@ -51,6 +53,12 @@ func NewSession(modelData []byte) (*Session, error) {
 	// so we just verify and use the existing order)
 	s.execOrder = model.Graph.Nodes
 
+	// Pre-parse attributes once at load time
+	s.cachedAttrs = make([]*Attributes, len(s.execOrder))
+	for i, node := range s.execOrder {
+		s.cachedAttrs[i] = nodeAttrsToAttributes(node.Attrs)
+	}
+
 	slog.Info("ONNX session loaded",
 		"nodes", len(s.execOrder),
 		"initializers", len(s.initializers),
@@ -87,10 +95,22 @@ func (s *Session) Run(inputs map[string]*Tensor) (map[string]*Tensor, error) {
 		values[name] = t
 	}
 
+	// Pre-allocated input buffer (most nodes have ≤4 inputs)
+	inputBuf := make([]*Tensor, 8)
+
 	// Execute nodes in order
 	for i, node := range s.execOrder {
 		// Gather inputs
-		nodeInputs := make([]*Tensor, len(node.Inputs))
+		nIn := len(node.Inputs)
+		var nodeInputs []*Tensor
+		if nIn <= len(inputBuf) {
+			nodeInputs = inputBuf[:nIn]
+			for j := range nodeInputs {
+				nodeInputs[j] = nil
+			}
+		} else {
+			nodeInputs = make([]*Tensor, nIn)
+		}
 		for j, name := range node.Inputs {
 			if name == "" {
 				// Optional input, left as nil
@@ -103,8 +123,8 @@ func (s *Session) Run(inputs map[string]*Tensor) (map[string]*Tensor, error) {
 			nodeInputs[j] = t
 		}
 
-		// Parse attributes
-		attrs := nodeAttrsToAttributes(node.Attrs)
+		// Use pre-parsed attributes
+		attrs := s.cachedAttrs[i]
 
 		// Execute
 		outputs, err := Execute(node.OpType, nodeInputs, attrs)
@@ -121,6 +141,7 @@ func (s *Session) Run(inputs map[string]*Tensor) (map[string]*Tensor, error) {
 	}
 
 	// Collect requested outputs
+	outputSet := make(map[string]bool, len(s.outputNames))
 	result := make(map[string]*Tensor, len(s.outputNames))
 	for _, name := range s.outputNames {
 		t, ok := values[name]
@@ -128,6 +149,16 @@ func (s *Session) Run(inputs map[string]*Tensor) (map[string]*Tensor, error) {
 			return nil, fmt.Errorf("output %q not produced by graph", name)
 		}
 		result[name] = t
+		outputSet[name] = true
+	}
+
+	// Return pooled intermediate tensor buffers
+	for name, t := range values {
+		if !t.pooled || outputSet[name] {
+			continue
+		}
+		putTensorData(t.Data)
+		t.pooled = false
 	}
 
 	return result, nil

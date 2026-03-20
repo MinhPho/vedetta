@@ -7,22 +7,79 @@ package onnxruntime
 import (
 	"fmt"
 	"math"
+	"math/bits"
+	"sync"
 )
 
 // Tensor is an N-dimensional array of float32 values in row-major order.
 type Tensor struct {
 	Data  []float32
 	Shape []int64
+	// pooled indicates the Data was allocated via getTensorData and can be returned.
+	pooled bool
+}
+
+// tensorPools provides pooled float32 slices bucketed by power-of-2 sizes.
+// After the first inference pass with a model, all allocations hit the pool.
+var tensorPools [32]sync.Pool
+
+func getTensorData(size int) []float32 {
+	if size <= 0 {
+		return nil
+	}
+	bucket := bucketFor(size)
+	if v := tensorPools[bucket].Get(); v != nil {
+		buf := v.([]float32)
+		buf = buf[:size]
+		for i := range buf {
+			buf[i] = 0
+		}
+		return buf
+	}
+	return make([]float32, size, 1<<bucket)
+}
+
+func putTensorData(buf []float32) {
+	if cap(buf) == 0 {
+		return
+	}
+	bucket := bucketFor(cap(buf))
+	tensorPools[bucket].Put(buf[:cap(buf)])
+}
+
+func bucketFor(size int) int {
+	if size <= 1 {
+		return 0
+	}
+	return bits.Len(uint(size - 1))
 }
 
 // NewTensor creates a tensor with the given shape and data.
-// If data is nil, a zero-filled tensor is allocated.
+// If data is nil, a zero-filled tensor is allocated from the pool.
 func NewTensor(shape []int64, data []float32) *Tensor {
 	size := tensorSize(shape)
 	if data == nil {
-		data = make([]float32, size)
+		data = getTensorData(int(size))
+		return &Tensor{Data: data, Shape: shape, pooled: true}
 	}
 	return &Tensor{Data: data, Shape: shape}
+}
+
+// newTensorUninit allocates a tensor from the pool without zeroing.
+// The caller MUST write every element before reading.
+func newTensorUninit(shape []int64) *Tensor {
+	size := int(tensorSize(shape))
+	if size <= 0 {
+		return &Tensor{Shape: shape}
+	}
+	bucket := bucketFor(size)
+	var data []float32
+	if v := tensorPools[bucket].Get(); v != nil {
+		data = v.([]float32)[:size]
+	} else {
+		data = make([]float32, size, 1<<bucket)
+	}
+	return &Tensor{Data: data, Shape: shape, pooled: true}
 }
 
 // ScalarTensor creates a 0-dimensional tensor with a single value.

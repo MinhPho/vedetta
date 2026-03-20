@@ -10,12 +10,171 @@ func init() {
 	Register("MatMul", opMatMul)
 }
 
-func binaryOp(inputs []*Tensor, op func(a, b float32) float32) ([]*Tensor, error) {
+// shapesEqual returns true if two shapes are identical.
+func shapesEqual(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// isPerChannelBroadcast detects [N,C,H,W] op [C,1,1] or [1,C,1,1] patterns
+// common in neural networks (bias add, batch norm scale).
+// Returns (channelStride, channels, true) if the pattern matches.
+func isPerChannelBroadcast(big, small []int64) (int, int, bool) {
+	if len(big) != 4 {
+		return 0, 0, false
+	}
+	// small must be [C,1,1] or [1,C,1,1]
+	var c int64
+	switch len(small) {
+	case 3:
+		if small[1] != 1 || small[2] != 1 {
+			return 0, 0, false
+		}
+		c = small[0]
+	case 4:
+		if small[0] != 1 || small[2] != 1 || small[3] != 1 {
+			return 0, 0, false
+		}
+		c = small[1]
+	default:
+		return 0, 0, false
+	}
+	if c != big[1] {
+		return 0, 0, false
+	}
+	return int(big[2] * big[3]), int(c), true
+}
+
+func opAdd(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 	if len(inputs) < 2 {
 		return nil, fmt.Errorf("binary op requires 2 inputs, got %d", len(inputs))
 	}
 	a, b := inputs[0], inputs[1]
 
+	// Fast path: same shape
+	if shapesEqual(a.Shape, b.Shape) {
+		out := newTensorUninit(a.Shape)
+		for i := range out.Data {
+			out.Data[i] = a.Data[i] + b.Data[i]
+		}
+		return []*Tensor{out}, nil
+	}
+
+	// Fast path: scalar broadcast
+	if len(b.Shape) == 0 || (len(b.Data) == 1) {
+		bv := b.Data[0]
+		out := newTensorUninit(a.Shape)
+		for i := range out.Data {
+			out.Data[i] = a.Data[i] + bv
+		}
+		return []*Tensor{out}, nil
+	}
+
+	// Fast path: per-channel broadcast [N,C,H,W] + [C,1,1]
+	if spatialSize, channels, ok := isPerChannelBroadcast(a.Shape, b.Shape); ok {
+		out := newTensorUninit(a.Shape)
+		n := int(a.Shape[0])
+		idx := 0
+		for ni := 0; ni < n; ni++ {
+			for c := 0; c < channels; c++ {
+				bv := b.Data[c]
+				for s := 0; s < spatialSize; s++ {
+					out.Data[idx] = a.Data[idx] + bv
+					idx++
+				}
+			}
+		}
+		return []*Tensor{out}, nil
+	}
+
+	return binaryOpSlow(a, b, func(x, y float32) float32 { return x + y })
+}
+
+func opSub(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
+	if len(inputs) < 2 {
+		return nil, fmt.Errorf("binary op requires 2 inputs, got %d", len(inputs))
+	}
+	a, b := inputs[0], inputs[1]
+
+	if shapesEqual(a.Shape, b.Shape) {
+		out := newTensorUninit(a.Shape)
+		for i := range out.Data {
+			out.Data[i] = a.Data[i] - b.Data[i]
+		}
+		return []*Tensor{out}, nil
+	}
+
+	return binaryOpSlow(a, b, func(x, y float32) float32 { return x - y })
+}
+
+func opMul(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
+	if len(inputs) < 2 {
+		return nil, fmt.Errorf("binary op requires 2 inputs, got %d", len(inputs))
+	}
+	a, b := inputs[0], inputs[1]
+
+	if shapesEqual(a.Shape, b.Shape) {
+		out := newTensorUninit(a.Shape)
+		for i := range out.Data {
+			out.Data[i] = a.Data[i] * b.Data[i]
+		}
+		return []*Tensor{out}, nil
+	}
+
+	if len(b.Shape) == 0 || (len(b.Data) == 1) {
+		bv := b.Data[0]
+		out := newTensorUninit(a.Shape)
+		for i := range out.Data {
+			out.Data[i] = a.Data[i] * bv
+		}
+		return []*Tensor{out}, nil
+	}
+
+	if spatialSize, channels, ok := isPerChannelBroadcast(a.Shape, b.Shape); ok {
+		out := newTensorUninit(a.Shape)
+		n := int(a.Shape[0])
+		idx := 0
+		for ni := 0; ni < n; ni++ {
+			for c := 0; c < channels; c++ {
+				bv := b.Data[c]
+				for s := 0; s < spatialSize; s++ {
+					out.Data[idx] = a.Data[idx] * bv
+					idx++
+				}
+			}
+		}
+		return []*Tensor{out}, nil
+	}
+
+	return binaryOpSlow(a, b, func(x, y float32) float32 { return x * y })
+}
+
+func opDiv(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
+	if len(inputs) < 2 {
+		return nil, fmt.Errorf("binary op requires 2 inputs, got %d", len(inputs))
+	}
+	a, b := inputs[0], inputs[1]
+
+	if shapesEqual(a.Shape, b.Shape) {
+		out := newTensorUninit(a.Shape)
+		for i := range out.Data {
+			out.Data[i] = a.Data[i] / b.Data[i]
+		}
+		return []*Tensor{out}, nil
+	}
+
+	return binaryOpSlow(a, b, func(x, y float32) float32 { return x / y })
+}
+
+// binaryOpSlow is the generic fallback using broadcastIndex.
+func binaryOpSlow(a, b *Tensor, op func(x, y float32) float32) ([]*Tensor, error) {
 	outShape, err := broadcastShapes(a.Shape, b.Shape)
 	if err != nil {
 		return nil, err
@@ -31,22 +190,6 @@ func binaryOp(inputs []*Tensor, op func(a, b float32) float32) ([]*Tensor, error
 	}
 
 	return []*Tensor{out}, nil
-}
-
-func opAdd(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
-	return binaryOp(inputs, func(a, b float32) float32 { return a + b })
-}
-
-func opSub(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
-	return binaryOp(inputs, func(a, b float32) float32 { return a - b })
-}
-
-func opMul(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
-	return binaryOp(inputs, func(a, b float32) float32 { return a * b })
-}
-
-func opDiv(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
-	return binaryOp(inputs, func(a, b float32) float32 { return a / b })
 }
 
 func opMatMul(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
@@ -98,6 +241,7 @@ func opMatMul(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 
 		result := Sgemm(a.Data[ai:ai+aMatSize], b.Data[bi:bi+bMatSize], m, n, k)
 		copy(out.Data[oi:oi+outMatSize], result)
+		putGemmBuffer(result)
 	}
 
 	return []*Tensor{out}, nil
