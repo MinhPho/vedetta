@@ -51,6 +51,7 @@ func migrate(db *sql.DB) error {
 			box_x2 INTEGER,
 			box_y2 INTEGER,
 			timestamp DATETIME NOT NULL,
+			end_time DATETIME,
 			snapshot_path TEXT,
 			clip_path TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -71,7 +72,14 @@ func migrate(db *sql.DB) error {
 
 		CREATE INDEX IF NOT EXISTS idx_segments_camera_time ON segments(camera, start_time);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Add end_time column to existing databases
+	_, _ = db.Exec("ALTER TABLE events ADD COLUMN end_time DATETIME")
+
+	return nil
 }
 
 func (d *DB) Close() error {
@@ -85,13 +93,22 @@ func (d *DB) Ping() error {
 }
 
 func (d *DB) SaveEvent(event camera.Event) error {
+	var endTime *time.Time
+	if !event.EndTime.IsZero() {
+		endTime = &event.EndTime
+	}
 	_, err := d.db.Exec(`
-		INSERT INTO events (id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, snapshot_path, clip_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO events (id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.ID, event.CameraName, event.Label, event.Score,
 		event.Box[0], event.Box[1], event.Box[2], event.Box[3],
-		event.Timestamp, event.SnapshotPath, event.ClipPath,
+		event.Timestamp, endTime, event.SnapshotPath, event.ClipPath,
 	)
+	return err
+}
+
+func (d *DB) UpdateEventEndTime(eventID string, endTime time.Time) error {
+	_, err := d.db.Exec("UPDATE events SET end_time = ? WHERE id = ?", endTime, eventID)
 	return err
 }
 
@@ -107,7 +124,7 @@ func (d *DB) UpdateEventSnapshotPath(eventID, snapshotPath string) error {
 
 // QueryEvents returns events matching the given filters.
 func (d *DB) QueryEvents(cameraName, label string, limit, offset int) ([]camera.Event, error) {
-	query := "SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, snapshot_path, clip_path FROM events WHERE 1=1"
+	query := "SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path FROM events WHERE 1=1"
 	args := []any{}
 
 	if cameraName != "" {
@@ -137,23 +154,7 @@ func (d *DB) QueryEvents(cameraName, label string, limit, offset int) ([]camera.
 	}
 	defer func() { _ = rows.Close() }()
 
-	var events []camera.Event
-	for rows.Next() {
-		var e camera.Event
-		var snapshot, clip sql.NullString
-		err := rows.Scan(&e.ID, &e.CameraName, &e.Label, &e.Score,
-			&e.Box[0], &e.Box[1], &e.Box[2], &e.Box[3],
-			&e.Timestamp, &snapshot, &clip,
-		)
-		if err != nil {
-			return nil, err
-		}
-		e.SnapshotPath = snapshot.String
-		e.ClipPath = clip.String
-		events = append(events, e)
-	}
-
-	return events, rows.Err()
+	return scanEvents(rows)
 }
 
 // CountEventsByLabel returns the count of events grouped by label.
@@ -281,20 +282,24 @@ func (d *DB) CountEventsToday() (int, error) {
 // GetEventByID returns a single event by ID, or nil if not found.
 func (d *DB) GetEventByID(id string) (*camera.Event, error) {
 	row := d.db.QueryRow(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, snapshot_path, clip_path
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path
 		FROM events WHERE id = ?`, id)
 
 	var e camera.Event
+	var endTime sql.NullTime
 	var snapshot, clip sql.NullString
 	err := row.Scan(&e.ID, &e.CameraName, &e.Label, &e.Score,
 		&e.Box[0], &e.Box[1], &e.Box[2], &e.Box[3],
-		&e.Timestamp, &snapshot, &clip,
+		&e.Timestamp, &endTime, &snapshot, &clip,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if endTime.Valid {
+		e.EndTime = endTime.Time
 	}
 	e.SnapshotPath = snapshot.String
 	e.ClipPath = clip.String
@@ -337,7 +342,7 @@ func (d *DB) QueryEventsForDate(cameraName string, date time.Time) ([]camera.Eve
 	dayEnd := dayStart.Add(24 * time.Hour)
 
 	rows, err := d.db.Query(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, snapshot_path, clip_path
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path
 		FROM events
 		WHERE camera = ? AND timestamp >= ? AND timestamp < ?
 		ORDER BY timestamp`,
@@ -348,23 +353,7 @@ func (d *DB) QueryEventsForDate(cameraName string, date time.Time) ([]camera.Eve
 	}
 	defer func() { _ = rows.Close() }()
 
-	var events []camera.Event
-	for rows.Next() {
-		var e camera.Event
-		var snapshot, clip sql.NullString
-		err := rows.Scan(&e.ID, &e.CameraName, &e.Label, &e.Score,
-			&e.Box[0], &e.Box[1], &e.Box[2], &e.Box[3],
-			&e.Timestamp, &snapshot, &clip,
-		)
-		if err != nil {
-			return nil, err
-		}
-		e.SnapshotPath = snapshot.String
-		e.ClipPath = clip.String
-		events = append(events, e)
-	}
-
-	return events, rows.Err()
+	return scanEvents(rows)
 }
 
 // CountSegments returns the total number of segments.
@@ -479,6 +468,29 @@ func (d *DB) GetAdjacentEvents(id string) (prevID, nextID string, err error) {
 	}
 
 	return prevID, nextID, nil
+}
+
+func scanEvents(rows *sql.Rows) ([]camera.Event, error) {
+	var events []camera.Event
+	for rows.Next() {
+		var e camera.Event
+		var endTime sql.NullTime
+		var snapshot, clip sql.NullString
+		err := rows.Scan(&e.ID, &e.CameraName, &e.Label, &e.Score,
+			&e.Box[0], &e.Box[1], &e.Box[2], &e.Box[3],
+			&e.Timestamp, &endTime, &snapshot, &clip,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if endTime.Valid {
+			e.EndTime = endTime.Time
+		}
+		e.SnapshotPath = snapshot.String
+		e.ClipPath = clip.String
+		events = append(events, e)
+	}
+	return events, rows.Err()
 }
 
 func scanSegments(rows *sql.Rows) ([]SegmentRecord, error) {

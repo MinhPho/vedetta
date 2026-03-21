@@ -51,15 +51,16 @@ type DetectConfig struct {
 }
 
 type RecordingConfig struct {
-	Path          string        `yaml:"path"`
-	PreCapture    time.Duration `yaml:"pre_capture"`
-	PostCapture   time.Duration `yaml:"post_capture"`
-	RetainDays    int           `yaml:"retain_days"`
-	EventRetain   int           `yaml:"event_retain_days"` // Keep event clips longer than continuous
-	SegmentLength time.Duration `yaml:"segment_length"`
-	Continuous    bool          `yaml:"continuous"`        // Record continuously, not just events
-	MaxStorage    string        `yaml:"max_storage"`       // Human-readable max storage (e.g. "10GB", "500MB"); 0 or empty = unlimited
-	maxStorageBytes int64
+	Path             string        `yaml:"path"`
+	PreCapture       time.Duration `yaml:"pre_capture"`
+	PostCapture      time.Duration `yaml:"post_capture"`
+	MaxEventDuration time.Duration `yaml:"max_event_duration"` // Cap on dynamic event clip length (default 2m)
+	RetainDays       int           `yaml:"retain_days"`
+	EventRetain      int           `yaml:"event_retain_days"` // Keep event clips longer than continuous
+	SegmentLength    time.Duration `yaml:"segment_length"`
+	Continuous       bool          `yaml:"continuous"`        // Record continuously, not just events
+	MaxStorage       string        `yaml:"max_storage"`       // Human-readable max storage (e.g. "10GB", "500MB"); 0 or empty = unlimited
+	maxStorageBytes  int64
 }
 
 // MaxStorageBytes returns the parsed max storage limit in bytes.
@@ -104,13 +105,14 @@ func Load(path string) (*Config, error) {
 			Labels:          []string{"person", "car", "truck", "bus", "motorcycle", "bicycle", "dog", "cat", "bird"},
 		},
 		Recording: RecordingConfig{
-			Path:          "./recordings",
-			PreCapture:    5 * time.Second,
-			PostCapture:   10 * time.Second,
-			RetainDays:    7,
-			EventRetain:   30,
-			SegmentLength: 10 * time.Minute,
-			Continuous:    true,
+			Path:             "./recordings",
+			PreCapture:       5 * time.Second,
+			PostCapture:      10 * time.Second,
+			MaxEventDuration: 2 * time.Minute,
+			RetainDays:       7,
+			EventRetain:      30,
+			SegmentLength:    10 * time.Minute,
+			Continuous:       true,
 		},
 		Events: EventConfig{
 			CooldownSeconds: 30,
