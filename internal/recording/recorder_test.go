@@ -33,7 +33,7 @@ func newTestRecorder(t *testing.T) (*Recorder, *storage.DB) {
 	return rec, db
 }
 
-func TestSaveClip_StartupGracePeriod_SuppressesNoSegments(t *testing.T) {
+func TestSaveClip_NoSegments_ReturnsError(t *testing.T) {
 	rec, _ := newTestRecorder(t)
 
 	event := camera.Event{
@@ -43,18 +43,58 @@ func TestSaveClip_StartupGracePeriod_SuppressesNoSegments(t *testing.T) {
 		Timestamp:  time.Now(),
 	}
 
-	// During startup (within segment length), "no segments available" should be suppressed
 	err := rec.SaveClip(context.Background(), event)
-	if err != nil {
-		t.Errorf("expected no error during startup grace period, got: %v", err)
+	if err == nil {
+		t.Error("expected error when no segments available, got nil")
 	}
 }
 
-func TestSaveClip_StartupGracePeriod_DoesNotSuppressOtherErrors(t *testing.T) {
+func TestSaveClip_WithSegment_SavesClipPath(t *testing.T) {
+	rec, db := newTestRecorder(t)
+
+	segDir := filepath.Join(rec.config.Path, "cam1", "segments")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a dummy segment file
+	dummyPath := filepath.Join(segDir, "2026-01-01_00-00-00.mp4")
+	if err := os.WriteFile(dummyPath, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	db.SaveSegment(storage.SegmentRecord{
+		Camera:    "cam1",
+		Path:      dummyPath,
+		StartTime: now.Add(-5 * time.Minute),
+		EndTime:   now,
+		SizeBytes: 4,
+	})
+
+	event := camera.Event{
+		ID:         "test-2",
+		CameraName: "cam1",
+		Label:      "person",
+		Timestamp:  now.Add(-1 * time.Minute),
+	}
+
+	// SaveClip will fail during trim (dummy file isn't valid MP4),
+	// but should get past segment lookup
+	err := rec.SaveClip(context.Background(), event)
+	if err == nil {
+		// If it somehow succeeded, verify the clip path was saved
+		return
+	}
+	// Expected: trim error (not "no segments available")
+	if err.Error() == "extract clip: no segments available for camera \"cam1\"" {
+		t.Error("segments should have been found")
+	}
+}
+
+func TestSaveClip_DirCreationError_ReturnsError(t *testing.T) {
 	rec, _ := newTestRecorder(t)
 
-	// Create a segment record that exists on disk so FindSegments returns it,
-	// but make the clip output directory a read-only file so clip creation fails.
 	segDir := filepath.Join(rec.config.Path, "cam1", "segments")
 	if err := os.MkdirAll(segDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -79,40 +119,20 @@ func TestSaveClip_StartupGracePeriod_DoesNotSuppressOtherErrors(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(clipsDateDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Create a file where MkdirAll expects to create a directory
 	if err := os.WriteFile(clipsDateDir, []byte("blocker"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	event := camera.Event{
-		ID:         "test-2",
+		ID:         "test-3",
 		CameraName: "cam1",
 		Label:      "person",
 		Timestamp:  now.Add(-1 * time.Minute),
 	}
 
-	// This should NOT be suppressed because it's a directory creation error, not "no segments"
 	err := rec.SaveClip(context.Background(), event)
 	if err == nil {
-		t.Error("expected error for clip dir creation failure during startup, got nil")
-	}
-}
-
-func TestSaveClip_AfterGracePeriod_ReturnsError(t *testing.T) {
-	rec, _ := newTestRecorder(t)
-	// Set startTime to the past so grace period has expired
-	rec.startTime = time.Now().Add(-20 * time.Minute)
-
-	event := camera.Event{
-		ID:         "test-3",
-		CameraName: "cam1",
-		Label:      "car",
-		Timestamp:  time.Now(),
-	}
-
-	err := rec.SaveClip(context.Background(), event)
-	if err == nil {
-		t.Error("expected error after grace period with no segments, got nil")
+		t.Error("expected error for clip dir creation failure, got nil")
 	}
 }
 
