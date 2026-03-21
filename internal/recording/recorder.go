@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rvben/vedetta/internal/camera"
@@ -80,12 +81,13 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
 	clipPath, err := r.ExtractClip(ctx, event)
 	if err != nil {
-		// During startup, segments haven't been written yet — this is expected
+		// During startup, segments haven't been written yet — suppress only
+		// "no segments available" errors, not disk/parsing failures.
 		segLen := r.config.SegmentLength
 		if segLen == 0 {
 			segLen = 10 * time.Minute
 		}
-		if time.Since(r.startTime) < segLen {
+		if time.Since(r.startTime) < segLen && strings.Contains(err.Error(), "no segments available") {
 			slog.Debug("clip extraction skipped during startup", "camera", event.CameraName)
 			return nil
 		}
@@ -105,9 +107,20 @@ func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
 	return nil
 }
 
-// Close waits for all recording goroutines to finalize their segments.
+// Close waits for all recording goroutines to finalize their segments,
+// with a timeout to prevent hanging on shutdown.
 func (r *Recorder) Close() {
-	r.segments.Wait()
+	done := make(chan struct{})
+	go func() {
+		r.segments.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		slog.Info("all recording segments finalized")
+	case <-time.After(10 * time.Second):
+		slog.Warn("timed out waiting for recording segments to finalize")
+	}
 }
 
 // StorageStats queries the database for aggregate storage information.

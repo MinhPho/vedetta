@@ -857,3 +857,29 @@ func TestQueryEvents_WithOffset(t *testing.T) {
 		t.Errorf("events[1].ID = %q, want %q", events[1].ID, "ev1")
 	}
 }
+
+func TestNew_BusyTimeoutIsSet(t *testing.T) {
+	db := newTestDB(t)
+
+	var timeout int
+	err := db.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout)
+	if err != nil {
+		t.Fatalf("PRAGMA busy_timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
+}
+
+func TestNew_WALModeIsSet(t *testing.T) {
+	db := newTestDB(t)
+
+	var mode string
+	err := db.db.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if err != nil {
+		t.Fatalf("PRAGMA journal_mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal_mode = %q, want %q", mode, "wal")
+	}
+}

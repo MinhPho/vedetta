@@ -106,8 +106,17 @@ func (dc *DetectConsumer) OnVideoRTP(pkt *rtp.Packet) {
 		return
 	}
 
-	// Rate limit
+	// Periodic status log — fires whether or not frames are being decoded
 	dc.mu.Lock()
+	if time.Since(dc.lastLog) >= 5*time.Minute {
+		slog.Info("detection status",
+			"camera", dc.camera,
+			"frames_decoded", dc.frameCount,
+		)
+		dc.frameCount = 0
+		dc.lastLog = time.Now()
+	}
+	// Rate limit
 	if time.Since(dc.lastFrame) < dc.frameDelay {
 		dc.mu.Unlock()
 		return
@@ -157,15 +166,6 @@ func (dc *DetectConsumer) OnVideoRTP(pkt *rtp.Packet) {
 	dc.mu.Lock()
 	dc.lastFrame = time.Now()
 	dc.frameCount++
-	if time.Since(dc.lastLog) >= 5*time.Minute {
-		slog.Info("detection frames decoded",
-			"camera", dc.camera,
-			"frames", dc.frameCount,
-			"interval", "5m",
-		)
-		dc.frameCount = 0
-		dc.lastLog = time.Now()
-	}
 	dc.mu.Unlock()
 
 	select {

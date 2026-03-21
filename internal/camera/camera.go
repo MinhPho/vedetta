@@ -270,6 +270,9 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 
 // IsOnline returns true if the camera's detection RTSP source is connected.
 func (c *Camera) IsOnline() bool {
+	if c.hub == nil {
+		return false
+	}
 	if src := c.hub.Get(c.config.URL); src != nil {
 		return src.Connected()
 	}
@@ -288,8 +291,10 @@ func (c *Camera) Status() CameraStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	online := false
-	if src := c.hub.Get(c.config.URL); src != nil {
-		online = src.Connected()
+	if c.hub != nil {
+		if src := c.hub.Get(c.config.URL); src != nil {
+			online = src.Connected()
+		}
 	}
 	return CameraStatus{
 		Name:      c.config.Name,

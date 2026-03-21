@@ -25,14 +25,11 @@ type DB struct {
 }
 
 func New(path string) (*DB, error) {
-	db, err := sql.Open("sqlite", path+"?_busy_timeout=5000")
+	// PRAGMAs in the DSN are applied to every new connection in the pool.
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
-	}
-
-	// Enable WAL mode for better concurrent read/write performance
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
 	if err := migrate(db); err != nil {
