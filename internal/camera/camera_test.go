@@ -1,9 +1,11 @@
 package camera
 
 import (
+	"context"
 	"testing"
 
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/rtsp"
 )
 
 func TestSnapshotRGB24_NoFrame(t *testing.T) {
@@ -82,5 +84,48 @@ func TestFrameSize(t *testing.T) {
 	expected := 320 * 240 * 3
 	if got := cam.FrameSize(); got != expected {
 		t.Fatalf("FrameSize() = %d, want %d", got, expected)
+	}
+}
+
+func TestIsOnline_NoHub(t *testing.T) {
+	cam := NewCamera(config.CameraConfig{
+		Name: "test",
+		URL:  "rtsp://localhost/test",
+	}, nil, make(chan<- Event, 1), nil)
+
+	if cam.IsOnline() {
+		t.Error("expected IsOnline=false with nil hub")
+	}
+}
+
+func TestIsOnline_NoSource(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hub := rtsp.NewHub(ctx)
+	defer hub.Close()
+
+	cam := NewCamera(config.CameraConfig{
+		Name: "test",
+		URL:  "rtsp://localhost/test",
+	}, nil, make(chan<- Event, 1), hub)
+
+	// No source created for this URL yet
+	if cam.IsOnline() {
+		t.Error("expected IsOnline=false when no source exists")
+	}
+}
+
+func TestStatus_NoHub(t *testing.T) {
+	cam := NewCamera(config.CameraConfig{
+		Name: "test",
+		URL:  "rtsp://localhost/test",
+	}, nil, make(chan<- Event, 1), nil)
+
+	st := cam.Status()
+	if st.Online {
+		t.Error("expected Online=false with nil hub")
+	}
+	if st.Name != "test" {
+		t.Errorf("Name = %q, want %q", st.Name, "test")
 	}
 }

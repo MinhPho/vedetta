@@ -104,17 +104,25 @@ func main() {
 	manager := camera.NewManager(cfg.Cameras, detector, events, hub)
 	manager.Start(ctx)
 
-	// Periodically publish camera online/offline status to MQTT
+	// Periodically publish camera online/offline status to MQTT.
+	// Uses a short initial interval so cameras that connect quickly get
+	// reported promptly, then switches to the normal 30s interval.
 	if mqttClient != nil {
 		go func() {
-			// Publish initial status after cameras have had time to connect
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(10 * time.Second):
+			publishStatuses := func() {
+				for _, st := range manager.CameraStatuses() {
+					mqttClient.PublishCameraStatus(st.Name, st.Online)
+				}
 			}
-			for _, st := range manager.CameraStatuses() {
-				mqttClient.PublishCameraStatus(st.Name, st.Online)
+
+			// Publish a few times quickly at startup to catch cameras as they connect
+			for range 3 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+					publishStatuses()
+				}
 			}
 
 			ticker := time.NewTicker(30 * time.Second)
@@ -124,9 +132,7 @@ func main() {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					for _, st := range manager.CameraStatuses() {
-						mqttClient.PublishCameraStatus(st.Name, st.Online)
-					}
+					publishStatuses()
 				}
 			}
 		}()
