@@ -3,7 +3,6 @@ package recording
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,9 +32,6 @@ func (r *Recorder) ExtractClip(_ context.Context, event camera.Event) (string, e
 	segments := r.segments.FindSegments(event.CameraName, from, to)
 
 	if len(segments) == 0 {
-		slog.Warn("no segments available for clip",
-			"camera", event.CameraName,
-		)
 		return "", fmt.Errorf("no segments available for camera %q", event.CameraName)
 	}
 

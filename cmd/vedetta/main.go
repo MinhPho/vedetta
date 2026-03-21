@@ -107,6 +107,16 @@ func main() {
 	// Periodically publish camera online/offline status to MQTT
 	if mqttClient != nil {
 		go func() {
+			// Publish initial status after cameras have had time to connect
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Second):
+			}
+			for _, st := range manager.CameraStatuses() {
+				mqttClient.PublishCameraStatus(st.Name, st.Online)
+			}
+
 			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
 			for {
@@ -163,4 +173,7 @@ func main() {
 
 	slog.Info("shutting down")
 	cancel()
+
+	// Wait for recording goroutines to finalize segments before closing DB
+	recorder.Close()
 }

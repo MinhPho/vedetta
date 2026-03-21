@@ -28,6 +28,7 @@ type Recorder struct {
 	hub        *rtsp.Hub
 	segments   *SegmentRecorder
 	cameraURLs map[string]string // camera name → record RTSP URL
+	startTime  time.Time
 }
 
 func New(cfg config.RecordingConfig, db *storage.DB, hub *rtsp.Hub) *Recorder {
@@ -41,6 +42,7 @@ func New(cfg config.RecordingConfig, db *storage.DB, hub *rtsp.Hub) *Recorder {
 		hub:        hub,
 		segments:   NewSegmentRecorder(cfg, db, hub),
 		cameraURLs: make(map[string]string),
+		startTime:  time.Now(),
 	}
 }
 
@@ -78,6 +80,15 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
 	clipPath, err := r.ExtractClip(ctx, event)
 	if err != nil {
+		// During startup, segments haven't been written yet — this is expected
+		segLen := r.config.SegmentLength
+		if segLen == 0 {
+			segLen = 10 * time.Minute
+		}
+		if time.Since(r.startTime) < segLen {
+			slog.Debug("clip extraction skipped during startup", "camera", event.CameraName)
+			return nil
+		}
 		return fmt.Errorf("extract clip: %w", err)
 	}
 
@@ -92,6 +103,11 @@ func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
 	)
 
 	return nil
+}
+
+// Close waits for all recording goroutines to finalize their segments.
+func (r *Recorder) Close() {
+	r.segments.Wait()
 }
 
 // StorageStats queries the database for aggregate storage information.

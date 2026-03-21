@@ -24,6 +24,7 @@ type RawFrame struct {
 type DetectConsumer struct {
 	width  int
 	height int
+	camera string
 
 	h264Decoder *rtph264.Decoder
 	h264Dec     *H264Decoder
@@ -34,16 +35,20 @@ type DetectConsumer struct {
 	frameCh    chan RawFrame
 	lastFrame  time.Time
 	frameDelay time.Duration
+	frameCount uint64
+	lastLog    time.Time
 }
 
 // NewDetectConsumer creates a consumer that decodes H264 keyframes for detection.
 // Detection is disabled if OpenH264 is unavailable.
-func NewDetectConsumer(width, height, fps int, track *rtsp.TrackInfo) *DetectConsumer {
+func NewDetectConsumer(camera string, width, height, fps int, track *rtsp.TrackInfo) *DetectConsumer {
 	dc := &DetectConsumer{
 		width:      width,
 		height:     height,
+		camera:     camera,
 		frameCh:    make(chan RawFrame, 2),
 		frameDelay: time.Second / time.Duration(max(fps, 1)),
+		lastLog:    time.Now(),
 	}
 
 	if track == nil || track.Codec != "H264" {
@@ -151,6 +156,16 @@ func (dc *DetectConsumer) OnVideoRTP(pkt *rtp.Packet) {
 
 	dc.mu.Lock()
 	dc.lastFrame = time.Now()
+	dc.frameCount++
+	if time.Since(dc.lastLog) >= 5*time.Minute {
+		slog.Info("detection frames decoded",
+			"camera", dc.camera,
+			"frames", dc.frameCount,
+			"interval", "5m",
+		)
+		dc.frameCount = 0
+		dc.lastLog = time.Now()
+	}
 	dc.mu.Unlock()
 
 	select {
