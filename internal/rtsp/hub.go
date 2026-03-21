@@ -11,11 +11,12 @@ import (
 func SanitizeURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return "rtsp://***"
+		return "rtsp://***@<invalid>"
 	}
-	if u.User != nil {
-		u.User = url.User("***")
+	if u.User == nil {
+		return rawURL
 	}
+	u.User = nil
 	return u.String()
 }
 
