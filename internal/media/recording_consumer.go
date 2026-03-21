@@ -22,19 +22,28 @@ type SegmentInfo struct {
 	SizeBytes int64
 }
 
+type rtpMsg struct {
+	pkt   *rtp.Packet
+	video bool
+}
+
 // RecordingConsumer implements rtsp.Consumer and writes RTP packets to fMP4 segments.
+// Packets are buffered via a channel so the RTSP reader goroutine is never blocked.
 type RecordingConsumer struct {
 	camera     string
 	segLen     time.Duration
 	videoTrack *rtsp.TrackInfo
 	audioTrack *rtsp.TrackInfo
 	onSegment  func(SegmentInfo)
+	segDir     string
+
+	pktCh  chan rtpMsg
+	done   chan struct{}
 
 	mu       sync.Mutex
 	writer   *SegmentWriter
 	segPath  string
 	segStart time.Time
-	segDir   string
 }
 
 // NewRecordingConsumer creates a consumer that records to rotating fMP4 segments.
@@ -44,21 +53,71 @@ func NewRecordingConsumer(segDir, camera string, segLen time.Duration, video, au
 		slog.Error("failed to create segment directory", "camera", camera, "error", err)
 	}
 
-	return &RecordingConsumer{
+	rc := &RecordingConsumer{
 		camera:     camera,
 		segLen:     segLen,
 		videoTrack: video,
 		audioTrack: audio,
 		onSegment:  onSegment,
 		segDir:     segDir,
+		pktCh:      make(chan rtpMsg, 512),
+		done:       make(chan struct{}),
+	}
+
+	go rc.processLoop()
+
+	return rc
+}
+
+// OnVideoRTP enqueues a video RTP packet for async processing.
+func (rc *RecordingConsumer) OnVideoRTP(pkt *rtp.Packet) {
+	select {
+	case rc.pktCh <- rtpMsg{pkt: pkt, video: true}:
+	default:
+		// Drop packet if buffer full — better than blocking the RTSP reader
 	}
 }
 
-// OnVideoRTP receives a video RTP packet and writes it to the current segment.
-func (rc *RecordingConsumer) OnVideoRTP(pkt *rtp.Packet) {
+// OnAudioRTP enqueues an audio RTP packet for async processing.
+func (rc *RecordingConsumer) OnAudioRTP(pkt *rtp.Packet) {
+	select {
+	case rc.pktCh <- rtpMsg{pkt: pkt, video: false}:
+	default:
+	}
+}
+
+// OnDisconnect is called when the RTSP source disconnects.
+func (rc *RecordingConsumer) OnDisconnect() {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
+	rc.closeCurrentSegment()
+}
 
+// Close finalizes the current segment and stops the processing goroutine.
+func (rc *RecordingConsumer) Close() {
+	close(rc.pktCh)
+	<-rc.done // wait for processLoop to finish
+
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.closeCurrentSegment()
+}
+
+func (rc *RecordingConsumer) processLoop() {
+	defer close(rc.done)
+
+	for msg := range rc.pktCh {
+		rc.mu.Lock()
+		if msg.video {
+			rc.processVideo(msg.pkt)
+		} else {
+			rc.processAudio(msg.pkt)
+		}
+		rc.mu.Unlock()
+	}
+}
+
+func (rc *RecordingConsumer) processVideo(pkt *rtp.Packet) {
 	if err := rc.ensureSegment(); err != nil {
 		slog.Error("ensure segment failed", "camera", rc.camera, "error", err)
 		return
@@ -71,11 +130,7 @@ func (rc *RecordingConsumer) OnVideoRTP(pkt *rtp.Packet) {
 	rc.maybeRotate()
 }
 
-// OnAudioRTP receives an audio RTP packet.
-func (rc *RecordingConsumer) OnAudioRTP(pkt *rtp.Packet) {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-
+func (rc *RecordingConsumer) processAudio(pkt *rtp.Packet) {
 	if rc.writer == nil {
 		return
 	}
@@ -83,20 +138,6 @@ func (rc *RecordingConsumer) OnAudioRTP(pkt *rtp.Packet) {
 	if err := rc.writer.WriteAudio(pkt); err != nil {
 		slog.Error("write audio failed", "camera", rc.camera, "error", err)
 	}
-}
-
-// OnDisconnect is called when the RTSP source disconnects.
-func (rc *RecordingConsumer) OnDisconnect() {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	rc.closeCurrentSegment()
-}
-
-// Close finalizes the current segment.
-func (rc *RecordingConsumer) Close() {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	rc.closeCurrentSegment()
 }
 
 func (rc *RecordingConsumer) ensureSegment() error {
