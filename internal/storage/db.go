@@ -3,11 +3,19 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rvben/vedetta/internal/camera"
 	_ "modernc.org/sqlite"
 )
+
+// needsNormalization returns true if a stored timestamp string contains
+// non-UTC timezone info or monotonic clock readings.
+func needsNormalization(s string) bool {
+	return strings.Contains(s, "m=+") || strings.Contains(s, "m=-") ||
+		(strings.Contains(s, "+") && !strings.HasSuffix(strings.TrimSpace(s), "+0000 UTC"))
+}
 
 // SegmentRecord represents a recorded video segment stored in the database.
 type SegmentRecord struct {
@@ -79,7 +87,74 @@ func migrate(db *sql.DB) error {
 	// Add end_time column to existing databases
 	_, _ = db.Exec("ALTER TABLE events ADD COLUMN end_time DATETIME")
 
+	// Normalize timestamps to UTC RFC3339 format for consistent SQLite comparisons.
+	// The modernc.org/sqlite driver stores time.Time using Go's String() which includes
+	// timezone and monotonic clock, breaking text-based comparisons across timezones.
+	normalizeTimestamps(db)
+
 	return nil
+}
+
+func normalizeTimestamps(db *sql.DB) {
+	// Check if normalization is needed by looking at a sample segment
+	var sample string
+	err := db.QueryRow("SELECT start_time FROM segments LIMIT 1").Scan(&sample)
+	if err != nil || !needsNormalization(sample) {
+		return
+	}
+
+	// Normalize segments
+	rows, err := db.Query("SELECT id, start_time, end_time FROM segments")
+	if err != nil {
+		return
+	}
+	type segTime struct {
+		id    int64
+		start time.Time
+		end   time.Time
+	}
+	var segs []segTime
+	for rows.Next() {
+		var s segTime
+		if err := rows.Scan(&s.id, &s.start, &s.end); err == nil {
+			segs = append(segs, s)
+		}
+	}
+	rows.Close()
+
+	for _, s := range segs {
+		db.Exec("UPDATE segments SET start_time = ?, end_time = ? WHERE id = ?",
+			s.start.UTC().Round(0), s.end.UTC().Round(0), s.id)
+	}
+
+	// Normalize events
+	erows, err := db.Query("SELECT id, timestamp, end_time FROM events")
+	if err != nil {
+		return
+	}
+	type evtTime struct {
+		id      string
+		ts      time.Time
+		endTime sql.NullTime
+	}
+	var evts []evtTime
+	for erows.Next() {
+		var e evtTime
+		if err := erows.Scan(&e.id, &e.ts, &e.endTime); err == nil {
+			evts = append(evts, e)
+		}
+	}
+	erows.Close()
+
+	for _, e := range evts {
+		if e.endTime.Valid {
+			db.Exec("UPDATE events SET timestamp = ?, end_time = ? WHERE id = ?",
+				e.ts.UTC().Round(0), e.endTime.Time.UTC().Round(0), e.id)
+		} else {
+			db.Exec("UPDATE events SET timestamp = ? WHERE id = ?",
+				e.ts.UTC().Round(0), e.id)
+		}
+	}
 }
 
 func (d *DB) Close() error {
@@ -95,20 +170,21 @@ func (d *DB) Ping() error {
 func (d *DB) SaveEvent(event camera.Event) error {
 	var endTime *time.Time
 	if !event.EndTime.IsZero() {
-		endTime = &event.EndTime
+		t := utc(event.EndTime)
+		endTime = &t
 	}
 	_, err := d.db.Exec(`
 		INSERT INTO events (id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.ID, event.CameraName, event.Label, event.Score,
 		event.Box[0], event.Box[1], event.Box[2], event.Box[3],
-		event.Timestamp, endTime, event.SnapshotPath, event.ClipPath,
+		utc(event.Timestamp), endTime, event.SnapshotPath, event.ClipPath,
 	)
 	return err
 }
 
 func (d *DB) UpdateEventEndTime(eventID string, endTime time.Time) error {
-	_, err := d.db.Exec("UPDATE events SET end_time = ? WHERE id = ?", endTime, eventID)
+	_, err := d.db.Exec("UPDATE events SET end_time = ? WHERE id = ?", utc(endTime), eventID)
 	return err
 }
 
@@ -204,12 +280,18 @@ func (d *DB) CountEvents() (int, error) {
 	return count, err
 }
 
+// utc normalizes a time.Time to UTC and strips the monotonic clock reading.
+// This ensures consistent text representation in SQLite for correct comparisons.
+func utc(t time.Time) time.Time {
+	return t.UTC().Round(0)
+}
+
 // SaveSegment inserts or replaces a segment record in the database.
 func (d *DB) SaveSegment(seg SegmentRecord) error {
 	_, err := d.db.Exec(`
 		INSERT OR REPLACE INTO segments (camera, path, start_time, end_time, size_bytes)
 		VALUES (?, ?, ?, ?, ?)`,
-		seg.Camera, seg.Path, seg.StartTime, seg.EndTime, seg.SizeBytes,
+		seg.Camera, seg.Path, utc(seg.StartTime), utc(seg.EndTime), seg.SizeBytes,
 	)
 	return err
 }
@@ -221,7 +303,7 @@ func (d *DB) QuerySegments(cameraName string, from, to time.Time) ([]SegmentReco
 		FROM segments
 		WHERE camera = ? AND start_time < ? AND end_time > ?
 		ORDER BY start_time`,
-		cameraName, to, from,
+		cameraName, utc(to), utc(from),
 	)
 	if err != nil {
 		return nil, err
