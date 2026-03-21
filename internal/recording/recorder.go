@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/rvben/vedetta/internal/camera"
@@ -80,19 +79,9 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 }
 
 // SaveClip records a clip around the event timestamp.
-func (r *Recorder) SaveClip(ctx context.Context, event camera.Event) error {
-	clipPath, err := r.ExtractClip(ctx, event)
+func (r *Recorder) SaveClip(_ context.Context, event camera.Event) error {
+	clipPath, err := r.ExtractClip(context.Background(), event)
 	if err != nil {
-		// During startup, segments haven't been written yet — suppress only
-		// "no segments available" errors, not disk/parsing failures.
-		segLen := r.config.SegmentLength
-		if segLen == 0 {
-			segLen = 10 * time.Minute
-		}
-		if time.Since(r.startTime) < segLen && strings.Contains(err.Error(), "no segments available") {
-			slog.Debug("clip extraction skipped during startup", "camera", event.CameraName)
-			return nil
-		}
 		return fmt.Errorf("extract clip: %w", err)
 	}
 

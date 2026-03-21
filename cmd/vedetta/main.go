@@ -151,9 +151,36 @@ func main() {
 				slog.Error("failed to save event", "error", err)
 			}
 
-			if err := recorder.SaveClip(ctx, event); err != nil {
-				slog.Error("failed to save clip", "error", err)
-			}
+			// Extract clip asynchronously — retry until the segment
+			// covering the post-capture window has been written to DB.
+			ev := event
+			go func() {
+				delay := cfg.Recording.PostCapture + 15*time.Second
+				if delay < 15*time.Second {
+					delay = 15 * time.Second
+				}
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				}
+				for attempt := 0; attempt < 5; attempt++ {
+					err := recorder.SaveClip(ctx, ev)
+					if err == nil {
+						return
+					}
+					if attempt < 4 {
+						slog.Debug("clip not ready, retrying", "event", ev.ID, "attempt", attempt+1)
+						select {
+						case <-time.After(time.Duration(attempt+1) * 30 * time.Second):
+						case <-ctx.Done():
+							return
+						}
+					} else {
+						slog.Error("failed to save clip after retries", "event", ev.ID, "error", err)
+					}
+				}
+			}()
 
 			if mqttClient != nil {
 				if err := mqttClient.PublishEvent(event); err != nil {
