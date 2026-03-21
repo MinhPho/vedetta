@@ -2,13 +2,12 @@ package recording
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rvben/vedetta/internal/config"
@@ -31,7 +30,8 @@ type SegmentRecorder struct {
 	config  config.RecordingConfig
 	baseDir string
 	db      *storage.DB
-	hub *rtsp.Hub
+	hub     *rtsp.Hub
+	wg      sync.WaitGroup
 }
 
 func NewSegmentRecorder(cfg config.RecordingConfig, db *storage.DB, hub *rtsp.Hub) *SegmentRecorder {
@@ -56,7 +56,16 @@ func (sr *SegmentRecorder) StartRecording(ctx context.Context, cameraName, rtspU
 		return
 	}
 
-	go sr.recordLoop(ctx, cameraName, rtspURL, segDir)
+	sr.wg.Add(1)
+	go func() {
+		defer sr.wg.Done()
+		sr.recordLoop(ctx, cameraName, rtspURL, segDir)
+	}()
+}
+
+// Wait blocks until all recording goroutines have finished and finalized their segments.
+func (sr *SegmentRecorder) Wait() {
+	sr.wg.Wait()
 }
 
 func (sr *SegmentRecorder) recordLoop(ctx context.Context, cameraName, rtspURL, segDir string) {
@@ -250,39 +259,3 @@ func probeDuration(path string) time.Duration {
 	return dur
 }
 
-// probeDurationFromMoov is kept as internal fallback for fMP4 files that
-// don't have a moov atom (fragmented MP4 without init).
-func probeDurationFromFile(path string) time.Duration {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-
-	// Try to find moof boxes and compute duration from their timestamps
-	var totalDuration time.Duration
-	buf := make([]byte, 8)
-
-	for {
-		if _, err := io.ReadFull(f, buf); err != nil {
-			break
-		}
-		size := int64(binary.BigEndian.Uint32(buf[:4]))
-		boxType := string(buf[4:8])
-
-		if size < 8 {
-			break
-		}
-
-		if boxType == "moof" || boxType == "mdat" {
-			// Count fragments to estimate duration
-			totalDuration += time.Second // rough estimate per fragment
-		}
-
-		if _, err := f.Seek(size-8, io.SeekCurrent); err != nil {
-			break
-		}
-	}
-
-	return totalDuration
-}

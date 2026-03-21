@@ -196,7 +196,7 @@ func (c *Camera) readFrames(ctx context.Context) {
 		}
 	}
 
-	consumer := media.NewDetectConsumer(w, h, fps, videoTrack)
+	consumer := media.NewDetectConsumer(c.config.Name, w, h, fps, videoTrack)
 	source.AddConsumer(consumer)
 	defer source.RemoveConsumer(consumer)
 
