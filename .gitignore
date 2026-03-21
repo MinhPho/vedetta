@@ -20,6 +20,9 @@ snapshots/
 # ONNX models
 *.onnx
 
+# Scripts (local/deploy)
+scripts/
+
 # OS
 .DS_Store
 Thumbs.db

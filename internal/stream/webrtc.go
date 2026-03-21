@@ -1,8 +1,10 @@
 package stream
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 
 	"github.com/pion/rtp"
@@ -22,6 +24,67 @@ type StreamManager struct {
 type peerState struct {
 	pc    *webrtc.PeerConnection
 	track *webrtc.TrackLocalStaticRTP
+
+	mu           sync.Mutex
+	seqOffset    uint16
+	tsOffset     uint32
+	started      bool
+	keyframeSeen bool
+}
+
+func (p *peerState) write(pkt *rtp.Packet) error {
+	p.mu.Lock()
+	if !p.keyframeSeen {
+		if isKeyframe(pkt) {
+			p.keyframeSeen = true
+		} else {
+			p.mu.Unlock()
+			return nil
+		}
+	}
+
+	if !p.started {
+		p.seqOffset = -pkt.Header.SequenceNumber
+		p.tsOffset = -pkt.Header.Timestamp
+		p.started = true
+	}
+	seq := pkt.Header.SequenceNumber + p.seqOffset
+	ts := pkt.Header.Timestamp + p.tsOffset
+	p.mu.Unlock()
+
+	clone := *pkt
+	clone.Header.SequenceNumber = seq
+	clone.Header.Timestamp = ts
+	return p.track.WriteRTP(&clone)
+}
+
+// isKeyframe checks if an RTP packet contains the start of an H264 IDR frame.
+func isKeyframe(pkt *rtp.Packet) bool {
+	if len(pkt.Payload) < 2 {
+		return false
+	}
+
+	nalType := pkt.Payload[0] & 0x1f
+
+	switch {
+	case nalType >= 1 && nalType <= 23:
+		// Single NAL unit: type 5 = IDR, type 7 = SPS
+		return nalType == 5 || nalType == 7
+	case nalType == 24:
+		// STAP-A: check first NAL inside
+		if len(pkt.Payload) < 4 {
+			return false
+		}
+		innerNALType := pkt.Payload[3] & 0x1f
+		return innerNALType == 5 || innerNALType == 7
+	case nalType == 28:
+		// FU-A: check start bit and NAL type
+		startBit := pkt.Payload[1] & 0x80
+		fuNALType := pkt.Payload[1] & 0x1f
+		return startBit != 0 && (fuNALType == 5 || fuNALType == 7)
+	}
+
+	return false
 }
 
 // webrtcConsumer implements rtsp.Consumer and forwards RTP to WebRTC peers.
@@ -34,7 +97,7 @@ func (wc *webrtcConsumer) OnVideoRTP(pkt *rtp.Packet) {
 	wc.mu.RLock()
 	defer wc.mu.RUnlock()
 	for _, p := range wc.peers {
-		if err := p.track.WriteRTP(pkt); err != nil {
+		if err := p.write(pkt); err != nil {
 			slog.Debug("failed to write RTP to peer", "error", err)
 		}
 	}
@@ -71,19 +134,52 @@ func NewStreamManager(hub *rtsp.Hub) *StreamManager {
 
 // HandleOffer processes a WebRTC SDP offer and returns an SDP answer.
 func (sm *StreamManager) HandleOffer(cameraName, rtspURL string, offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
-	config := webrtc.Configuration{
+	// Build H264 codec capability with profile-level-id from camera SPS
+	sdpFmtpLine := "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
+	source := sm.hub.GetOrCreate(rtspURL)
+	if vt := source.VideoTrack(); vt != nil && len(vt.SPS) >= 3 {
+		profileLevelID := hex.EncodeToString(vt.SPS[1:4])
+		sdpFmtpLine = fmt.Sprintf("level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=%s", profileLevelID)
+	}
+
+	// Register only the H264 codec we'll actually send.
+	// This ensures the SDP answer contains exactly one codec, so the browser
+	// knows which payload type to expect.
+	me := &webrtc.MediaEngine{}
+	if err := me.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:    webrtc.MimeTypeH264,
+			ClockRate:   90000,
+			SDPFmtpLine: sdpFmtpLine,
+		},
+		PayloadType: 96,
+	}, webrtc.RTPCodecTypeVideo); err != nil {
+		return nil, fmt.Errorf("register codec: %w", err)
+	}
+
+	// Force IPv4 only — IPv6 UDP causes packet loss on some networks
+	se := webrtc.SettingEngine{}
+	se.SetIPFilter(func(ip net.IP) bool {
+		return ip.To4() != nil
+	})
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithSettingEngine(se))
+	pc, err := api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
 		},
-	}
-
-	pc, err := webrtc.NewPeerConnection(config)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create peer connection: %w", err)
 	}
 
 	videoTrack, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264},
+		webrtc.RTPCodecCapability{
+			MimeType:    webrtc.MimeTypeH264,
+			ClockRate:   90000,
+			SDPFmtpLine: sdpFmtpLine,
+		},
 		"video",
 		fmt.Sprintf("vedetta-%s", cameraName),
 	)
