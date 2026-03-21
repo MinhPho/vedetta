@@ -11,13 +11,14 @@ import (
 )
 
 type Config struct {
-	Cameras   []CameraConfig  `yaml:"cameras"`
-	Detect    DetectConfig    `yaml:"detect"`
-	Recording RecordingConfig `yaml:"recording"`
-	Events    EventConfig     `yaml:"events"`
-	Storage   StorageConfig   `yaml:"storage"`
-	MQTT      MQTTConfig      `yaml:"mqtt"`
-	API       APIConfig       `yaml:"api"`
+	Cameras    []CameraConfig   `yaml:"cameras"`
+	Detect     DetectConfig     `yaml:"detect"`
+	Recording  RecordingConfig  `yaml:"recording"`
+	Events     EventConfig      `yaml:"events"`
+	Storage    StorageConfig    `yaml:"storage"`
+	MQTT       MQTTConfig       `yaml:"mqtt"`
+	API        APIConfig        `yaml:"api"`
+	RTSPServer RTSPServerConfig `yaml:"rtsp_server"`
 }
 
 type CameraConfig struct {
@@ -92,6 +93,11 @@ type APIConfig struct {
 	Port int    `yaml:"port"`
 }
 
+type RTSPServerConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Port    int  `yaml:"port"`
+}
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -125,6 +131,9 @@ func Load(path string) (*Config, error) {
 		API: APIConfig{
 			Host: "0.0.0.0",
 			Port: 5050,
+		},
+		RTSPServer: RTSPServerConfig{
+			Port: 8554,
 		},
 	}
 

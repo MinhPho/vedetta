@@ -14,6 +14,7 @@ type TrackInfo struct {
 	Codec        string // "H264", "AAC", "PCMA", etc.
 	ClockRate    int
 	IsVideo      bool
+	PayloadType  uint8  // RTP payload type from upstream SDP
 	SPS, PPS     []byte // H264-specific
 	ChannelCount int    // Audio channel count (1=mono, 2=stereo)
 }

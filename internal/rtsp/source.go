@@ -74,6 +74,20 @@ func (s *Source) AudioTrack() *TrackInfo {
 	return s.audioTrack
 }
 
+// SetVideoTrack sets the video track info (for testing).
+func (s *Source) SetVideoTrack(ti *TrackInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.videoTrack = ti
+}
+
+// SetAudioTrack sets the audio track info (for testing).
+func (s *Source) SetAudioTrack(ti *TrackInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audioTrack = ti
+}
+
 // Connected returns whether the source is currently connected.
 func (s *Source) Connected() bool {
 	s.mu.RLock()
@@ -216,7 +230,8 @@ func (s *Source) extractTracks(desc *description.Session) {
 				ti := &TrackInfo{
 					Codec:     "H264",
 					ClockRate: f.ClockRate(),
-					IsVideo:   true,
+					IsVideo:     true,
+					PayloadType: f.PayloadType(),
 				}
 				if f.SPS != nil {
 					ti.SPS = make([]byte, len(f.SPS))
@@ -239,6 +254,7 @@ func (s *Source) extractTracks(desc *description.Session) {
 				s.audioTrack = &TrackInfo{
 					Codec:        "AAC",
 					ClockRate:    f.ClockRate(),
+					PayloadType:  f.PayloadType(),
 					ChannelCount: channels,
 				}
 
@@ -248,8 +264,9 @@ func (s *Source) extractTracks(desc *description.Session) {
 					codec = "PCMA"
 				}
 				s.audioTrack = &TrackInfo{
-					Codec:     codec,
-					ClockRate: f.ClockRate(),
+					Codec:       codec,
+					ClockRate:   f.ClockRate(),
+					PayloadType: f.PayloadType(),
 				}
 			}
 		}
