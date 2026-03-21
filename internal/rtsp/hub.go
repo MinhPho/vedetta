@@ -3,8 +3,21 @@ package rtsp
 import (
 	"context"
 	"log/slog"
+	"net/url"
 	"sync"
 )
+
+// SanitizeURL removes credentials from an RTSP URL for safe logging.
+func SanitizeURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "rtsp://***"
+	}
+	if u.User != nil {
+		u.User = url.User("***")
+	}
+	return u.String()
+}
 
 // Hub manages one Source per RTSP URL, ensuring a single connection per stream.
 type Hub struct {
@@ -48,7 +61,7 @@ func (h *Hub) GetOrCreate(url string) *Source {
 
 	go src.Connect(srcCtx)
 
-	slog.Info("RTSP hub created source", "url", url)
+	slog.Info("RTSP hub created source", "url", SanitizeURL(url))
 	return src
 }
 

@@ -168,7 +168,7 @@ func (c *Camera) saveCachedSnapshot() {
 
 // Start begins reading frames from the RTSP stream via the Hub.
 func (c *Camera) Start(ctx context.Context) {
-	slog.Info("starting camera", "name", c.config.Name, "url", c.config.URL)
+	slog.Info("starting camera", "name", c.config.Name, "url", rtsp.SanitizeURL(c.config.URL))
 	c.loadCachedSnapshot()
 
 	go c.readFrames(ctx)
