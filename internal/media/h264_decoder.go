@@ -39,31 +39,61 @@ func openH264LibPaths() []string {
 	}
 }
 
+// tryLoadOpenH264 attempts to load the library from a given path.
+func tryLoadOpenH264(path string) bool {
+	if err := openh264.Open(path); err == nil {
+		ver := openh264.WelsGetCodecVersion()
+		slog.Info("OpenH264 loaded",
+			"path", path,
+			"version", fmt.Sprintf("%d.%d.%d", ver.UMajor, ver.UMinor, ver.URevision),
+		)
+		slog.Info("OpenH264 Video Codec provided by Cisco Systems, Inc.")
+		openh264Loaded = true
+		return true
+	}
+	return false
+}
+
 // ensureOpenH264 tries to load the OpenH264 library once.
+// Search order: OPENH264_LIB env → system paths → cached download → auto-download.
 func ensureOpenH264() bool {
 	openh264Once.Do(func() {
-		for _, path := range openH264LibPaths() {
-			if err := openh264.Open(path); err == nil {
-				ver := openh264.WelsGetCodecVersion()
-				slog.Info("OpenH264 loaded",
-					"path", path,
-					"version", fmt.Sprintf("%d.%d.%d", ver.UMajor, ver.UMinor, ver.URevision),
-				)
-				openh264Loaded = true
-				return
-			}
-		}
-		// Also try OPENH264_LIB environment variable
+		// 1. Environment variable
 		if envPath := os.Getenv("OPENH264_LIB"); envPath != "" {
-			if err := openh264.Open(envPath); err == nil {
-				openh264Loaded = true
-				slog.Info("OpenH264 loaded from OPENH264_LIB", "path", envPath)
+			if tryLoadOpenH264(envPath) {
 				return
 			}
 		}
-		openh264LoadErr = fmt.Errorf("OpenH264 library not found; install libopenh264 or set OPENH264_LIB")
-		slog.Warn("H264 decode unavailable — detection will use compressed-data fallback",
-			"error", openh264LoadErr)
+
+		// 2. System paths
+		for _, path := range openH264LibPaths() {
+			if tryLoadOpenH264(path) {
+				return
+			}
+		}
+
+		// 3. Cached download
+		if cached := cachedOpenH264Path(); cached != "" {
+			if tryLoadOpenH264(cached) {
+				return
+			}
+		}
+
+		// 4. Auto-download from Cisco
+		downloaded, err := downloadOpenH264()
+		if err != nil {
+			slog.Warn("failed to auto-download OpenH264", "error", err)
+			openh264LoadErr = fmt.Errorf("OpenH264 not found and auto-download failed: %w", err)
+			slog.Warn("H264 decode unavailable — detection will use compressed-data fallback",
+				"error", openh264LoadErr)
+			return
+		}
+
+		if !tryLoadOpenH264(downloaded) {
+			openh264LoadErr = fmt.Errorf("downloaded OpenH264 but failed to load from %s", downloaded)
+			slog.Warn("H264 decode unavailable — detection will use compressed-data fallback",
+				"error", openh264LoadErr)
+		}
 	})
 	return openh264Loaded
 }
