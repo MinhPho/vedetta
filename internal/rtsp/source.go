@@ -170,21 +170,16 @@ func (s *Source) connectOnce(ctx context.Context) error {
 		return err
 	}
 
-	// Register per-media RTP handlers
-	for _, media := range desc.Medias {
-		m := media // capture for closure
-		isVideo := m.Type == description.MediaTypeVideo
-		client.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
-			if medi != m {
-				return
-			}
-			if isVideo {
-				s.fanOutVideo(pkt)
-			} else {
-				s.fanOutAudio(pkt)
-			}
-		})
-	}
+	// Register a single RTP handler that dispatches by media type.
+	// OnPacketRTPAny sets one global handler — calling it in a loop
+	// would replace the previous handler on each iteration.
+	client.OnPacketRTPAny(func(medi *description.Media, _ format.Format, pkt *rtp.Packet) {
+		if medi.Type == description.MediaTypeVideo {
+			s.fanOutVideo(pkt)
+		} else {
+			s.fanOutAudio(pkt)
+		}
+	})
 
 	if _, err := client.Play(nil); err != nil {
 		return err
@@ -262,17 +257,25 @@ func (s *Source) extractTracks(desc *description.Session) {
 }
 
 func (s *Source) fanOutVideo(pkt *rtp.Packet) {
+	start := time.Now()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, c := range s.consumers {
 		c.OnVideoRTP(pkt)
 	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		slog.Warn("slow fanOutVideo", "url", s.url, "elapsed", elapsed, "consumers", len(s.consumers))
+	}
 }
 
 func (s *Source) fanOutAudio(pkt *rtp.Packet) {
+	start := time.Now()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, c := range s.consumers {
 		c.OnAudioRTP(pkt)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		slog.Warn("slow fanOutAudio", "url", s.url, "elapsed", elapsed, "consumers", len(s.consumers))
 	}
 }
