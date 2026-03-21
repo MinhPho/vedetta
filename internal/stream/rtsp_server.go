@@ -1,0 +1,393 @@
+package stream
+
+import (
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+
+	"github.com/bluenviron/gortsplib/v5"
+	"github.com/bluenviron/gortsplib/v5/pkg/base"
+	"github.com/bluenviron/gortsplib/v5/pkg/description"
+	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
+	"github.com/pion/rtp"
+
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/rtsp"
+)
+
+// cameraStream holds the gortsplib ServerStream and consumer for one camera.
+type cameraStream struct {
+	mu       sync.RWMutex
+	name     string
+	rtspURL  string
+	consumer *rtspServerConsumer
+	stream   *gortsplib.ServerStream
+}
+
+// rtspServerConsumer implements rtsp.Consumer and writes RTP into a gortsplib ServerStream.
+type rtspServerConsumer struct {
+	stream     *gortsplib.ServerStream
+	videoMedia *description.Media
+	audioMedia *description.Media
+	videoPT    uint8 // expected payload type for video
+	audioPT    uint8 // expected payload type for audio
+}
+
+func (c *rtspServerConsumer) writeRTP(media *description.Media, pkt *rtp.Packet, expectedPT uint8) {
+	// Rewrite payload type if upstream differs from what we declared in our SDP.
+	// Clone the header to avoid mutating the shared packet for other consumers.
+	if pkt.Header.PayloadType != expectedPT {
+		clone := *pkt
+		clone.Header.PayloadType = expectedPT
+		pkt = &clone
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("RTSP server: panic in WritePacketRTP", "recover", r)
+		}
+	}()
+
+	if err := c.stream.WritePacketRTP(media, pkt); err != nil {
+		slog.Debug("RTSP server: failed to write RTP", "error", err)
+	}
+}
+
+func (c *rtspServerConsumer) OnVideoRTP(pkt *rtp.Packet) {
+	if c.videoMedia == nil {
+		return
+	}
+	c.writeRTP(c.videoMedia, pkt, c.videoPT)
+}
+
+func (c *rtspServerConsumer) OnAudioRTP(pkt *rtp.Packet) {
+	if c.audioMedia == nil {
+		return
+	}
+	c.writeRTP(c.audioMedia, pkt, c.audioPT)
+}
+
+func (c *rtspServerConsumer) OnDisconnect() {}
+
+// RTSPServer re-publishes camera streams via RTSP.
+type RTSPServer struct {
+	hub     *rtsp.Hub
+	server  *gortsplib.Server
+	mu      sync.RWMutex
+	cameras map[string]*cameraStream // camera name → stream
+}
+
+// NewRTSPServer creates a new RTSP re-publishing server.
+func NewRTSPServer(hub *rtsp.Hub, cfg config.RTSPServerConfig, cameras []config.CameraConfig) *RTSPServer {
+	rs := &RTSPServer{
+		hub:     hub,
+		cameras: make(map[string]*cameraStream),
+	}
+
+	rs.server = &gortsplib.Server{
+		Handler:     rs,
+		RTSPAddress: fmt.Sprintf(":%d", cfg.Port),
+	}
+
+	for _, cam := range cameras {
+		if !cam.Enabled {
+			continue
+		}
+		// Publish the main/high-res stream (record_url) when available,
+		// falling back to the sub-stream (url) if not configured.
+		streamURL := cam.RecordURL
+		if streamURL == "" {
+			streamURL = cam.URL
+		}
+		rs.cameras[cam.Name] = &cameraStream{
+			name:    cam.Name,
+			rtspURL: streamURL,
+		}
+	}
+
+	return rs
+}
+
+// Start starts the RTSP server and registers consumers on Hub sources.
+func (rs *RTSPServer) Start() error {
+	if err := rs.server.Start(); err != nil {
+		return fmt.Errorf("RTSP server start: %w", err)
+	}
+
+	for name, cs := range rs.cameras {
+		source := rs.hub.GetOrCreate(cs.rtspURL)
+
+		desc, videoMedia, audioMedia := buildDescription(source)
+		if desc == nil {
+			slog.Warn("RTSP server: no tracks yet, stream will be available once camera connects",
+				"camera", name)
+			continue
+		}
+
+		initialized, err := rs.initCameraStream(cs, desc, videoMedia, audioMedia)
+		if err != nil {
+			slog.Error("RTSP server: failed to init stream", "camera", name, "error", err)
+			continue
+		}
+		if !initialized {
+			continue
+		}
+
+		source.AddConsumer(cs.consumer)
+		slog.Info("RTSP server: publishing stream", "camera", name, "path", "/"+name)
+	}
+
+	return nil
+}
+
+// initCameraStream atomically initializes a camera's ServerStream and consumer.
+// Returns false if the camera was already initialized (no-op).
+func (rs *RTSPServer) initCameraStream(cs *cameraStream, desc *description.Session, videoMedia, audioMedia *description.Media) (bool, error) {
+	serverStream := &gortsplib.ServerStream{
+		Server: rs.server,
+		Desc:   desc,
+	}
+	if err := serverStream.Initialize(); err != nil {
+		return false, err
+	}
+
+	consumer := &rtspServerConsumer{
+		stream:     serverStream,
+		videoMedia: videoMedia,
+		audioMedia: audioMedia,
+	}
+	if videoMedia != nil && len(videoMedia.Formats) > 0 {
+		consumer.videoPT = videoMedia.Formats[0].PayloadType()
+	}
+	if audioMedia != nil && len(audioMedia.Formats) > 0 {
+		consumer.audioPT = audioMedia.Formats[0].PayloadType()
+	}
+
+	cs.mu.Lock()
+	if cs.stream != nil {
+		// Another goroutine initialized while we were building the description.
+		cs.mu.Unlock()
+		serverStream.Close()
+		return false, nil
+	}
+	cs.stream = serverStream
+	cs.consumer = consumer
+	cs.mu.Unlock()
+
+	return true, nil
+}
+
+// Close shuts down the RTSP server and removes all consumers.
+func (rs *RTSPServer) Close() {
+	for name, cs := range rs.cameras {
+		cs.mu.RLock()
+		consumer := cs.consumer
+		stream := cs.stream
+		cs.mu.RUnlock()
+
+		if consumer != nil {
+			if source := rs.hub.Get(cs.rtspURL); source != nil {
+				source.RemoveConsumer(consumer)
+			}
+		}
+		if stream != nil {
+			stream.Close()
+		}
+		slog.Debug("RTSP server: unpublished stream", "camera", name)
+	}
+
+	rs.server.Close()
+	slog.Info("RTSP server closed")
+}
+
+// initLateCamera initializes a camera stream that wasn't ready at startup.
+func (rs *RTSPServer) initLateCamera(name string, cs *cameraStream) {
+	source := rs.hub.Get(cs.rtspURL)
+	if source == nil {
+		return
+	}
+
+	desc, videoMedia, audioMedia := buildDescription(source)
+	if desc == nil {
+		return
+	}
+
+	initialized, err := rs.initCameraStream(cs, desc, videoMedia, audioMedia)
+	if err != nil {
+		slog.Error("RTSP server: failed to late-init stream", "camera", name, "error", err)
+		return
+	}
+	if !initialized {
+		return
+	}
+
+	source.AddConsumer(cs.consumer)
+	slog.Info("RTSP server: publishing stream (late init)", "camera", name, "path", "/"+name)
+}
+
+// buildDescription constructs an SDP description from a Source's track info.
+func buildDescription(source *rtsp.Source) (*description.Session, *description.Media, *description.Media) {
+	vt := source.VideoTrack()
+	if vt == nil {
+		return nil, nil, nil
+	}
+
+	var medias []*description.Media
+	var videoMedia, audioMedia *description.Media
+
+	switch vt.Codec {
+	case "H264":
+		videoPT := vt.PayloadType
+		if videoPT == 0 {
+			videoPT = 96
+		}
+		h264Format := &format.H264{
+			PayloadTyp:        videoPT,
+			PacketizationMode: 1,
+		}
+		if len(vt.SPS) > 0 {
+			h264Format.SPS = vt.SPS
+		}
+		if len(vt.PPS) > 0 {
+			h264Format.PPS = vt.PPS
+		}
+		videoMedia = &description.Media{
+			Type:    description.MediaTypeVideo,
+			Formats: []format.Format{h264Format},
+		}
+		medias = append(medias, videoMedia)
+	}
+
+	at := source.AudioTrack()
+	if at != nil {
+		switch at.Codec {
+		case "AAC":
+			audioPT := at.PayloadType
+			if audioPT == 0 {
+				audioPT = 97
+			}
+			aacFormat := &format.MPEG4Audio{
+				PayloadTyp: audioPT,
+				Config: &mpeg4audio.AudioSpecificConfig{
+					Type:          mpeg4audio.ObjectTypeAACLC,
+					SampleRate:    at.ClockRate,
+					ChannelConfig: uint8(at.ChannelCount),
+				},
+				SizeLength:       13,
+				IndexLength:      3,
+				IndexDeltaLength: 3,
+			}
+			audioMedia = &description.Media{
+				Type:    description.MediaTypeAudio,
+				Formats: []format.Format{aacFormat},
+			}
+			medias = append(medias, audioMedia)
+
+		case "PCMU", "PCMA":
+			g711Format := &format.G711{
+				PayloadTyp:   at.PayloadType,
+				MULaw:        at.Codec == "PCMU",
+				SampleRate:   at.ClockRate,
+				ChannelCount: at.ChannelCount,
+			}
+			audioMedia = &description.Media{
+				Type:    description.MediaTypeAudio,
+				Formats: []format.Format{g711Format},
+			}
+			medias = append(medias, audioMedia)
+		}
+	}
+
+	if len(medias) == 0 {
+		return nil, nil, nil
+	}
+
+	return &description.Session{Medias: medias}, videoMedia, audioMedia
+}
+
+// parseCameraName extracts the camera name from an RTSP path.
+// Handles both "/front_door" (DESCRIBE) and "/front_door/trackID=0" (SETUP).
+func parseCameraName(path string) string {
+	path = strings.TrimPrefix(path, "/")
+	if i := strings.IndexByte(path, '/'); i >= 0 {
+		path = path[:i]
+	}
+	return path
+}
+
+// --- gortsplib ServerHandler interface ---
+
+func (rs *RTSPServer) OnConnOpen(ctx *gortsplib.ServerHandlerOnConnOpenCtx) {
+	slog.Debug("RTSP server: client connected", "remote", ctx.Conn.NetConn().RemoteAddr())
+}
+
+func (rs *RTSPServer) OnConnClose(ctx *gortsplib.ServerHandlerOnConnCloseCtx) {
+	slog.Debug("RTSP server: client disconnected", "remote", ctx.Conn.NetConn().RemoteAddr(), "error", ctx.Error)
+}
+
+func (rs *RTSPServer) OnSessionOpen(_ *gortsplib.ServerHandlerOnSessionOpenCtx) {
+	slog.Debug("RTSP server: session opened")
+}
+
+func (rs *RTSPServer) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx) {
+	slog.Debug("RTSP server: session closed")
+}
+
+func (rs *RTSPServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	name := parseCameraName(ctx.Path)
+
+	rs.mu.RLock()
+	cs, ok := rs.cameras[name]
+	rs.mu.RUnlock()
+
+	if !ok {
+		slog.Debug("RTSP server: DESCRIBE for unknown camera", "path", ctx.Path)
+		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
+	}
+
+	cs.mu.RLock()
+	stream := cs.stream
+	cs.mu.RUnlock()
+
+	if stream == nil {
+		rs.initLateCamera(name, cs)
+		cs.mu.RLock()
+		stream = cs.stream
+		cs.mu.RUnlock()
+	}
+
+	if stream == nil {
+		slog.Debug("RTSP server: camera not ready yet", "camera", name)
+		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
+	}
+
+	return &base.Response{StatusCode: base.StatusOK}, stream, nil
+}
+
+func (rs *RTSPServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	name := parseCameraName(ctx.Path)
+
+	rs.mu.RLock()
+	cs, ok := rs.cameras[name]
+	rs.mu.RUnlock()
+
+	if !ok {
+		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
+	}
+
+	cs.mu.RLock()
+	stream := cs.stream
+	cs.mu.RUnlock()
+
+	if stream == nil {
+		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
+	}
+
+	return &base.Response{StatusCode: base.StatusOK}, stream, nil
+}
+
+func (rs *RTSPServer) OnPlay(_ *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	return &base.Response{StatusCode: base.StatusOK}, nil
+}

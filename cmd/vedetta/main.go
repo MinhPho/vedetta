@@ -18,6 +18,7 @@ import (
 	"github.com/rvben/vedetta/internal/recording"
 	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
+	"github.com/rvben/vedetta/internal/stream"
 )
 
 func main() {
@@ -274,6 +275,17 @@ func main() {
 			}
 		}
 	}()
+
+	// Start RTSP re-publishing server if enabled
+	if cfg.RTSPServer.Enabled {
+		rtspServer := stream.NewRTSPServer(hub, cfg.RTSPServer, cfg.Cameras)
+		if err := rtspServer.Start(); err != nil {
+			slog.Error("RTSP re-publish server failed to start", "error", err)
+		} else {
+			defer rtspServer.Close()
+			slog.Info("RTSP re-publish server started", "port", cfg.RTSPServer.Port)
+		}
+	}
 
 	server := api.New(cfg.API, db, manager, recorder, hub)
 	go func() {
