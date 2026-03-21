@@ -106,12 +106,12 @@ func (s *Source) Connect(ctx context.Context) {
 
 		if err != nil {
 			slog.Error("RTSP connection error, reconnecting",
-				"url", s.url,
+				"url", SanitizeURL(s.url),
 				"error", err,
 				"retry_in", backoff,
 			)
 		} else {
-			slog.Info("RTSP connection closed, reconnecting", "url", s.url)
+			slog.Info("RTSP connection closed, reconnecting", "url", SanitizeURL(s.url))
 		}
 
 		s.notifyDisconnect()
@@ -189,7 +189,7 @@ func (s *Source) connectOnce(ctx context.Context) error {
 	s.connected = true
 	s.mu.Unlock()
 
-	slog.Info("RTSP connected", "url", s.url)
+	slog.Info("RTSP connected", "url", SanitizeURL(s.url))
 
 	// Wait blocks until the client encounters a fatal error or is closed
 	waitDone := make(chan error, 1)
@@ -264,7 +264,7 @@ func (s *Source) fanOutVideo(pkt *rtp.Packet) {
 		c.OnVideoRTP(pkt)
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		slog.Warn("slow fanOutVideo", "url", s.url, "elapsed", elapsed, "consumers", len(s.consumers))
+		slog.Warn("slow fanOutVideo", "url", SanitizeURL(s.url), "elapsed", elapsed, "consumers", len(s.consumers))
 	}
 }
 
@@ -276,6 +276,6 @@ func (s *Source) fanOutAudio(pkt *rtp.Packet) {
 		c.OnAudioRTP(pkt)
 	}
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		slog.Warn("slow fanOutAudio", "url", s.url, "elapsed", elapsed, "consumers", len(s.consumers))
+		slog.Warn("slow fanOutAudio", "url", SanitizeURL(s.url), "elapsed", elapsed, "consumers", len(s.consumers))
 	}
 }
