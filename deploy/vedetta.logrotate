@@ -1,0 +1,11 @@
+# Vedetta NVR log rotation for Linux
+# Install: sudo cp deploy/vedetta.logrotate /etc/logrotate.d/vedetta
+/var/log/vedetta/vedetta.log {
+    daily
+    rotate 5
+    maxsize 10M
+    missingok
+    notifempty
+    compress
+    copytruncate
+}
