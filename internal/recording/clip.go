@@ -27,7 +27,11 @@ func (r *Recorder) ExtractClip(_ context.Context, event camera.Event) (string, e
 	clipPath := filepath.Join(clipDir, filename)
 
 	from := event.Timestamp.Add(-r.config.PreCapture)
-	to := event.Timestamp.Add(r.config.PostCapture)
+	endTime := event.EndTime
+	if endTime.IsZero() {
+		endTime = event.Timestamp
+	}
+	to := endTime.Add(r.config.PostCapture)
 
 	segments := r.segments.FindSegments(event.CameraName, from, to)
 

@@ -100,8 +100,9 @@ func main() {
 	}
 
 	events := make(chan camera.Event, 100)
+	eventEnds := make(chan camera.EventEnd, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, events, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality)
+	manager := camera.NewManager(cfg.Cameras, detector, events, eventEnds, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality)
 	manager.Start(ctx)
 
 	// Periodically publish camera online/offline status to MQTT.
@@ -138,33 +139,54 @@ func main() {
 		}()
 	}
 
-	// Process events: record clips and publish to MQTT
+	// Event lifecycle manager: tracks active events and schedules clip extraction
+	// when the tracked object leaves the frame or max duration is reached.
 	go func() {
-		for event := range events {
-			slog.Info("event detected",
-				"camera", event.CameraName,
-				"label", event.Label,
-				"score", fmt.Sprintf("%.2f", event.Score),
+		type activeEvent struct {
+			event      camera.Event
+			timer      *time.Timer
+			tempCancel context.CancelFunc // for non-continuous temporary recording
+		}
+		active := make(map[string]*activeEvent) // eventID → state
+		maxDur := cfg.Recording.MaxEventDuration
+		timeouts := make(chan string, 100) // eventIDs that hit max duration
+
+		finalizeEvent := func(ae *activeEvent, endTime time.Time) {
+			ae.timer.Stop()
+			ev := ae.event
+			ev.EndTime = endTime
+			duration := endTime.Sub(ev.Timestamp)
+
+			if err := db.UpdateEventEndTime(ev.ID, endTime); err != nil {
+				slog.Error("failed to update event end time", "event", ev.ID, "error", err)
+			}
+			slog.Info("event ended",
+				"event", ev.ID,
+				"camera", ev.CameraName,
+				"label", ev.Label,
+				"duration", duration.Round(time.Second),
 			)
 
-			if err := db.SaveEvent(event); err != nil {
-				slog.Error("failed to save event", "error", err)
+			if ae.tempCancel != nil {
+				tc := ae.tempCancel
+				go func() {
+					select {
+					case <-time.After(cfg.Recording.PostCapture + 5*time.Second):
+					case <-ctx.Done():
+					}
+					tc()
+				}()
 			}
 
-			// Extract clip asynchronously — retry until the segment
-			// covering the post-capture window has been written to DB.
-			ev := event
+			// Schedule clip extraction after post-capture + segment finalization buffer
 			go func() {
 				delay := cfg.Recording.PostCapture + 15*time.Second
-				if delay < 15*time.Second {
-					delay = 15 * time.Second
-				}
 				select {
 				case <-time.After(delay):
 				case <-ctx.Done():
 					return
 				}
-				for attempt := 0; attempt < 5; attempt++ {
+				for attempt := range 5 {
 					err := recorder.SaveClip(ctx, ev)
 					if err == nil {
 						return
@@ -181,10 +203,73 @@ func main() {
 					}
 				}
 			}()
+		}
 
-			if mqttClient != nil {
-				if err := mqttClient.PublishEvent(event); err != nil {
-					slog.Error("failed to publish event", "error", err)
+		for {
+			select {
+			case <-ctx.Done():
+				for id, ae := range active {
+					ae.timer.Stop()
+					if ae.tempCancel != nil {
+						ae.tempCancel()
+					}
+					delete(active, id)
+				}
+				return
+
+			case event := <-events:
+				slog.Info("event detected",
+					"camera", event.CameraName,
+					"label", event.Label,
+					"score", fmt.Sprintf("%.2f", event.Score),
+				)
+
+				if err := db.SaveEvent(event); err != nil {
+					slog.Error("failed to save event", "error", err)
+				}
+
+				if mqttClient != nil {
+					if err := mqttClient.PublishEvent(event); err != nil {
+						slog.Error("failed to publish event", "error", err)
+					}
+				}
+
+				// Start temporary recording if continuous is off
+				var tempCancel context.CancelFunc
+				if !cfg.Recording.Continuous {
+					if url := recorder.CameraURL(event.CameraName); url != "" {
+						tempCtx, cancel := context.WithCancel(ctx)
+						tempCancel = cancel
+						recorder.StartTemporaryRecording(tempCtx, event.CameraName, url)
+					}
+				}
+
+				// Max duration timer sends to timeouts channel (avoids data race)
+				evID := event.ID
+				timer := time.AfterFunc(maxDur, func() {
+					select {
+					case timeouts <- evID:
+					default:
+					}
+				})
+
+				active[evID] = &activeEvent{
+					event:      event,
+					timer:      timer,
+					tempCancel: tempCancel,
+				}
+
+			case end := <-eventEnds:
+				if ae, ok := active[end.EventID]; ok {
+					finalizeEvent(ae, end.EndTime)
+					delete(active, end.EventID)
+				}
+
+			case evID := <-timeouts:
+				if ae, ok := active[evID]; ok {
+					endTime := ae.event.Timestamp.Add(maxDur)
+					finalizeEvent(ae, endTime)
+					delete(active, evID)
 				}
 			}
 		}

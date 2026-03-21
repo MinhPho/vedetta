@@ -26,8 +26,16 @@ type Event struct {
 	Score        float32   `json:"score"`
 	Box          [4]int    `json:"box"` // x1, y1, x2, y2
 	Timestamp    time.Time `json:"timestamp"`
+	EndTime      time.Time `json:"end_time,omitempty"` // when the tracked object left the frame
 	SnapshotPath string    `json:"snapshot_path,omitempty"`
 	ClipPath     string    `json:"clip_path,omitempty"`
+}
+
+// EventEnd signals that a tracked object has left the frame.
+type EventEnd struct {
+	EventID    string
+	CameraName string
+	EndTime    time.Time
 }
 
 // Camera manages a single RTSP camera stream.
@@ -37,6 +45,7 @@ type Camera struct {
 	tracker        *detect.Tracker
 	motionDetector *detect.MotionDetector
 	events         chan<- Event
+	eventEnds      chan<- EventEnd
 	hub             *rtsp.Hub
 	eventSnapDir    string
 	eventSnapQuality int
@@ -48,7 +57,7 @@ type Camera struct {
 	lastMotion       time.Time
 	lastFrameTime    time.Time
 	lastSnapshotSave time.Time
-	confirmedTracks  map[int]bool
+	confirmedTracks  map[int]string // trackID → eventID
 }
 
 // CameraStatus represents the current status of a camera.
@@ -59,7 +68,7 @@ type CameraStatus struct {
 	LastFrame time.Time `json:"last_frame"`
 }
 
-func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, hub *rtsp.Hub, snapshotPath string, snapshotQuality int) *Camera {
+func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, eventEnds chan<- EventEnd, hub *rtsp.Hub, snapshotPath string, snapshotQuality int) *Camera {
 	if snapshotQuality <= 0 {
 		snapshotQuality = 85
 	}
@@ -69,10 +78,11 @@ func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<-
 		tracker:         detect.NewTracker(30, 3),
 		motionDetector:  detect.NewMotionDetector(25, 200, 0.05),
 		events:          events,
+		eventEnds:       eventEnds,
 		hub:             hub,
 		eventSnapDir:     snapshotPath,
 		eventSnapQuality: snapshotQuality,
-		confirmedTracks: make(map[int]bool),
+		confirmedTracks: make(map[int]string),
 	}
 }
 
@@ -310,7 +320,7 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 		if c.eventSnapDir != "" {
 			hasNewTrack := false
 			for _, obj := range tracked {
-				if !c.confirmedTracks[obj.TrackID] {
+				if _, active := c.confirmedTracks[obj.TrackID]; !active {
 					hasNewTrack = true
 					break
 				}
@@ -351,9 +361,9 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 
 		// Emit events for newly confirmed tracks
 		for _, obj := range tracked {
-			if !c.confirmedTracks[obj.TrackID] {
-				c.confirmedTracks[obj.TrackID] = true
+			if _, active := c.confirmedTracks[obj.TrackID]; !active {
 				eventID := fmt.Sprintf("%s-t%d-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli())
+				c.confirmedTracks[obj.TrackID] = eventID
 				ev := Event{
 					ID:         eventID,
 					CameraName: c.config.Name,
@@ -378,9 +388,16 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 			}
 		}
 
-		// Clean up deleted tracks
+		// Notify when tracked objects leave the frame
 		for _, obj := range c.tracker.DeletedTracks() {
-			delete(c.confirmedTracks, obj.TrackID)
+			if eventID, ok := c.confirmedTracks[obj.TrackID]; ok {
+				c.eventEnds <- EventEnd{
+					EventID:    eventID,
+					CameraName: c.config.Name,
+					EndTime:    time.Now(),
+				}
+				delete(c.confirmedTracks, obj.TrackID)
+			}
 		}
 	}
 }

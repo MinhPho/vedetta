@@ -53,6 +53,18 @@ func (r *Recorder) RegisterCamera(name, rtspURL string) {
 	r.cameraURLs[name] = rtspURL
 }
 
+// CameraURL returns the recording URL for a camera, or empty string if not registered.
+func (r *Recorder) CameraURL(name string) string {
+	return r.cameraURLs[name]
+}
+
+// StartTemporaryRecording begins segment recording for a single camera.
+// Used when continuous recording is off but an event requires video.
+// Cancel the context to stop recording.
+func (r *Recorder) StartTemporaryRecording(ctx context.Context, cameraName, rtspURL string) {
+	r.segments.StartRecording(ctx, cameraName, rtspURL)
+}
+
 // StartContinuousRecording begins segment recording for all registered cameras.
 func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 	if !r.config.Continuous {

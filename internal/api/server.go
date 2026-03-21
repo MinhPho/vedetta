@@ -702,6 +702,7 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		PrevID       string
 		NextID       string
 		RecordingURL string
+		Duration     string
 	}
 
 	recURL := fmt.Sprintf("/camera.html?name=%s&t=%s",
@@ -709,11 +710,18 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		event.Timestamp.Format("2006-01-02T15:04:05Z07:00"),
 	)
 
+	var duration string
+	if !event.EndTime.IsZero() {
+		d := event.EndTime.Sub(event.Timestamp).Round(time.Second)
+		duration = d.String()
+	}
+
 	data := eventDetailData{
 		Event:        *event,
 		PrevID:       prevID,
 		NextID:       nextID,
 		RecordingURL: recURL,
+		Duration:     duration,
 	}
 
 	tmpl := template.Must(template.New("detail").Funcs(s.funcMap).Parse(
@@ -731,6 +739,7 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`<div class="meta-row"><span class="key">Label</span><span class="val">{{.Label}}</span></div>` +
 			`<div class="meta-row"><span class="key">Confidence</span><span class="val">{{scorePercent .Score}}</span></div>` +
 			`<div class="meta-row"><span class="key">Time</span><span class="val">{{formatTime .Timestamp}}</span></div>` +
+			`{{if .Duration}}<div class="meta-row"><span class="key">Duration</span><span class="val">{{.Duration}}</span></div>{{end}}` +
 			`<div class="meta-row"><span class="key">Event ID</span><span class="val mono">{{.ID}}</span></div>` +
 			`</div>` +
 			`<div class="meta-card">` +

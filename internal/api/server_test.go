@@ -24,7 +24,7 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	mgr := camera.NewManager(nil, nil, nil, nil, "", 85)
+	mgr := camera.NewManager(nil, nil, nil, nil, nil, "", 85)
 	rec := recording.New(config.RecordingConfig{
 		Path: t.TempDir(),
 	}, db, nil, "")
