@@ -1983,3 +1983,17 @@ function hideDiskWarning() {
 // Poll health every 30 seconds
 pollHealth();
 setInterval(pollHealth, 30000);
+
+// ─── Event Detail: Play Clip on Demand ───
+function playEventClip(overlay, eventId) {
+  var media = overlay.parentElement;
+  var img = media.querySelector('#event-snapshot');
+  if (img) img.style.display = 'none';
+  overlay.style.display = 'none';
+
+  var video = document.createElement('video');
+  video.controls = true;
+  video.autoplay = true;
+  video.src = '/api/events/' + encodeURIComponent(eventId) + '/clip';
+  media.appendChild(video);
+}
