@@ -2,7 +2,6 @@ package camera
 
 import (
 	"context"
-	"sort"
 	"sync"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 // Manager manages all camera streams.
 type Manager struct {
 	cameras  map[string]*Camera
+	order    []string // config-file order
 	detector *detect.Detector
 	events   chan<- Event
 	hub      *rtsp.Hub
@@ -32,6 +32,7 @@ func NewManager(configs []config.CameraConfig, detector *detect.Detector, events
 		if cfg.Enabled {
 			cam := NewCamera(cfg, detector, events, eventEnds, hub, snapshotPath, snapshotQuality)
 			m.cameras[cfg.Name] = cam
+			m.order = append(m.order, cfg.Name)
 		}
 	}
 
@@ -42,17 +43,17 @@ func (m *Manager) Start(ctx context.Context) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	first := true
-	for _, cam := range m.cameras {
-		if !first {
+	for i, name := range m.order {
+		if i > 0 {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(2 * time.Second):
 			}
 		}
-		cam.Start(ctx)
-		first = false
+		if cam, ok := m.cameras[name]; ok {
+			cam.Start(ctx)
+		}
 	}
 }
 
@@ -65,12 +66,7 @@ func (m *Manager) GetCamera(name string) *Camera {
 func (m *Manager) ListCameras() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
-	names := make([]string, 0, len(m.cameras))
-	for name := range m.cameras {
-		names = append(names, name)
-	}
-	return names
+	return append([]string(nil), m.order...)
 }
 
 // CameraStatuses returns the status of all managed cameras, sorted by name.
@@ -78,12 +74,11 @@ func (m *Manager) CameraStatuses() []CameraStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	statuses := make([]CameraStatus, 0, len(m.cameras))
-	for _, cam := range m.cameras {
-		statuses = append(statuses, cam.Status())
+	statuses := make([]CameraStatus, 0, len(m.order))
+	for _, name := range m.order {
+		if cam, ok := m.cameras[name]; ok {
+			statuses = append(statuses, cam.Status())
+		}
 	}
-	sort.Slice(statuses, func(i, j int) bool {
-		return statuses[i].Name < statuses[j].Name
-	})
 	return statuses
 }
