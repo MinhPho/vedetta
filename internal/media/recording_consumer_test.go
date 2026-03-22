@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/rtp"
 	"github.com/rvben/vedetta/internal/rtsp"
 )
 
@@ -89,5 +90,48 @@ func TestRecordingConsumer_PausedState(t *testing.T) {
 
 	if rc.Paused() {
 		t.Error("consumer should not be paused on start with available disk space")
+	}
+}
+
+func TestRecordingConsumer_EnsureSegmentError_PausesAfterRepeatedFailures(t *testing.T) {
+	// Use a read-only directory so segment file creation fails
+	dir := t.TempDir()
+	segDir := filepath.Join(dir, "segments")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Make the segment directory read-only so os.Create fails
+	if err := os.Chmod(segDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(segDir, 0o755) })
+
+	video := &rtsp.TrackInfo{
+		Codec:     "H264",
+		ClockRate: 90000,
+		IsVideo:   true,
+		SPS:       []byte{0x67, 0x42, 0x00, 0x0a, 0xf8, 0x41, 0xa2},
+		PPS:       []byte{0x68, 0xce, 0x38, 0x80},
+	}
+
+	rc := NewRecordingConsumer(segDir, "test-cam", time.Minute, video, nil, testDisk(t), nil)
+	defer rc.Close()
+
+	// Send enough video packets to trigger 3+ ensureSegment failures
+	for i := 0; i < 5; i++ {
+		rc.OnVideoRTP(&rtp.Packet{
+			Header: rtp.Header{
+				PayloadType: 96,
+				Timestamp:   uint32(i * 3000),
+			},
+			Payload: []byte{0x65, 0x00, 0x01}, // fake IDR
+		})
+	}
+
+	// Wait for processLoop to handle the packets
+	time.Sleep(100 * time.Millisecond)
+
+	if !rc.Paused() {
+		t.Error("consumer should be paused after repeated segment creation failures")
 	}
 }
