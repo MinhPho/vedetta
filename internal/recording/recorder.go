@@ -272,16 +272,27 @@ func (r *Recorder) PrepareExport(cameraName string, from, to time.Time) (*Export
 		inputs[i] = seg.Path
 	}
 
-	if len(inputs) == 1 {
-		if err := media.TrimMP4(inputs[0], tmpPath, startOffset, duration); err != nil {
-			os.Remove(tmpPath)
-			return nil, fmt.Errorf("trim segment: %w", err)
+	// Run trim/concat with a timeout to prevent hanging on corrupt segments.
+	// Generous limit: 2 minutes per input segment.
+	timeout := time.Duration(len(inputs)) * 2 * time.Minute
+	errCh := make(chan error, 1)
+	go func() {
+		if len(inputs) == 1 {
+			errCh <- media.TrimMP4(inputs[0], tmpPath, startOffset, duration)
+		} else {
+			errCh <- media.ConcatMP4(inputs, tmpPath, startOffset, duration)
 		}
-	} else {
-		if err := media.ConcatMP4(inputs, tmpPath, startOffset, duration); err != nil {
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
 			os.Remove(tmpPath)
-			return nil, fmt.Errorf("concat segments: %w", err)
+			return nil, fmt.Errorf("process segments: %w", err)
 		}
+	case <-time.After(timeout):
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("export timed out after %s (possible corrupt segment)", timeout)
 	}
 
 	info, err := os.Stat(tmpPath)
