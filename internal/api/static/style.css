@@ -788,6 +788,7 @@ input, select { font-family: inherit; }
 }
 
 .event-media {
+  position: relative;
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--void);
@@ -798,6 +799,23 @@ input, select { font-family: inherit; }
 .event-media video {
   width: 100%;
   display: block;
+}
+
+.play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: rgba(0,0,0,0.3);
+  transition: background 0.2s;
+}
+.play-overlay:hover {
+  background: rgba(0,0,0,0.5);
+}
+.play-overlay svg {
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
 }
 
 .event-sidebar {

@@ -938,9 +938,11 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		`<div class="page-header"><h1>{{.Label}} Detection</h1></div>` +
 			`<div class="event-detail-layout">` +
 			`<div class="event-media">` +
-			`{{if .ClipPath}}<video controls autoplay><source src="/api/events/{{.ID}}/clip" type="video/mp4"></video>` +
-			`{{else if .SnapshotPath}}<img src="/api/events/{{.ID}}/snapshot" alt="event snapshot">` +
-			`{{else}}<img src="/api/cameras/{{.CameraName}}/snapshot" alt="event">{{end}}` +
+			`{{if .SnapshotPath}}<img id="event-snapshot" src="/api/events/{{.ID}}/snapshot" alt="event snapshot">` +
+			`{{else}}<img id="event-snapshot" src="/api/cameras/{{.CameraName}}/snapshot" alt="event">{{end}}` +
+			`{{if .ClipPath}}<div class="play-overlay" id="play-overlay" onclick="playEventClip(this, '{{.ID}}')">` +
+			`<svg viewBox="0 0 24 24" fill="white" width="64" height="64"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
+			`</div>{{end}}` +
 			`</div>` +
 			`<div class="event-sidebar">` +
 			`<div class="meta-card">` +
