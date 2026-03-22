@@ -6,7 +6,7 @@ import (
 	"github.com/rvben/vedetta/internal/rtsp"
 )
 
-func TestParseCameraName(t *testing.T) {
+func TestParseStreamKey(t *testing.T) {
 	tests := []struct {
 		path string
 		want string
@@ -19,11 +19,16 @@ func TestParseCameraName(t *testing.T) {
 		{"garage", "garage"},
 		{"/", ""},
 		{"", ""},
+		// Sub-stream paths
+		{"/front_door/sub", "front_door/sub"},
+		{"/front_door/sub/trackID=0", "front_door/sub"},
+		{"/garage/sub", "garage/sub"},
+		{"/garage/sub/trackID=1", "garage/sub"},
 	}
 	for _, tt := range tests {
-		got := parseCameraName(tt.path)
+		got := parseStreamKey(tt.path)
 		if got != tt.want {
-			t.Errorf("parseCameraName(%q) = %q, want %q", tt.path, got, tt.want)
+			t.Errorf("parseStreamKey(%q) = %q, want %q", tt.path, got, tt.want)
 		}
 	}
 }
