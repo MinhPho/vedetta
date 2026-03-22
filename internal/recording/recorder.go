@@ -10,15 +10,19 @@ import (
 
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
 // StorageStats contains aggregate storage information.
 type StorageStats struct {
-	TotalBytes   int64            `json:"total_bytes"`
-	SegmentCount int              `json:"segment_count"`
-	CameraStats  map[string]int64 `json:"camera_stats"`
+	TotalBytes     int64            `json:"total_bytes"`
+	SegmentCount   int              `json:"segment_count"`
+	CameraStats    map[string]int64 `json:"camera_stats"`
+	DiskAvailable  uint64           `json:"disk_available_bytes"`
+	DiskLow        bool             `json:"disk_low"`
+	RecordingPaused bool           `json:"recording_paused"`
 }
 
 // Recorder manages saving video clips for detected events.
@@ -81,11 +85,17 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 			case <-time.After(3 * time.Second):
 			}
 		}
-		segDir := filepath.Join(r.config.Path, name, "segments")
-		r.segments.ScanExistingSegments(name, segDir)
 		r.segments.StartRecording(ctx, name, url)
 		first = false
 	}
+
+	// Reconcile filesystem with database in the background to avoid blocking startup.
+	go func() {
+		for name := range r.cameraURLs {
+			segDir := filepath.Join(r.config.Path, name, "segments")
+			r.segments.ScanExistingSegments(name, segDir)
+		}
+	}()
 
 	slog.Info("continuous recording started", "cameras", len(r.cameraURLs))
 }
@@ -153,7 +163,16 @@ func (r *Recorder) StorageStats() StorageStats {
 		stats.CameraStats = byCamera
 	}
 
+	stats.DiskAvailable = r.segments.DiskAvailable()
+	stats.DiskLow = stats.DiskAvailable < media.MinDiskSpace
+	stats.RecordingPaused = r.segments.AnyPaused()
+
 	return stats
+}
+
+// DiskAvailable returns the bytes available on the recording filesystem.
+func (r *Recorder) DiskAvailable() uint64 {
+	return r.segments.DiskAvailable()
 }
 
 // ListSegmentsForDate returns segments for a camera on a specific date.
