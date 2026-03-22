@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rvben/vedetta/internal/auth"
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/media"
@@ -33,6 +34,7 @@ var startTime = time.Now()
 
 type Server struct {
 	config   config.APIConfig
+	auth     *auth.Checker
 	db       *storage.DB
 	cameras  *camera.Manager
 	recorder *recording.Recorder
@@ -42,9 +44,10 @@ type Server struct {
 	funcMap  template.FuncMap
 }
 
-func New(cfg config.APIConfig, db *storage.DB, cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub) *Server {
+func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB, cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub) *Server {
 	s := &Server{
 		config:   cfg,
+		auth:     authChecker,
 		db:       db,
 		cameras:  cameras,
 		recorder: recorder,
@@ -134,8 +137,9 @@ func New(cfg config.APIConfig, db *storage.DB, cameras *camera.Manager, recorder
 
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+	handler := authMiddleware(s.auth, s.mux)
 	slog.Info("API server listening", "addr", addr)
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(addr, handler)
 }
 
 // --- Helper functions ---

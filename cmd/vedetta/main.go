@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rvben/vedetta/internal/api"
+	"github.com/rvben/vedetta/internal/auth"
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/detect"
@@ -39,6 +40,11 @@ func main() {
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+
+	if err := auth.ValidateConfig(cfg.Auth.Username, cfg.Auth.Password); err != nil {
+		slog.Error("invalid auth config", "error", err)
 		os.Exit(1)
 	}
 
@@ -276,9 +282,15 @@ func main() {
 		}
 	}()
 
+	// Create shared auth checker (nil if auth not configured)
+	authChecker := auth.New(cfg.Auth.Username, cfg.Auth.Password)
+	if authChecker != nil {
+		defer authChecker.Close()
+	}
+
 	// Start RTSP re-publishing server if enabled
 	if cfg.RTSPServer.Enabled {
-		rtspServer := stream.NewRTSPServer(hub, cfg.RTSPServer, cfg.Cameras)
+		rtspServer := stream.NewRTSPServer(hub, cfg.RTSPServer, authChecker, cfg.Cameras)
 		if err := rtspServer.Start(); err != nil {
 			slog.Error("RTSP re-publish server failed to start", "error", err)
 		} else {
@@ -287,7 +299,7 @@ func main() {
 		}
 	}
 
-	server := api.New(cfg.API, db, manager, recorder, hub)
+	server := api.New(cfg.API, authChecker, db, manager, recorder, hub)
 	go func() {
 		if err := server.Start(); err != nil {
 			slog.Error("API server failed", "error", err)

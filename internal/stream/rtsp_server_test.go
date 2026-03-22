@@ -1,7 +1,10 @@
 package stream
 
 import (
+	"encoding/base64"
 	"testing"
+
+	"github.com/bluenviron/gortsplib/v5/pkg/base"
 
 	"github.com/rvben/vedetta/internal/rtsp"
 )
@@ -170,5 +173,94 @@ func TestBuildDescription_ZeroPayloadTypeDefaults(t *testing.T) {
 	}
 	if audio.Formats[0].PayloadType() != 97 {
 		t.Errorf("expected audio PT default to 97, got %d", audio.Formats[0].PayloadType())
+	}
+}
+
+func TestParseRTSPBasicAuth(t *testing.T) {
+	encode := func(s string) string {
+		return base64.StdEncoding.EncodeToString([]byte(s))
+	}
+
+	tests := []struct {
+		name     string
+		header   base.Header
+		wantUser string
+		wantPass string
+		wantOK   bool
+	}{
+		{
+			name:   "no header",
+			header: base.Header{},
+			wantOK: false,
+		},
+		{
+			name:   "empty authorization",
+			header: base.Header{"Authorization": base.HeaderValue{}},
+			wantOK: false,
+		},
+		{
+			name:   "valid credentials",
+			header: base.Header{"Authorization": base.HeaderValue{"Basic " + encode("admin:secret")}},
+			wantUser: "admin",
+			wantPass: "secret",
+			wantOK:   true,
+		},
+		{
+			name:   "password with colon",
+			header: base.Header{"Authorization": base.HeaderValue{"Basic " + encode("user:pass:word")}},
+			wantUser: "user",
+			wantPass: "pass:word",
+			wantOK:   true,
+		},
+		{
+			name:   "empty password",
+			header: base.Header{"Authorization": base.HeaderValue{"Basic " + encode("admin:")}},
+			wantUser: "admin",
+			wantPass: "",
+			wantOK:   true,
+		},
+		{
+			name:   "no colon in decoded value",
+			header: base.Header{"Authorization": base.HeaderValue{"Basic " + encode("nocolon")}},
+			wantOK: false,
+		},
+		{
+			name:   "digest auth (not basic)",
+			header: base.Header{"Authorization": base.HeaderValue{`Digest username="admin"`}},
+			wantOK: false,
+		},
+		{
+			name:   "invalid base64",
+			header: base.Header{"Authorization": base.HeaderValue{"Basic !!!invalid!!!"}},
+			wantOK: false,
+		},
+		{
+			name:   "bearer token (not basic)",
+			header: base.Header{"Authorization": base.HeaderValue{"Bearer some-token"}},
+			wantOK: false,
+		},
+		{
+			name:   "basic prefix but no space",
+			header: base.Header{"Authorization": base.HeaderValue{"BasicCredentials"}},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user, pass, ok := parseRTSPBasicAuth(tt.header)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if user != tt.wantUser {
+				t.Errorf("user = %q, want %q", user, tt.wantUser)
+			}
+			if pass != tt.wantPass {
+				t.Errorf("pass = %q, want %q", pass, tt.wantPass)
+			}
+		})
 	}
 }
