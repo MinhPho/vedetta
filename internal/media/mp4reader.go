@@ -239,19 +239,12 @@ func TrimMP4(inputPath, outputPath string, start, duration time.Duration) error 
 	}
 	defer out.Close()
 
-	timeScale, _ := readTimeScale(in)
-	if timeScale == 0 {
-		timeScale = 90000
-	}
 	if _, err := in.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 
-	startTick := uint64(start.Seconds() * float64(timeScale))
-	endTick := startTick + uint64(duration.Seconds()*float64(timeScale))
-
-	// Index all box locations
-	initBoxes, fragments, err := indexFile(in)
+	// Index all box locations (includes per-track timescales)
+	initBoxes, fragments, trackTimeScales, err := indexFile(in)
 	if err != nil {
 		return fmt.Errorf("index file: %w", err)
 	}
@@ -268,18 +261,26 @@ func TrimMP4(inputPath, outputPath string, start, duration time.Duration) error 
 
 	// Copy matching fragments, adjusting timestamps
 	var newSeqNum uint32 = 1
-	var newBaseTime uint64
+	newBaseTimes := make(map[uint32]uint64) // per-track base times
 	for _, frag := range fragments {
+		ts := trackTimeScales[frag.trackID]
+		if ts == 0 {
+			ts = 90000
+		}
+		startTick := uint64(start.Seconds() * float64(ts))
+		endTick := startTick + uint64(duration.Seconds()*float64(ts))
+
 		fragEnd := frag.decodeTime + uint64(frag.duration)
 		if frag.decodeTime >= endTick || fragEnd <= startTick {
 			continue
 		}
 
-		if err := copyFragmentAdjusted(in, out, frag, newSeqNum, newBaseTime); err != nil {
+		baseTime := newBaseTimes[frag.trackID]
+		if err := copyFragmentAdjusted(in, out, frag, newSeqNum, baseTime); err != nil {
 			return fmt.Errorf("copy fragment: %w", err)
 		}
 		newSeqNum++
-		newBaseTime += uint64(frag.duration)
+		newBaseTimes[frag.trackID] = baseTime + uint64(frag.duration)
 	}
 
 	return nil
@@ -295,17 +296,7 @@ func TrimMP4ToWriter(inputPath string, w io.Writer, start time.Duration) error {
 	}
 	defer in.Close()
 
-	timeScale, _ := readTimeScale(in)
-	if timeScale == 0 {
-		timeScale = 90000
-	}
-	if _, err := in.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-
-	startTick := uint64(start.Seconds() * float64(timeScale))
-
-	initBoxes, fragments, err := indexFile(in)
+	initBoxes, fragments, trackTimeScales, err := indexFile(in)
 	if err != nil {
 		return fmt.Errorf("index file: %w", err)
 	}
@@ -322,17 +313,23 @@ func TrimMP4ToWriter(inputPath string, w io.Writer, start time.Duration) error {
 
 	// Copy fragments from the start offset onward
 	var newSeqNum uint32 = 1
-	var newBaseTime uint64
+	newBaseTimes := make(map[uint32]uint64)
 	for _, frag := range fragments {
+		ts := trackTimeScales[frag.trackID]
+		if ts == 0 {
+			ts = 90000
+		}
+		startTick := uint64(start.Seconds() * float64(ts))
 		if frag.decodeTime+uint64(frag.duration) <= startTick {
 			continue
 		}
 
-		if err := copyFragmentAdjusted(in, w, frag, newSeqNum, newBaseTime); err != nil {
+		baseTime := newBaseTimes[frag.trackID]
+		if err := copyFragmentAdjusted(in, w, frag, newSeqNum, baseTime); err != nil {
 			return fmt.Errorf("copy fragment: %w", err)
 		}
 		newSeqNum++
-		newBaseTime += uint64(frag.duration)
+		newBaseTimes[frag.trackID] = baseTime + uint64(frag.duration)
 	}
 
 	return nil
@@ -373,7 +370,7 @@ func ConcatMP4(inputs []string, outputPath string, start, duration time.Duration
 			}
 		}
 
-		initBoxes, fragments, err := indexFile(in)
+		initBoxes, fragments, _, err := indexFile(in)
 		if err != nil {
 			in.Close()
 			return fmt.Errorf("index %s: %w", path, err)
@@ -453,12 +450,15 @@ func readTimeScale(r io.ReadSeeker) (uint32, error) {
 	return ts, err
 }
 
-// indexFile scans an fMP4 file and returns init box locations and fragment metadata.
-// Uses manual box iteration to avoid ReadBoxStructure's seek interference.
-func indexFile(r io.ReadSeeker) (initBoxes []boxLoc, fragments []fragment, err error) {
+// indexFile scans an fMP4 file and returns init box locations, fragment metadata,
+// and per-track timescales (from mdhd boxes in the init segment).
+func indexFile(r io.ReadSeeker) (initBoxes []boxLoc, fragments []fragment, trackTimeScales map[uint32]uint32, err error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+
+	trackTimeScales = make(map[uint32]uint32)
+	var currentTrackID uint32
 
 	// First pass with ReadBoxStructure to get fragment timing info
 	var currentFrag *fragment
@@ -471,6 +471,33 @@ func indexFile(r io.ReadSeeker) (initBoxes []boxLoc, fragments []fragment, err e
 			})
 			if h.BoxInfo.Type == gomp4.BoxTypeMoov() {
 				return h.Expand()
+			}
+			return nil, nil
+
+		case gomp4.BoxTypeTrak():
+			currentTrackID = 0
+			return h.Expand()
+
+		case gomp4.BoxTypeTkhd():
+			box, _, err := h.ReadPayload()
+			if err != nil {
+				return nil, err
+			}
+			tkhd := box.(*gomp4.Tkhd)
+			currentTrackID = tkhd.TrackID
+			return nil, nil
+
+		case gomp4.BoxTypeMdia():
+			return h.Expand()
+
+		case gomp4.BoxTypeMdhd():
+			box, _, err := h.ReadPayload()
+			if err != nil {
+				return nil, err
+			}
+			mdhd := box.(*gomp4.Mdhd)
+			if currentTrackID != 0 {
+				trackTimeScales[currentTrackID] = mdhd.Timescale
 			}
 			return nil, nil
 
@@ -533,7 +560,7 @@ func indexFile(r io.ReadSeeker) (initBoxes []boxLoc, fragments []fragment, err e
 		return nil, nil
 	})
 
-	return initBoxes, fragments, err
+	return initBoxes, fragments, trackTimeScales, err
 }
 
 // copyFragmentAdjusted copies a moof+mdat pair, rewriting the sequence number
