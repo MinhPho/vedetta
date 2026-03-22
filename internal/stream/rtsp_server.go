@@ -1,8 +1,10 @@
 package stream
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 
+	"github.com/rvben/vedetta/internal/auth"
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/rtsp"
 )
@@ -75,14 +78,16 @@ func (c *rtspServerConsumer) OnDisconnect() {}
 type RTSPServer struct {
 	hub     *rtsp.Hub
 	server  *gortsplib.Server
+	auth    *auth.Checker
 	mu      sync.RWMutex
 	cameras map[string]*cameraStream // camera name → stream
 }
 
 // NewRTSPServer creates a new RTSP re-publishing server.
-func NewRTSPServer(hub *rtsp.Hub, cfg config.RTSPServerConfig, cameras []config.CameraConfig) *RTSPServer {
+func NewRTSPServer(hub *rtsp.Hub, cfg config.RTSPServerConfig, authChecker *auth.Checker, cameras []config.CameraConfig) *RTSPServer {
 	rs := &RTSPServer{
 		hub:     hub,
+		auth:    authChecker,
 		cameras: make(map[string]*cameraStream),
 	}
 
@@ -354,6 +359,10 @@ func (rs *RTSPServer) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx
 }
 
 func (rs *RTSPServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	if resp := rs.checkRTSPAuth(ctx.Request, ctx.Conn); resp != nil {
+		return resp, nil, nil
+	}
+
 	name := parseStreamKey(ctx.Path)
 
 	rs.mu.RLock()
@@ -385,6 +394,10 @@ func (rs *RTSPServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*ba
 }
 
 func (rs *RTSPServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
+	if resp := rs.checkRTSPAuth(ctx.Request, ctx.Conn); resp != nil {
+		return resp, nil, nil
+	}
+
 	name := parseStreamKey(ctx.Path)
 
 	rs.mu.RLock()
@@ -408,4 +421,64 @@ func (rs *RTSPServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Res
 
 func (rs *RTSPServer) OnPlay(_ *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
 	return &base.Response{StatusCode: base.StatusOK}, nil
+}
+
+// checkRTSPAuth validates RTSP Basic Auth from the request Authorization header.
+// Returns nil response if auth succeeds or is not configured; returns 401 response on failure.
+func (rs *RTSPServer) checkRTSPAuth(req *base.Request, conn *gortsplib.ServerConn) *base.Response {
+	if rs.auth == nil {
+		return nil
+	}
+
+	remoteAddr := conn.NetConn().RemoteAddr().String()
+
+	if auth.IsLoopback(remoteAddr) {
+		return nil
+	}
+
+	user, pass, ok := parseRTSPBasicAuth(req.Header)
+	if !ok {
+		return rtspUnauthorized()
+	}
+
+	remoteIP, _, _ := net.SplitHostPort(remoteAddr)
+	if !rs.auth.Check(user, pass, remoteIP) {
+		return rtspUnauthorized()
+	}
+
+	return nil
+}
+
+func rtspUnauthorized() *base.Response {
+	return &base.Response{
+		StatusCode: base.StatusUnauthorized,
+		Header: base.Header{
+			"WWW-Authenticate": base.HeaderValue{`Basic realm="vedetta"`},
+		},
+	}
+}
+
+// parseRTSPBasicAuth extracts username and password from an RTSP Authorization header.
+func parseRTSPBasicAuth(header base.Header) (user, pass string, ok bool) {
+	authHeader := header["Authorization"]
+	if len(authHeader) == 0 {
+		return "", "", false
+	}
+
+	val := authHeader[0]
+	if !strings.HasPrefix(val, "Basic ") {
+		return "", "", false
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(val, "Basic "))
+	if err != nil {
+		return "", "", false
+	}
+
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+
+	return parts[0], parts[1], true
 }

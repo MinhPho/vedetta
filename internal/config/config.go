@@ -19,6 +19,7 @@ type Config struct {
 	MQTT       MQTTConfig       `yaml:"mqtt"`
 	API        APIConfig        `yaml:"api"`
 	RTSPServer RTSPServerConfig `yaml:"rtsp_server"`
+	Auth       AuthConfig       `yaml:"auth"`
 }
 
 type CameraConfig struct {
@@ -96,6 +97,16 @@ type APIConfig struct {
 type RTSPServerConfig struct {
 	Enabled bool `yaml:"enabled"`
 	Port    int  `yaml:"port"`
+}
+
+type AuthConfig struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"` // plaintext or bcrypt hash ($2a$/$2b$)
+}
+
+// Enabled returns true if auth credentials are configured.
+func (a AuthConfig) Enabled() bool {
+	return a.Username != "" && a.Password != ""
 }
 
 func Load(path string) (*Config, error) {
