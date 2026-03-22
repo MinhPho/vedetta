@@ -87,23 +87,31 @@ func NewRTSPServer(hub *rtsp.Hub, cfg config.RTSPServerConfig, cameras []config.
 	}
 
 	rs.server = &gortsplib.Server{
-		Handler:     rs,
-		RTSPAddress: fmt.Sprintf(":%d", cfg.Port),
+		Handler:        rs,
+		RTSPAddress:    fmt.Sprintf(":%d", cfg.Port),
+		UDPRTPAddress:  ":8000",
+		UDPRTCPAddress: ":8001",
 	}
 
 	for _, cam := range cameras {
 		if !cam.Enabled {
 			continue
 		}
-		// Publish the main/high-res stream (record_url) when available,
-		// falling back to the sub-stream (url) if not configured.
-		streamURL := cam.RecordURL
-		if streamURL == "" {
-			streamURL = cam.URL
+		// Main stream: use record_url (high-res) when available, else url.
+		mainURL := cam.RecordURL
+		if mainURL == "" {
+			mainURL = cam.URL
 		}
 		rs.cameras[cam.Name] = &cameraStream{
 			name:    cam.Name,
-			rtspURL: streamURL,
+			rtspURL: mainURL,
+		}
+		// Sub stream: publish at /<name>/sub when a separate sub-stream URL exists.
+		if cam.RecordURL != "" && cam.URL != cam.RecordURL {
+			rs.cameras[cam.Name+"/sub"] = &cameraStream{
+				name:    cam.Name + "/sub",
+				rtspURL: cam.URL,
+			}
 		}
 	}
 
@@ -307,14 +315,24 @@ func buildDescription(source *rtsp.Source) (*description.Session, *description.M
 	return &description.Session{Medias: medias}, videoMedia, audioMedia
 }
 
-// parseCameraName extracts the camera name from an RTSP path.
-// Handles both "/front_door" (DESCRIBE) and "/front_door/trackID=0" (SETUP).
-func parseCameraName(path string) string {
+// parseStreamKey extracts the stream key from an RTSP path.
+// Returns keys like "front_door" or "front_door/sub".
+// Handles DESCRIBE paths ("/front_door", "/front_door/sub") and
+// SETUP paths ("/front_door/trackID=0", "/front_door/sub/trackID=0").
+func parseStreamKey(path string) string {
 	path = strings.TrimPrefix(path, "/")
-	if i := strings.IndexByte(path, '/'); i >= 0 {
-		path = path[:i]
+	parts := strings.Split(path, "/")
+
+	if len(parts) == 0 || parts[0] == "" {
+		return ""
 	}
-	return path
+	name := parts[0]
+
+	// Check if second segment is "sub" (not a trackID suffix)
+	if len(parts) >= 2 && parts[1] == "sub" {
+		return name + "/sub"
+	}
+	return name
 }
 
 // --- gortsplib ServerHandler interface ---
@@ -336,7 +354,7 @@ func (rs *RTSPServer) OnSessionClose(_ *gortsplib.ServerHandlerOnSessionCloseCtx
 }
 
 func (rs *RTSPServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	name := parseCameraName(ctx.Path)
+	name := parseStreamKey(ctx.Path)
 
 	rs.mu.RLock()
 	cs, ok := rs.cameras[name]
@@ -367,7 +385,7 @@ func (rs *RTSPServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*ba
 }
 
 func (rs *RTSPServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	name := parseCameraName(ctx.Path)
+	name := parseStreamKey(ctx.Path)
 
 	rs.mu.RLock()
 	cs, ok := rs.cameras[name]
