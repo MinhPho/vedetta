@@ -12,6 +12,13 @@ var okHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 })
 
+func newTestChecker(t *testing.T) *auth.Checker {
+	t.Helper()
+	c := auth.New("admin", "secret")
+	t.Cleanup(c.Close)
+	return c
+}
+
 func TestAuthMiddleware_Disabled(t *testing.T) {
 	handler := authMiddleware(nil, okHandler)
 
@@ -25,7 +32,7 @@ func TestAuthMiddleware_Disabled(t *testing.T) {
 }
 
 func TestAuthMiddleware_LocalhostExempt(t *testing.T) {
-	checker := auth.New("admin", "secret")
+	checker := newTestChecker(t)
 	handler := authMiddleware(checker, okHandler)
 
 	for _, addr := range []string{"127.0.0.1:54321", "[::1]:54321"} {
@@ -41,7 +48,7 @@ func TestAuthMiddleware_LocalhostExempt(t *testing.T) {
 }
 
 func TestAuthMiddleware_NoCredentials(t *testing.T) {
-	checker := auth.New("admin", "secret")
+	checker := newTestChecker(t)
 	handler := authMiddleware(checker, okHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
@@ -58,7 +65,7 @@ func TestAuthMiddleware_NoCredentials(t *testing.T) {
 }
 
 func TestAuthMiddleware_WrongCredentials(t *testing.T) {
-	checker := auth.New("admin", "secret")
+	checker := newTestChecker(t)
 	handler := authMiddleware(checker, okHandler)
 
 	tests := []struct {
@@ -84,7 +91,7 @@ func TestAuthMiddleware_WrongCredentials(t *testing.T) {
 }
 
 func TestAuthMiddleware_CorrectCredentials(t *testing.T) {
-	checker := auth.New("admin", "secret")
+	checker := newTestChecker(t)
 	handler := authMiddleware(checker, okHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
@@ -99,7 +106,7 @@ func TestAuthMiddleware_CorrectCredentials(t *testing.T) {
 }
 
 func TestAuthMiddleware_RateLimited(t *testing.T) {
-	checker := auth.New("admin", "secret")
+	checker := newTestChecker(t)
 	handler := authMiddleware(checker, okHandler)
 
 	// Exhaust rate limit from a single IP

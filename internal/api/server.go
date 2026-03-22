@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -40,6 +41,7 @@ type Server struct {
 	recorder *recording.Recorder
 	streams  *stream.StreamManager
 	mse      *stream.MSEManager
+	httpSrv  *http.Server
 	mux      *http.ServeMux
 	funcMap  template.FuncMap
 }
@@ -138,8 +140,24 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB, camera
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 	handler := authMiddleware(s.auth, s.mux)
+
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
 	slog.Info("API server listening", "addr", addr)
-	return http.ListenAndServe(addr, handler)
+	return s.httpSrv.ListenAndServe()
+}
+
+// Shutdown gracefully stops the HTTP server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpSrv == nil {
+		return nil
+	}
+	return s.httpSrv.Shutdown(ctx)
 }
 
 // --- Helper functions ---

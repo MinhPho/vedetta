@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -301,7 +303,7 @@ func main() {
 
 	server := api.New(cfg.API, authChecker, db, manager, recorder, hub)
 	go func() {
-		if err := server.Start(); err != nil {
+		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("API server failed", "error", err)
 			cancel()
 		}
@@ -314,6 +316,14 @@ func main() {
 	<-sig
 
 	slog.Info("shutting down")
+
+	// Gracefully shut down the HTTP server (5s timeout for in-flight requests)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("HTTP server shutdown error", "error", err)
+	}
+
 	cancel()
 
 	// Wait for recording goroutines to finalize segments before closing DB

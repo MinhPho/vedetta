@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -62,6 +64,48 @@ func seedSegment(t *testing.T, db *storage.DB, cam, path string, start, end time
 	})
 	if err != nil {
 		t.Fatalf("seed segment %s: %v", path, err)
+	}
+}
+
+// --- Server lifecycle tests ---
+
+func TestServerStartAndShutdown(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	// Override config to use a random port
+	srv.config.Port = 0
+	srv.config.Host = "127.0.0.1"
+
+	// Start in background
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
+
+	// Give server time to bind
+	time.Sleep(50 * time.Millisecond)
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error: %v", err)
+	}
+
+	// Start should have returned http.ErrServerClosed
+	err := <-errCh
+	if !errors.Is(err, http.ErrServerClosed) {
+		t.Errorf("Start() returned %v, want http.ErrServerClosed", err)
+	}
+}
+
+func TestServerShutdownWithoutStart(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown() on never-started server should return nil, got %v", err)
 	}
 }
 
