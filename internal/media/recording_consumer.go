@@ -175,6 +175,7 @@ func (rc *RecordingConsumer) handlePaused() {
 
 func (rc *RecordingConsumer) processVideo(pkt *rtp.Packet) {
 	if err := rc.ensureSegment(); err != nil {
+		rc.handleWriteError(err)
 		return
 	}
 
