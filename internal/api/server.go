@@ -41,23 +41,21 @@ type Server struct {
 	db       *storage.DB
 	cameras  *camera.Manager
 	recorder *recording.Recorder
+	hub      *rtsp.Hub
 	streams  *stream.StreamManager
 	mse      *stream.MSEManager
 	httpSrv  *http.Server
 	mux      *http.ServeMux
 	funcMap  template.FuncMap
+	ready    bool
 }
 
-func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB, cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub) *Server {
+func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Server {
 	s := &Server{
-		config:   cfg,
-		auth:     authChecker,
-		db:       db,
-		cameras:  cameras,
-		recorder: recorder,
-		streams:  stream.NewStreamManager(hub),
-		mse:      stream.NewMSEManager(hub),
-		mux:      http.NewServeMux(),
+		config: cfg,
+		auth:   authChecker,
+		db:     db,
+		mux:    http.NewServeMux(),
 	}
 
 	s.funcMap = template.FuncMap{
@@ -128,6 +126,16 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB, camera
 	s.mux.HandleFunc("DELETE /api/cameras/{name}/zones/{zone}", s.handleDeleteZone)
 	s.mux.HandleFunc("GET /api/cameras/{name}/zones/{zone}/presence", s.handleZonePresence)
 
+	// People/Face endpoints
+	s.mux.HandleFunc("GET /api/people", s.handleListPeople)
+	s.mux.HandleFunc("GET /api/people/{id}", s.handleGetPerson)
+	s.mux.HandleFunc("PUT /api/people/{id}", s.handleUpdatePerson)
+	s.mux.HandleFunc("DELETE /api/people/{id}", s.handleDeletePerson)
+	s.mux.HandleFunc("GET /api/people/{id}/faces", s.handleListPersonFaces)
+	s.mux.HandleFunc("GET /api/faces/unmatched", s.handleListUnmatchedFaces)
+	s.mux.HandleFunc("PUT /api/faces/{id}/assign", s.handleAssignFace)
+	s.mux.HandleFunc("GET /api/faces/{id}/crop", s.handleFaceCrop)
+
 	// Streaming endpoints
 	s.mux.HandleFunc("POST /api/cameras/{name}/webrtc/offer", s.handleWebRTCOffer)
 	s.mux.HandleFunc("GET /api/cameras/{name}/mse/ws", s.handleMSEWebSocket)
@@ -181,6 +189,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return s.httpSrv.Shutdown(ctx)
+}
+
+// SetSubsystems wires in the heavy dependencies once they're initialized.
+// After calling this, camera/recording/streaming endpoints become functional.
+func (s *Server) SetSubsystems(cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub) {
+	s.cameras = cameras
+	s.recorder = recorder
+	s.hub = hub
+	s.streams = stream.NewStreamManager(hub)
+	s.mse = stream.NewMSEManager(hub)
+	s.ready = true
+	slog.Info("API server ready (all subsystems initialized)")
 }
 
 // --- Helper functions ---
@@ -1490,6 +1510,217 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", h)
 	}
 	return fmt.Sprintf("%dh%dm", h, m)
+}
+
+// ─── People / Face Handlers ───
+
+func (s *Server) handleListPeople(w http.ResponseWriter, _ *http.Request) {
+	people, err := s.db.ListPeople()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	type personResponse struct {
+		ID        int64     `json:"id"`
+		Name      string    `json:"name"`
+		Ignore    bool      `json:"ignore"`
+		FaceCount int       `json:"face_count"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	resp := make([]personResponse, 0, len(people))
+	for _, p := range people {
+		faces, _ := s.db.ListFacesByPerson(p.ID, 0)
+		resp = append(resp, personResponse{
+			ID:        p.ID,
+			Name:      p.Name,
+			Ignore:    p.Ignore,
+			FaceCount: len(faces),
+			CreatedAt: p.CreatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid person ID"})
+		return
+	}
+	person, err := s.db.GetPerson(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if person == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "person not found"})
+		return
+	}
+	faces, _ := s.db.ListFacesByPerson(id, 20)
+
+	type faceResponse struct {
+		ID         int64     `json:"id"`
+		Camera     string    `json:"camera"`
+		Confidence float64   `json:"confidence"`
+		Similarity *float64  `json:"similarity,omitempty"`
+		CropPath   string    `json:"crop_path"`
+		Timestamp  time.Time `json:"timestamp"`
+	}
+	faceResp := make([]faceResponse, 0, len(faces))
+	for _, f := range faces {
+		faceResp = append(faceResp, faceResponse{
+			ID:         f.ID,
+			Camera:     f.Camera,
+			Confidence: f.Confidence,
+			Similarity: f.Similarity,
+			CropPath:   f.CropPath,
+			Timestamp:  f.Timestamp,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":         person.ID,
+		"name":       person.Name,
+		"ignore":     person.Ignore,
+		"face_count": len(faces),
+		"created_at": person.CreatedAt,
+		"faces":      faceResp,
+	})
+}
+
+func (s *Server) handleUpdatePerson(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid person ID"})
+		return
+	}
+	var req struct {
+		Name   *string `json:"name"`
+		Ignore *bool   `json:"ignore"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.Name != nil {
+		if err := s.db.UpdatePersonName(id, *req.Name); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if req.Ignore != nil {
+		if err := s.db.SetPersonIgnore(id, *req.Ignore); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *Server) handleDeletePerson(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid person ID"})
+		return
+	}
+	if err := s.db.DeletePerson(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleListPersonFaces(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid person ID"})
+		return
+	}
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	faces, err := s.db.ListFacesByPerson(id, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, faces)
+}
+
+func (s *Server) handleListUnmatchedFaces(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	faces, err := s.db.ListUnmatchedFaces(limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, faces)
+}
+
+func (s *Server) handleAssignFace(w http.ResponseWriter, r *http.Request) {
+	faceID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid face ID"})
+		return
+	}
+	var req struct {
+		PersonID int64  `json:"person_id"`
+		Name     string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	personID := req.PersonID
+	if personID == 0 {
+		name := req.Name
+		if name == "" {
+			name = "Unknown"
+		}
+		newID, err := s.db.SavePerson(name, false, nil)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		personID = newID
+	}
+
+	if err := s.db.UpdateFacePerson(faceID, personID, 1.0); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "assigned", "person_id": personID})
+}
+
+func (s *Server) handleFaceCrop(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid face ID"})
+		return
+	}
+	cropPath, err := s.db.GetFaceCropPath(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if cropPath == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no crop available"})
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeFile(w, r, cropPath)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

@@ -39,6 +39,13 @@ type EventEnd struct {
 	EndTime    time.Time
 }
 
+// FaceEvent carries face detection results from the camera detection loop.
+type FaceEvent struct {
+	Camera  string
+	EventID string
+	Results []detect.FaceResult
+}
+
 // Camera manages a single RTSP camera stream.
 type Camera struct {
 	config         config.CameraConfig
@@ -63,6 +70,11 @@ type Camera struct {
 
 	zones            []Zone
 	presenceTracker  *PresenceTracker
+
+	faceRecognizer  *detect.FaceRecognizer
+	faceEvents      chan<- FaceEvent
+	faceCropDir     string
+	faceProcessed   map[int]time.Time
 }
 
 // CameraStatus represents the current status of a camera.
@@ -73,7 +85,7 @@ type CameraStatus struct {
 	LastFrame time.Time `json:"last_frame"`
 }
 
-func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, eventEnds chan<- EventEnd, presenceEvents chan<- PresenceEvent, hub *rtsp.Hub, snapshotPath string, snapshotQuality int) *Camera {
+func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, eventEnds chan<- EventEnd, presenceEvents chan<- PresenceEvent, hub *rtsp.Hub, snapshotPath string, snapshotQuality int, faceRecognizer *detect.FaceRecognizer, faceEvents chan<- FaceEvent, faceCropDir string) *Camera {
 	if snapshotQuality <= 0 {
 		snapshotQuality = 85
 	}
@@ -90,6 +102,10 @@ func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<-
 		eventSnapQuality: snapshotQuality,
 		confirmedTracks: make(map[int]string),
 		presenceTracker: NewPresenceTracker(),
+		faceRecognizer:  faceRecognizer,
+		faceEvents:      faceEvents,
+		faceCropDir:     faceCropDir,
+		faceProcessed:   make(map[int]time.Time),
 	}
 }
 
@@ -414,6 +430,54 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 				case c.presenceEvents <- pe:
 				default:
 					slog.Warn("presence event channel full, dropping", "zone", pe.ZoneName, "label", pe.Label, "type", pe.Type)
+				}
+			}
+		}
+
+		// Face recognition for person detections in face_recognition zones
+		if c.faceRecognizer != nil {
+			now := time.Now()
+			var rgbaFrame *image.RGBA
+			for _, obj := range tracked {
+				if obj.Label != "person" {
+					continue
+				}
+				if lastRun, ok := c.faceProcessed[obj.TrackID]; ok && now.Sub(lastRun) < 5*time.Second {
+					continue
+				}
+				inFaceZone := false
+				if matched := trackZones[obj.TrackID]; len(matched) > 0 {
+					for _, z := range matched {
+						if z.FaceRecognition {
+							inFaceZone = true
+							break
+						}
+					}
+				}
+				if !inFaceZone {
+					continue
+				}
+				if rgbaFrame == nil {
+					rgbaFrame = rawToRGBA(buf, w, h)
+				}
+				results := c.faceRecognizer.DetectAndEmbed(rgbaFrame, obj.Box, c.faceCropDir)
+				c.faceProcessed[obj.TrackID] = now
+				if len(results) > 0 {
+					eventID := c.confirmedTracks[obj.TrackID]
+					select {
+					case c.faceEvents <- FaceEvent{
+						Camera:  c.config.Name,
+						EventID: eventID,
+						Results: results,
+					}:
+					default:
+						slog.Warn("face event channel full, dropping", "camera", c.config.Name)
+					}
+				}
+			}
+			for id, t := range c.faceProcessed {
+				if now.Sub(t) > 2*time.Minute {
+					delete(c.faceProcessed, id)
 				}
 			}
 		}

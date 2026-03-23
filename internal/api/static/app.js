@@ -1964,6 +1964,7 @@ document.addEventListener('click', function(e) {
 
 // ─── Real-time Playhead Animation ───
 var playheadRAF = null;
+var lastTimelineRefresh = 0;
 
 function startPlayheadAnimation() {
   if (playheadRAF) cancelAnimationFrame(playheadRAF);
@@ -1978,6 +1979,13 @@ function startPlayheadAnimation() {
           var pct = (now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60) / (24 * 60) * 100;
           playhead.style.left = pct + '%';
           playhead.style.display = '';
+
+          // Refresh timeline segments every 30s so blue bars stay current
+          var ts = Date.now();
+          if (ts - lastTimelineRefresh > 30000) {
+            lastTimelineRefresh = ts;
+            fetchTimelineData();
+          }
         }
       }
     }

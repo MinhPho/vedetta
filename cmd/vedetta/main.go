@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -76,6 +79,18 @@ func main() {
 	detector := detect.New(cfg.Detect)
 	defer detector.Close()
 
+	var faceRecognizer *detect.FaceRecognizer
+	fr, frErr := detect.NewFaceRecognizer(detect.FaceRecognizerConfig{
+		CropDir: filepath.Join(cfg.Events.SnapshotPath, "faces"),
+	})
+	if frErr != nil {
+		slog.Warn("face recognition disabled", "error", frErr)
+	} else {
+		faceRecognizer = fr
+		defer fr.Close()
+		slog.Info("face recognition enabled")
+	}
+
 	// Create RTSP Hub — central connection manager
 	hub := rtsp.NewHub(ctx)
 	defer hub.Close()
@@ -115,8 +130,9 @@ func main() {
 	events := make(chan camera.Event, 100)
 	eventEnds := make(chan camera.EventEnd, 100)
 	presenceEvents := make(chan camera.PresenceEvent, 100)
+	faceEvents := make(chan camera.FaceEvent, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, events, eventEnds, presenceEvents, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality)
+	manager := camera.NewManager(cfg.Cameras, detector, events, eventEnds, presenceEvents, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality, faceRecognizer, faceEvents, filepath.Join(cfg.Events.SnapshotPath, "faces"))
 
 	// Sync zones from config to DB and load them into cameras
 	syncConfigZones(db, cfg.Cameras, manager)
@@ -294,6 +310,44 @@ func main() {
 				if err := db.UpdateZonePresence(pe.ZoneID, pe.Label, pe.Type == "zone_enter"); err != nil {
 					slog.Error("failed to persist presence event", "zone", pe.ZoneName, "label", pe.Label, "error", err)
 				}
+
+			case fe := <-faceEvents:
+				for _, result := range fe.Results {
+					personID, similarity := matchFaceToPerson(db, result.Embedding, faceRecognizer)
+
+					face := storage.Face{
+						EventID:    fe.EventID,
+						Camera:     fe.Camera,
+						Embedding:  float32ToBytes(result.Embedding),
+						CropPath:   result.CropPath,
+						Confidence: float64(result.Confidence),
+						Timestamp:  time.Now(),
+					}
+					if personID > 0 {
+						face.PersonID = &personID
+						face.Similarity = &similarity
+					}
+
+					faceID, saveErr := db.SaveFace(face)
+					if saveErr != nil {
+						slog.Error("failed to save face", "error", saveErr)
+						continue
+					}
+
+					if personID == 0 {
+						newPID, createErr := db.SavePerson("", false, float32ToBytes(result.Embedding))
+						if createErr != nil {
+							slog.Error("failed to create person for face", "error", createErr)
+							continue
+						}
+						sim := 1.0
+						_ = db.UpdateFacePerson(faceID, newPID, sim)
+						slog.Info("new person created from face", "person_id", newPID, "camera", fe.Camera)
+					} else {
+						updatePersonCentroid(db, personID, result.Embedding)
+						slog.Info("face matched to person", "person_id", personID, "similarity", fmt.Sprintf("%.3f", similarity), "camera", fe.Camera)
+					}
+				}
 			}
 		}
 	}()
@@ -402,6 +456,96 @@ func syncConfigZones(db *storage.DB, cameras []config.CameraConfig, manager *cam
 			slog.Info("loaded zones", "camera", camCfg.Name, "count", len(zones))
 		}
 	}
+}
+
+// matchFaceToPerson finds the best matching person for a face embedding.
+// Returns (personID, similarity) or (0, 0) if no match above threshold.
+func matchFaceToPerson(db *storage.DB, embedding []float32, fr *detect.FaceRecognizer) (int64, float64) {
+	if fr == nil {
+		return 0, 0
+	}
+	people, err := db.ListPeople()
+	if err != nil {
+		slog.Error("failed to list people for face matching", "error", err)
+		return 0, 0
+	}
+
+	var bestID int64
+	var bestSim float64
+	threshold := fr.MatchThreshold()
+
+	for _, p := range people {
+		if p.Ignore || len(p.Centroid) == 0 {
+			continue
+		}
+		centroid := bytesToFloat32(p.Centroid)
+		sim := detect.CosineSimilarity(embedding, centroid)
+		if sim > bestSim {
+			bestSim = sim
+			bestID = p.ID
+		}
+	}
+
+	if bestSim >= threshold {
+		return bestID, bestSim
+	}
+	return 0, 0
+}
+
+// updatePersonCentroid updates a person's centroid with a running average.
+func updatePersonCentroid(db *storage.DB, personID int64, newEmbedding []float32) {
+	p, err := db.GetPerson(personID)
+	if err != nil || p == nil {
+		return
+	}
+
+	if len(p.Centroid) == 0 {
+		_ = db.UpdatePersonCentroid(personID, float32ToBytes(newEmbedding))
+		return
+	}
+
+	old := bytesToFloat32(p.Centroid)
+	if len(old) != len(newEmbedding) {
+		_ = db.UpdatePersonCentroid(personID, float32ToBytes(newEmbedding))
+		return
+	}
+
+	alpha := float32(0.3)
+	merged := make([]float32, len(old))
+	var norm float64
+	for i := range merged {
+		merged[i] = (1-alpha)*old[i] + alpha*newEmbedding[i]
+		norm += float64(merged[i]) * float64(merged[i])
+	}
+	if norm > 1e-10 {
+		invNorm := float32(1.0 / math.Sqrt(norm))
+		for i := range merged {
+			merged[i] *= invNorm
+		}
+	}
+
+	_ = db.UpdatePersonCentroid(personID, float32ToBytes(merged))
+}
+
+// float32ToBytes converts a float32 slice to little-endian bytes.
+func float32ToBytes(f []float32) []byte {
+	buf := make([]byte, len(f)*4)
+	for i, v := range f {
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
+	}
+	return buf
+}
+
+// bytesToFloat32 converts little-endian bytes to a float32 slice.
+func bytesToFloat32(b []byte) []float32 {
+	if len(b)%4 != 0 {
+		return nil
+	}
+	f := make([]float32, len(b)/4)
+	for i := range f {
+		f[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
+	}
+	return f
 }
 
 // purgeOrphanedEvents removes events whose snapshot files no longer exist on disk.
