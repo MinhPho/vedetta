@@ -39,9 +39,12 @@ type StreamConfig struct {
 }
 
 type Zone struct {
-	Name        string    `yaml:"name"`
-	Coordinates []float64 `yaml:"coordinates"`
-	Objects     []string  `yaml:"objects"`
+	Name            string    `yaml:"name"`
+	Coordinates     []float64 `yaml:"coordinates"`
+	Objects         []string  `yaml:"objects"`
+	Labels          []string  `yaml:"labels"`
+	TrackPresence   bool      `yaml:"track_presence"`
+	FaceRecognition bool      `yaml:"face_recognition"`
 }
 
 type DetectConfig struct {
@@ -119,7 +122,7 @@ func Load(path string) (*Config, error) {
 
 	cfg := &Config{
 		Detect: DetectConfig{
-			ScoreThreshold:  0.5,
+			ScoreThreshold:  0.65,
 			MotionThreshold: 0.02,
 			Labels:          []string{"person", "car", "truck", "bus", "motorcycle", "bicycle", "dog", "cat", "bird"},
 		},
@@ -191,6 +194,28 @@ func Load(path string) (*Config, error) {
 		}
 		if !cam.Enabled {
 			cam.Enabled = true
+		}
+
+		for j, z := range cam.Zones {
+			if z.Name == "" {
+				return nil, fmt.Errorf("camera %q: zone %d: name is required", cam.Name, j)
+			}
+			if len(z.Coordinates) != 4 {
+				return nil, fmt.Errorf("camera %q: zone %q: coordinates must have exactly 4 values [x1, y1, x2, y2]", cam.Name, z.Name)
+			}
+			for _, c := range z.Coordinates {
+				if c < 0 || c > 1 {
+					return nil, fmt.Errorf("camera %q: zone %q: coordinates must be between 0.0 and 1.0", cam.Name, z.Name)
+				}
+			}
+			// x1 < x2, y1 < y2
+			if z.Coordinates[0] >= z.Coordinates[2] || z.Coordinates[1] >= z.Coordinates[3] {
+				return nil, fmt.Errorf("camera %q: zone %q: x1 must be < x2 and y1 must be < y2", cam.Name, z.Name)
+			}
+			// Merge Objects into Labels if Labels is empty (backward compatibility)
+			if len(z.Labels) == 0 && len(z.Objects) > 0 {
+				cam.Zones[j].Labels = z.Objects
+			}
 		}
 	}
 

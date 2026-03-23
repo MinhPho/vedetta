@@ -2024,6 +2024,26 @@ kbd {
   display: block;
 }
 
+/* ─── Timeline Scrub Preview ─── */
+.timeline-preview {
+  position: absolute;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 10;
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.timeline-preview-img {
+  display: block;
+  width: 240px;
+  height: auto;
+  border-radius: var(--radius-xs);
+}
+
 /* ─── Infinite Scroll Sentinel ─── */
 .scroll-sentinel {
   display: flex;

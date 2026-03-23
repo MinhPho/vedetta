@@ -136,8 +136,8 @@ cameras:
 	}
 
 	// Global detect defaults
-	if cfg.Detect.ScoreThreshold != 0.5 {
-		t.Errorf("score_threshold = %f, want 0.5", cfg.Detect.ScoreThreshold)
+	if cfg.Detect.ScoreThreshold != 0.65 {
+		t.Errorf("score_threshold = %f, want 0.65", cfg.Detect.ScoreThreshold)
 	}
 	if cfg.Detect.MotionThreshold != 0.02 {
 		t.Errorf("motion_threshold = %f, want 0.02", cfg.Detect.MotionThreshold)

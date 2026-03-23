@@ -26,9 +26,10 @@ type Event struct {
 	Score        float32   `json:"score"`
 	Box          [4]int    `json:"box"` // x1, y1, x2, y2
 	Timestamp    time.Time `json:"timestamp"`
-	EndTime      time.Time `json:"end_time,omitempty"` // when the tracked object left the frame
+	EndTime      time.Time `json:"end_time,omitempty"`      // when the tracked object left the frame
 	SnapshotPath string    `json:"snapshot_path,omitempty"`
 	ClipPath     string    `json:"clip_path,omitempty"`
+	ZoneName     string    `json:"zone_name,omitempty"`
 }
 
 // EventEnd signals that a tracked object has left the frame.
@@ -44,8 +45,9 @@ type Camera struct {
 	detector       *detect.Detector
 	tracker        *detect.Tracker
 	motionDetector *detect.MotionDetector
-	events         chan<- Event
-	eventEnds      chan<- EventEnd
+	events          chan<- Event
+	eventEnds       chan<- EventEnd
+	presenceEvents  chan<- PresenceEvent
 	hub             *rtsp.Hub
 	eventSnapDir    string
 	eventSnapQuality int
@@ -58,6 +60,9 @@ type Camera struct {
 	lastFrameTime    time.Time
 	lastSnapshotSave time.Time
 	confirmedTracks  map[int]string // trackID → eventID
+
+	zones            []Zone
+	presenceTracker  *PresenceTracker
 }
 
 // CameraStatus represents the current status of a camera.
@@ -68,7 +73,7 @@ type CameraStatus struct {
 	LastFrame time.Time `json:"last_frame"`
 }
 
-func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, eventEnds chan<- EventEnd, hub *rtsp.Hub, snapshotPath string, snapshotQuality int) *Camera {
+func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<- Event, eventEnds chan<- EventEnd, presenceEvents chan<- PresenceEvent, hub *rtsp.Hub, snapshotPath string, snapshotQuality int) *Camera {
 	if snapshotQuality <= 0 {
 		snapshotQuality = 85
 	}
@@ -79,11 +84,32 @@ func NewCamera(cfg config.CameraConfig, detector *detect.Detector, events chan<-
 		motionDetector:  detect.NewMotionDetector(25, 200, 0.05),
 		events:          events,
 		eventEnds:       eventEnds,
+		presenceEvents:  presenceEvents,
 		hub:             hub,
 		eventSnapDir:     snapshotPath,
 		eventSnapQuality: snapshotQuality,
 		confirmedTracks: make(map[int]string),
+		presenceTracker: NewPresenceTracker(),
 	}
+}
+
+// SetZones replaces the camera's zone list and returns the old zones.
+func (c *Camera) SetZones(zones []Zone) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.zones = zones
+}
+
+// Zones returns the current zones for this camera.
+func (c *Camera) Zones() []Zone {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]Zone(nil), c.zones...)
+}
+
+// PresenceTracker returns the camera's presence tracker for API access.
+func (c *Camera) PresenceTracker() *PresenceTracker {
+	return c.presenceTracker
 }
 
 func (c *Camera) Name() string {
@@ -359,11 +385,56 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 			}
 		}
 
+		// Zone matching: tag each tracked object with matching zones and update presence
+		c.mu.RLock()
+		zones := c.zones
+		c.mu.RUnlock()
+
+		zoneMatches := make(map[PresenceKey]bool)
+		trackZones := make(map[int][]Zone) // trackID → matched zones
+		if len(zones) > 0 {
+			for _, obj := range tracked {
+				matched := MatchZones(zones, obj.Box, obj.Label, w, h)
+				trackZones[obj.TrackID] = matched
+				for _, z := range matched {
+					if z.TrackPresence {
+						zoneMatches[PresenceKey{ZoneID: z.ID, Label: obj.Label}] = true
+					}
+				}
+			}
+
+			// Update presence state machine
+			zoneNameMap := make(map[int]string, len(zones))
+			for _, z := range zones {
+				zoneNameMap[z.ID] = z.Name
+			}
+			presenceEvts := c.presenceTracker.Update(zoneMatches, zoneNameMap)
+			for _, pe := range presenceEvts {
+				select {
+				case c.presenceEvents <- pe:
+				default:
+					slog.Warn("presence event channel full, dropping", "zone", pe.ZoneName, "label", pe.Label, "type", pe.Type)
+				}
+			}
+		}
+
 		// Emit events for newly confirmed tracks
 		for _, obj := range tracked {
 			if _, active := c.confirmedTracks[obj.TrackID]; !active {
+				// If zones are configured, only emit events for objects in at least one zone
+				if len(zones) > 0 && len(trackZones[obj.TrackID]) == 0 {
+					continue
+				}
+
 				eventID := fmt.Sprintf("%s-t%d-%d", c.config.Name, obj.TrackID, time.Now().UnixMilli())
 				c.confirmedTracks[obj.TrackID] = eventID
+
+				// Pick the first matched zone name for the event
+				var zoneName string
+				if matched := trackZones[obj.TrackID]; len(matched) > 0 {
+					zoneName = matched[0].Name
+				}
+
 				ev := Event{
 					ID:         eventID,
 					CameraName: c.config.Name,
@@ -371,6 +442,7 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 					Score:      obj.Score,
 					Box:        obj.Box,
 					Timestamp:  time.Now(),
+					ZoneName:   zoneName,
 				}
 
 				if annotatedFrame != nil {

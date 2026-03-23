@@ -646,6 +646,55 @@ function initTimeline() {
   cursor.appendChild(cursorTime);
   track.appendChild(cursor);
 
+  // Add thumbnail preview element (outside track to avoid overflow:hidden clipping)
+  var preview = document.createElement('div');
+  preview.className = 'timeline-preview';
+  preview.style.display = 'none';
+  var previewImg = document.createElement('img');
+  previewImg.className = 'timeline-preview-img';
+  preview.appendChild(previewImg);
+  var timelineContainer = track.parentElement;
+  timelineContainer.style.position = 'relative';
+  timelineContainer.appendChild(preview);
+
+  var thumbTimer = null;
+  var lastThumbUrl = '';
+  var lastThumbTime = 0;
+
+  function requestThumbnail(pct) {
+    if (!isOverSegment(pct)) {
+      preview.style.display = 'none';
+      lastThumbUrl = '';
+      return;
+    }
+
+    var totalSec = pct * 86400;
+    var h = Math.floor(totalSec / 3600);
+    var m = Math.floor((totalSec % 3600) / 60);
+    var s = Math.floor(totalSec % 60);
+    var name = getCameraName();
+    if (!name) return;
+
+    var ts = timelineDate.getFullYear() + '-' +
+      String(timelineDate.getMonth() + 1).padStart(2, '0') + '-' +
+      String(timelineDate.getDate()).padStart(2, '0') + 'T' +
+      String(h).padStart(2, '0') + ':' +
+      String(m).padStart(2, '0') + ':' +
+      String(s).padStart(2, '0') + 'Z';
+
+    var url = '/api/cameras/' + encodeURIComponent(name) + '/thumbnail?t=' + encodeURIComponent(ts);
+    if (url === lastThumbUrl) return;
+    lastThumbUrl = url;
+
+    previewImg.onload = function() {
+      preview.style.display = '';
+    };
+    previewImg.onerror = function() {
+      preview.style.display = 'none';
+    };
+    previewImg.src = url;
+  }
+
   track.addEventListener('mousedown', function(e) {
     timelineDragging = true;
     scrubTimeline(e, false);
@@ -657,16 +706,36 @@ function initTimeline() {
     var rect = track.getBoundingClientRect();
     var pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     cursor.style.left = (pct * 100) + '%';
+    // Position preview relative to the container, just above the track
+    var previewX = track.offsetLeft + pct * rect.width;
+    preview.style.left = previewX + 'px';
+    // Use bottom positioning: container height minus track's top offset, plus gap
+    var containerH = timelineContainer.offsetHeight;
+    preview.style.bottom = (containerH - track.offsetTop + 4) + 'px';
+    preview.style.top = '';
     var totalSec = pct * 86400;
     var h = Math.floor(totalSec / 3600);
     var m = Math.floor((totalSec % 3600) / 60);
     cursorTime.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
     // Change cursor when over a recorded segment
     track.style.cursor = isOverSegment(pct) ? 'pointer' : 'default';
+
+    // Thumbnail request: throttle to one request per 150ms (fires immediately, then rate-limits)
+    var now = Date.now();
+    if (now - lastThumbTime >= 150) {
+      lastThumbTime = now;
+      requestThumbnail(pct);
+    } else {
+      clearTimeout(thumbTimer);
+      thumbTimer = setTimeout(function() { lastThumbTime = Date.now(); requestThumbnail(pct); }, 150 - (now - lastThumbTime));
+    }
   });
 
   track.addEventListener('mouseleave', function() {
     cursor.style.display = 'none';
+    preview.style.display = 'none';
+    lastThumbUrl = '';
+    clearTimeout(thumbTimer);
     track.style.cursor = '';
   });
 
@@ -678,6 +747,7 @@ function initTimeline() {
     if (timelineDragging) {
       timelineDragging = false;
       scrubTimeline(lastScrubEvent, true);
+      preview.style.display = 'none';
     }
   });
 
@@ -1225,7 +1295,7 @@ function updatePlaybackUI() {
 }
 
 function updatePlayheadForPlayback(currentTime) {
-  if (!playbackStartTime) return;
+  if (!playbackStartTime || timelineDragging) return;
   var playhead = el('timeline-playhead');
   if (!playhead) return;
 

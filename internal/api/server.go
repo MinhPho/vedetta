@@ -116,8 +116,16 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB, camera
 
 	s.mux.HandleFunc("GET /api/cameras/{name}/timeline", s.handleCameraTimeline)
 	s.mux.HandleFunc("GET /api/cameras/{name}/playback", s.handlePlayback)
+	s.mux.HandleFunc("GET /api/cameras/{name}/thumbnail", s.handleThumbnail)
 	s.mux.HandleFunc("GET /api/recordings/segments/{camera}", s.handleListSegments)
 	s.mux.HandleFunc("GET /api/recordings/export/{camera}", s.handleRecordingExport)
+
+	// Zone endpoints
+	s.mux.HandleFunc("GET /api/cameras/{name}/zones", s.handleListZones)
+	s.mux.HandleFunc("POST /api/cameras/{name}/zones", s.handleCreateZone)
+	s.mux.HandleFunc("PUT /api/cameras/{name}/zones/{zone}", s.handleUpdateZone)
+	s.mux.HandleFunc("DELETE /api/cameras/{name}/zones/{zone}", s.handleDeleteZone)
+	s.mux.HandleFunc("GET /api/cameras/{name}/zones/{zone}/presence", s.handleZonePresence)
 
 	// Streaming endpoints
 	s.mux.HandleFunc("POST /api/cameras/{name}/webrtc/offer", s.handleWebRTCOffer)
@@ -313,6 +321,7 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	cameraFilter := r.URL.Query().Get("camera")
 	labelFilter := r.URL.Query().Get("label")
+	zoneFilter := r.URL.Query().Get("zone")
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
@@ -327,7 +336,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	events, err := s.db.QueryEvents(cameraFilter, labelFilter, limit, offset)
+	events, err := s.db.QueryEventsFiltered(cameraFilter, labelFilter, zoneFilter, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -557,6 +566,55 @@ func (s *Server) handlePlayback(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleThumbnail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	cam := s.cameras.GetCamera(name)
+	if cam == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "camera not found"})
+		return
+	}
+
+	startStr := r.URL.Query().Get("t")
+	if startStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "t parameter required (RFC3339)"})
+		return
+	}
+
+	t, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid time format"})
+		return
+	}
+
+	// Find the segment containing the timestamp
+	segments, err := s.db.QuerySegments(name, t, t.Add(1*time.Second))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if len(segments) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no recording at this time"})
+		return
+	}
+
+	seg := segments[0]
+	offset := t.Sub(seg.StartTime)
+	if offset < 0 {
+		offset = 0
+	}
+
+	jpegData, err := media.ExtractThumbnail(seg.Path, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "thumbnail extraction failed"})
+		slog.Error("thumbnail extraction failed", "camera", name, "path", seg.Path, "offset", offset, "error", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	w.Write(jpegData)
+}
+
 func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 	cameraName := r.PathValue("camera")
 	cam := s.cameras.GetCamera(cameraName)
@@ -732,6 +790,204 @@ func (s *Server) handleMJPEG(w http.ResponseWriter, r *http.Request) {
 
 	handler := stream.MJPEGHandlerRGB24(cam.SnapshotRGB24, cam.FrameSize())
 	handler.ServeHTTP(w, r)
+}
+
+// --- Zone handlers ---
+
+func (s *Server) handleListZones(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	cam := s.cameras.GetCamera(name)
+	if cam == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "camera not found"})
+		return
+	}
+
+	zones, err := s.db.ListZones(name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if zones == nil {
+		zones = []camera.Zone{}
+	}
+	writeJSON(w, http.StatusOK, zones)
+}
+
+func (s *Server) handleCreateZone(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	cam := s.cameras.GetCamera(name)
+	if cam == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "camera not found"})
+		return
+	}
+
+	var z camera.Zone
+	if err := json.NewDecoder(r.Body).Decode(&z); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if z.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+	if z.X1 < 0 || z.Y1 < 0 || z.X2 > 1 || z.Y2 > 1 || z.X1 >= z.X2 || z.Y1 >= z.Y2 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid coordinates: must be 0.0-1.0, x1<x2, y1<y2"})
+		return
+	}
+
+	z.Camera = name
+	z.Enabled = true
+	if err := s.db.SaveZone(z); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Reload zones into camera
+	s.reloadCameraZones(name, cam)
+
+	writeJSON(w, http.StatusCreated, z)
+}
+
+func (s *Server) handleUpdateZone(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	zoneName := r.PathValue("zone")
+	cam := s.cameras.GetCamera(name)
+	if cam == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "camera not found"})
+		return
+	}
+
+	existing, err := s.db.GetZone(name, zoneName)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "zone not found"})
+		return
+	}
+
+	var patch struct {
+		X1              *float64 `json:"x1"`
+		Y1              *float64 `json:"y1"`
+		X2              *float64 `json:"x2"`
+		Y2              *float64 `json:"y2"`
+		Labels          []string `json:"labels"`
+		TrackPresence   *bool    `json:"track_presence"`
+		FaceRecognition *bool    `json:"face_recognition"`
+		Enabled         *bool    `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	// Apply patch fields onto existing zone
+	z := *existing
+	if patch.X1 != nil {
+		z.X1 = *patch.X1
+	}
+	if patch.Y1 != nil {
+		z.Y1 = *patch.Y1
+	}
+	if patch.X2 != nil {
+		z.X2 = *patch.X2
+	}
+	if patch.Y2 != nil {
+		z.Y2 = *patch.Y2
+	}
+	if patch.Labels != nil {
+		z.Labels = patch.Labels
+	}
+	if patch.TrackPresence != nil {
+		z.TrackPresence = *patch.TrackPresence
+	}
+	if patch.FaceRecognition != nil {
+		z.FaceRecognition = *patch.FaceRecognition
+	}
+	if patch.Enabled != nil {
+		z.Enabled = *patch.Enabled
+	}
+
+	if z.X1 < 0 || z.Y1 < 0 || z.X2 > 1 || z.Y2 > 1 || z.X1 >= z.X2 || z.Y1 >= z.Y2 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid coordinates: must be 0.0-1.0, x1<x2, y1<y2"})
+		return
+	}
+
+	if err := s.db.SaveZone(z); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.reloadCameraZones(name, cam)
+
+	writeJSON(w, http.StatusOK, z)
+}
+
+func (s *Server) handleDeleteZone(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	zoneName := r.PathValue("zone")
+	cam := s.cameras.GetCamera(name)
+	if cam == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "camera not found"})
+		return
+	}
+
+	if err := s.db.DeleteZone(name, zoneName); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.reloadCameraZones(name, cam)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleZonePresence(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	zoneName := r.PathValue("zone")
+	cam := s.cameras.GetCamera(name)
+	if cam == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "camera not found"})
+		return
+	}
+
+	zone, err := s.db.GetZone(name, zoneName)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if zone == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "zone not found"})
+		return
+	}
+
+	// Read from live in-memory presence tracker (authoritative source)
+	tracker := cam.PresenceTracker()
+	allPresence := tracker.AllPresence()
+
+	var presence []camera.ZonePresence
+	for key, zp := range allPresence {
+		if key.ZoneID == zone.ID {
+			presence = append(presence, zp)
+		}
+	}
+	if presence == nil {
+		presence = []camera.ZonePresence{}
+	}
+
+	writeJSON(w, http.StatusOK, presence)
+}
+
+// reloadCameraZones loads zones from DB and updates the camera's zone list.
+func (s *Server) reloadCameraZones(name string, cam *camera.Camera) {
+	zones, err := s.db.ListZones(name)
+	if err != nil {
+		slog.Error("failed to reload zones", "camera", name, "error", err)
+		return
+	}
+	cam.SetZones(zones)
 }
 
 // --- HTML partial handlers for htmx ---
