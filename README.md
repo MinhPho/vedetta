@@ -11,9 +11,9 @@ Vedetta is an open-source Network Video Recorder (NVR) written in Go. Inspired b
 - **Object tracking** -- Hungarian algorithm across frames
 - **Live streaming** -- WebRTC with MJPEG fallback
 - **Web dashboard** -- dark theme, htmx + vanilla JS, no build step
+- **Session auth + API tokens** -- browser sessions with CSRF protection and scoped bearer tokens
 - **Home Assistant** -- MQTT integration with auto-discovery
 - **ONVIF discovery** -- find cameras on the network (`vedetta discover`)
-- **Hardware acceleration** -- VAAPI, VideoToolbox, CUDA (auto-detected)
 - **Per-camera zones** -- filter which objects matter in each zone
 - **Storage management** -- max storage cap, automatic cleanup
 - **SQLite** -- WAL-mode database, embedded in the binary
@@ -53,8 +53,8 @@ cameras:
   - name: front_door
     url: rtsp://user:pass@192.168.1.100:554/stream1
     record_url: rtsp://user:pass@192.168.1.100:554/stream0  # optional high-res stream
-    enabled: true
     detect:
+      enabled: true
       width: 640
       height: 480
       fps: 5
@@ -64,13 +64,17 @@ cameras:
       fps: 15
     zones:
       - name: driveway
-        coordinates: [0.1, 0.5, 0.9, 0.5, 0.9, 1.0, 0.1, 1.0]
-        objects: [person, car]
+        points:
+          - [0.1, 0.5]
+          - [0.9, 0.5]
+          - [0.9, 1.0]
+          - [0.1, 1.0]
+        labels: [person, car]
 ```
 
 Each camera has two optional streams: `url` for the detection stream (lower resolution, less CPU) and `record_url` for recording (full resolution). If `record_url` is omitted, `url` is used for both.
 
-Zones are defined as normalized coordinates (0.0--1.0) and can filter which object classes trigger events.
+Zones are polygons defined as normalized points (0.0--1.0). Event matching uses the detection anchor point `(center_x, bottom_y)`.
 
 ### Detection
 
@@ -78,7 +82,11 @@ Zones are defined as normalized coordinates (0.0--1.0) and can filter which obje
 detect:
   model_path: ""            # path to YOLOv8 ONNX model
   score_threshold: 0.5      # minimum confidence score
-  motion_threshold: 0.02    # fraction of pixels that must change
+  motion:
+    pixel_threshold: 25
+    min_area: 200
+    background_alpha: 0.05
+    min_region_score: 0.02
 ```
 
 ### Recording
@@ -117,7 +125,23 @@ mqtt:
 api:
   host: 0.0.0.0
   port: 5050
+  exposure: lan
+  # trusted_proxies:
+  #   - 127.0.0.1/32
+  # tls_cert: /etc/vedetta/tls.crt
+  # tls_key: /etc/vedetta/tls.key
 ```
+
+### Auth
+
+```yaml
+auth:
+  users:
+    - username: admin
+      password_hash: "$2a$10$7EqJtq98hPqEX7fNZaFWoOHi8V6I5WJFlQ7Y7S6d6n9zQ0jD4S3yu"
+```
+
+Generate hashes with `vedetta auth hash-password <password>`.
 
 ## Camera Setup
 
@@ -146,6 +170,14 @@ The default topic prefix is `vedetta`. Messages are published under:
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/health` | Health check |
+| `GET` | `/api/health/live` | Liveness probe |
+| `GET` | `/api/health/ready` | Readiness probe |
+| `POST` | `/api/auth/login` | Create browser session |
+| `POST` | `/api/auth/logout` | End browser session |
+| `GET` | `/api/auth/me` | Current principal |
+| `POST` | `/api/tokens` | Create scoped API token |
+| `DELETE` | `/api/tokens/{id}` | Revoke API token |
+| `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/api/system` | System status (CPU, memory, storage) |
 | `GET` | `/api/cameras` | List all cameras and their status |
 | `GET` | `/api/cameras/{name}/snapshot` | Current JPEG snapshot from camera |
@@ -160,7 +192,7 @@ The web dashboard is served at `/` and uses htmx partials for dynamic updates.
 
 ## Development
 
-Prerequisites: Go 1.22+, ffmpeg.
+Prerequisites: Go 1.22+. Vedetta no longer downloads the ONNX model or OpenH264 at runtime; install them ahead of time or bundle them with your deployment.
 
 ```sh
 make build          # build the binary
@@ -179,20 +211,19 @@ make clean          # remove build artifacts
 RTSP Camera
     |
     v
-  ffmpeg (decode) ──> Motion Detector
-                          |
-                     (motion detected)
-                          |
-                          v
-                    YOLOv8 Detector ──> Object Tracker (Hungarian)
-                          |                    |
-                          v                    v
-                    Event Manager         MQTT Publisher
-                          |
-                    +-----+-----+
-                    |           |
-              Event Clips   Continuous
-                            Segments
+ Native Go RTP/H264 decode ──> Motion Detector
+                                   |
+                              (motion detected)
+                                   |
+                                   v
+                             YOLOv8 Detector ──> Object Tracker
+                                   |                  |
+                                   v                  v
+                             Event Manager       MQTT Publisher
+                                   |
+                             +-----+-----+
+                             |           |
+                       Event Clips   Continuous Segments
 ```
 
 Frames flow from camera through motion detection. YOLO only runs when motion is detected, keeping CPU usage low. Detected objects are tracked across frames with the Hungarian algorithm to maintain identity. Events trigger clip extraction from the continuous recording buffer.
