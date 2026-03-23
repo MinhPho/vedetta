@@ -164,6 +164,9 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("DELETE /api/objects/{id}", s.handleDeleteObject)
 	s.mux.HandleFunc("GET /api/objects/{id}/sightings", s.handleObjectSightings)
 	s.mux.HandleFunc("GET /api/objects/{id}/crop", s.handleObjectCrop)
+	s.mux.HandleFunc("GET /api/objects/{id}/references", s.handleObjectReferences)
+	s.mux.HandleFunc("POST /api/objects/{id}/references", s.handleAddObjectReference)
+	s.mux.HandleFunc("DELETE /api/objects/references/{id}", s.handleDeleteObjectReference)
 	s.mux.HandleFunc("POST /api/events/{id}/identify", s.handleIdentifyEvent)
 
 	// Streaming endpoints
@@ -1327,6 +1330,7 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 	prevID, nextID, _ := s.db.GetAdjacentEvents(id)
 
 	sightings, _ := s.db.GetEventSightings(id)
+	knownObjects, _ := s.db.ListKnownObjectsByLabel(event.Label)
 
 	type eventDetailData struct {
 		camera.Event
@@ -1336,6 +1340,7 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		HasRecording bool
 		Duration     string
 		Sightings    []storage.ObjectSighting
+		KnownObjects []storage.KnownObject
 	}
 
 	recURL := fmt.Sprintf("/camera.html?name=%s&t=%s",
@@ -1359,6 +1364,7 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		HasRecording: hasRecording,
 		Duration:     duration,
 		Sightings:    sightings,
+		KnownObjects: knownObjects,
 	}
 
 	tmpl := template.Must(template.New("detail").Funcs(s.funcMap).Parse(
@@ -1401,9 +1407,11 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`{{range .Sightings}}<div class="meta-row"><span class="key">{{.ObjectName}}</span><span class="val">{{scorePercent (toFloat32 .Similarity)}}</span></div>{{end}}` +
 			`</div>{{end}}` +
 			`{{if .SnapshotAvailable}}<div class="meta-card">` +
-			`<button class="btn btn-sm" style="width:100%" onclick="trackObject('{{.ID}}', '{{.Label}}')">` +
-			`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>` +
-			` Track this {{.Label}}</button>` +
+			`<div class="meta-card-header">Object Tracking</div>` +
+			`{{range .KnownObjects}}<button class="btn btn-sm" style="width:100%;margin-bottom:0.25rem" onclick="addObjectReference({{.ID}}, '{{.Name}}', '{{$.ID}}')">` +
+			`+ Add reference to {{.Name}}</button>{{end}}` +
+			`<button class="btn btn-sm btn-ghost" style="width:100%" onclick="trackObject('{{.ID}}', '{{.Label}}')">` +
+			`Track as new {{.Label}}</button>` +
 			`</div>{{end}}` +
 			`<div class="event-nav">` +
 			`{{if .PrevID}}<a href="/event.html?id={{.PrevID}}" class="btn" data-prev-id="{{.PrevID}}">&#8592; Previous</a>{{else}}<span class="btn" style="opacity:0.3;pointer-events:none">&#8592; Previous</span>{{end}}` +
@@ -2291,6 +2299,14 @@ func (s *Server) handleCreateObject(w http.ResponseWriter, r *http.Request) {
 		_ = s.db.UpdateKnownObjectCrop(id, cropPath)
 	}
 
+	// Save as first reference
+	s.db.SaveObjectReference(storage.ObjectReference{
+		ObjectID:  id,
+		EventID:   req.EventID,
+		Embedding: detect.Float32ToBytes(embedding),
+		CropPath:  cropPath,
+	})
+
 	obj.ID = id
 	obj.CropPath = cropPath
 	writeJSON(w, http.StatusCreated, obj)
@@ -2352,6 +2368,25 @@ func (s *Server) handleObjectCrop(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid object ID"})
 		return
 	}
+
+	// Serve specific reference crop if ?ref= is provided
+	if refIDStr := r.URL.Query().Get("ref"); refIDStr != "" {
+		refs, err := s.db.ListObjectReferences(id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		refID, _ := strconv.ParseInt(refIDStr, 10, 64)
+		for _, ref := range refs {
+			if ref.ID == refID && ref.CropPath != "" {
+				http.ServeFile(w, r, ref.CropPath)
+				return
+			}
+		}
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "reference crop not found"})
+		return
+	}
+
 	obj, err := s.db.GetKnownObject(id)
 	if err != nil || obj == nil || obj.CropPath == "" {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "crop not found"})
@@ -2422,6 +2457,137 @@ func (s *Server) handleIdentifyEvent(w http.ResponseWriter, r *http.Request) {
 		matches = []storage.ObjectSighting{}
 	}
 	writeJSON(w, http.StatusOK, matches)
+}
+
+func (s *Server) handleObjectReferences(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid object ID"})
+		return
+	}
+	refs, err := s.db.ListObjectReferences(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if refs == nil {
+		refs = []storage.ObjectReference{}
+	}
+	writeJSON(w, http.StatusOK, refs)
+}
+
+func (s *Server) handleAddObjectReference(w http.ResponseWriter, r *http.Request) {
+	if s.objectEmbedder == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "object re-identification not available"})
+		return
+	}
+
+	objectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid object ID"})
+		return
+	}
+
+	obj, err := s.db.GetKnownObject(objectID)
+	if err != nil || obj == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "object not found"})
+		return
+	}
+
+	var req struct {
+		EventID string `json:"event_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.EventID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "event_id is required"})
+		return
+	}
+
+	event, err := s.db.GetEventByID(req.EventID)
+	if err != nil || event == nil || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event snapshot not found"})
+		return
+	}
+
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load snapshot"})
+		return
+	}
+
+	embedding, err := s.objectEmbedder.Embed(img, event.Box)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "embedding failed: " + err.Error()})
+		return
+	}
+
+	cropDir := filepath.Join(s.snapshotPath, "objects")
+	cropPath := s.objectEmbedder.SaveCrop(img, event.Box, cropDir, objectID)
+
+	refID, err := s.db.SaveObjectReference(storage.ObjectReference{
+		ObjectID:  objectID,
+		EventID:   req.EventID,
+		Embedding: detect.Float32ToBytes(embedding),
+		CropPath:  cropPath,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Recompute centroid from all references
+	s.recomputeObjectCentroid(objectID)
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":        refID,
+		"object_id": objectID,
+		"crop_path": cropPath,
+	})
+}
+
+func (s *Server) handleDeleteObjectReference(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid reference ID"})
+		return
+	}
+	if err := s.db.DeleteObjectReference(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) recomputeObjectCentroid(objectID int64) {
+	refs, err := s.db.ListObjectReferences(objectID)
+	if err != nil || len(refs) == 0 {
+		return
+	}
+
+	var centroid []float32
+	for _, ref := range refs {
+		emb := detect.BytesToFloat32(ref.Embedding)
+		if centroid == nil {
+			centroid = make([]float32, len(emb))
+		}
+		for i := range emb {
+			centroid[i] += emb[i]
+		}
+	}
+
+	n := float32(len(refs))
+	var norm float64
+	for i := range centroid {
+		centroid[i] /= n
+		norm += float64(centroid[i]) * float64(centroid[i])
+	}
+	if norm > 1e-10 {
+		invNorm := float32(1.0 / math.Sqrt(norm))
+		for i := range centroid {
+			centroid[i] *= invNorm
+		}
+	}
+
+	_ = s.db.UpdateKnownObjectCentroid(objectID, detect.Float32ToBytes(centroid))
 }
 
 func loadSnapshotImage(path string) (*image.RGBA, error) {

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Objects - Vedetta</title>
+  <link rel="stylesheet" href="/style.css">
+  <meta name="theme-color" content="#0a0e14">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <style>
+    .object-card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg); padding:1rem; }
+    .object-header { display:flex; align-items:center; gap:0.75rem; margin-bottom:0.75rem; }
+    .object-thumb { width:80px; height:80px; border-radius:var(--radius); background:var(--surface); background-size:cover; background-position:center; flex-shrink:0; }
+    .object-info { flex:1; }
+    .object-name { font-size:1.1rem; font-weight:600; }
+    .object-meta { font-size:var(--text-sm); color:var(--text-tertiary); margin-top:0.25rem; }
+    .object-refs { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.5rem; }
+    .ref-thumb { width:60px; height:60px; border-radius:var(--radius-sm); background:var(--surface); background-size:cover; background-position:center; border:2px solid transparent; cursor:pointer; position:relative; }
+    .ref-thumb:hover { border-color:var(--accent); }
+    .ref-delete { position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; background:var(--danger); color:#fff; border:none; font-size:11px; line-height:18px; text-align:center; cursor:pointer; display:none; }
+    .ref-thumb:hover .ref-delete { display:block; }
+    .object-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:1rem; }
+    .empty-state { color:var(--text-tertiary); padding:2rem; text-align:center; }
+  </style>
+</head>
+<body>
+
+  <nav class="topnav" role="navigation" aria-label="Main">
+    <a href="/" class="topnav-brand" aria-label="Vedetta home">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>vedetta</span>
+    </a>
+    <div class="topnav-links">
+      <a href="/" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Cameras</a>
+      <a href="/events.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>Events</a>
+      <a href="/recordings.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>Recordings</a>
+      <a href="/people.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
+      <a href="/objects.html" class="topnav-link active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Objects</a>
+      <a href="/system.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>System</a>
+    </div>
+    <button class="btn btn-icon btn-ghost" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
+      <svg id="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg id="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
+    <div class="topnav-spacer"></div>
+    <div class="conn-status"><span class="conn-dot ok" id="conn-dot"></span><span id="conn-label">Connected</span></div>
+  </nav>
+
+  <main class="page">
+    <div class="page-header">
+      <h1>Tracked Objects</h1>
+    </div>
+
+    <div id="objects-grid" class="object-grid">
+      <div class="empty-state">Loading...</div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    var objectsData = [];
+
+    function loadObjects() {
+      fetch('/api/objects').then(function(r) { return r.json(); }).then(function(objects) {
+        objectsData = objects || [];
+        renderObjects();
+      });
+    }
+
+    function renderObjects() {
+      var grid = document.getElementById('objects-grid');
+      if (!objectsData.length) {
+        grid.innerHTML = '<div class="empty-state">No tracked objects yet. Go to an event and click "Track as new" to start tracking an object.</div>';
+        return;
+      }
+
+      var html = '';
+      objectsData.forEach(function(obj) {
+        html += '<div class="object-card" id="object-' + obj.id + '">'
+          + '<div class="object-header">'
+          + '<div class="object-thumb" style="' + (obj.crop_path ? 'background-image:url(/api/objects/' + obj.id + '/crop)' : '') + '"></div>'
+          + '<div class="object-info">'
+          + '<div class="object-name">' + escapeHtml(obj.name) + '</div>'
+          + '<div class="object-meta">' + obj.label + '</div>'
+          + '</div>'
+          + '<button class="btn btn-sm btn-ghost" style="color:var(--danger)" onclick="deleteObject(' + obj.id + ', \'' + escapeAttr(obj.name) + '\')">Delete</button>'
+          + '</div>'
+          + '<div class="object-refs" id="refs-' + obj.id + '">Loading references...</div>'
+          + '</div>';
+      });
+      grid.innerHTML = html;
+
+      objectsData.forEach(function(obj) {
+        loadReferences(obj.id);
+      });
+    }
+
+    function loadReferences(objectId) {
+      fetch('/api/objects/' + objectId + '/references').then(function(r) { return r.json(); }).then(function(refs) {
+        var container = document.getElementById('refs-' + objectId);
+        if (!container) return;
+        if (!refs || !refs.length) {
+          container.innerHTML = '<span style="font-size:var(--text-sm);color:var(--text-tertiary)">No reference images</span>';
+          return;
+        }
+        var html = '';
+        refs.forEach(function(ref) {
+          html += '<div class="ref-thumb" style="background-image:url(/api/objects/' + objectId + '/crop?ref=' + ref.id + ')">'
+            + '<button class="ref-delete" onclick="event.stopPropagation();deleteReference(' + ref.id + ',' + objectId + ')" title="Remove reference">&times;</button>'
+            + '</div>';
+        });
+        container.innerHTML = html;
+      });
+    }
+
+    function deleteObject(id, name) {
+      if (!confirm('Delete "' + name + '" and all its sightings?')) return;
+      fetch('/api/objects/' + id, { method: 'DELETE' }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        loadObjects();
+      }).catch(function() {
+        if (typeof toast === 'function') toast('Delete failed');
+      });
+    }
+
+    function deleteReference(refId, objectId) {
+      fetch('/api/objects/references/' + refId, { method: 'DELETE' }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        loadReferences(objectId);
+      });
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function escapeAttr(s) {
+      return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
+    }
+
+    loadObjects();
+  </script>
+</body>
+</html>
