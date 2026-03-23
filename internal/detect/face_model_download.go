@@ -16,7 +16,7 @@ const (
 	scrfdURL      = "https://github.com/yakhyo/facial-analysis/releases/download/v0.0.1/" + scrfdFileName
 
 	mobileFaceNetFileName = "w600k_mbf.onnx"
-	buffaloZipURL         = "https://github.com/nicetester01ued/insightface-models/releases/download/v0.7/buffalo_sc.zip"
+	buffaloZipURL         = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_sc.zip"
 )
 
 // cachedFaceModelPath returns the path where a cached face model should be.

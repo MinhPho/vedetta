@@ -66,6 +66,21 @@ func main() {
 	// Purge events whose snapshot files no longer exist on disk
 	go purgeOrphanedEvents(db)
 
+	// Create shared auth checker (nil if auth not configured)
+	authChecker := auth.New(cfg.Auth.Username, cfg.Auth.Password)
+	if authChecker != nil {
+		defer authChecker.Close()
+	}
+
+	// Start API server early so the UI is available during initialization
+	server := api.New(cfg.API, authChecker, db)
+	go func() {
+		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("API server failed", "error", err)
+			cancel()
+		}
+	}()
+
 	var mqttClient *mqtt.Client
 	if cfg.MQTT.Enabled {
 		mqttClient, err = mqtt.New(cfg.MQTT)
@@ -352,12 +367,6 @@ func main() {
 		}
 	}()
 
-	// Create shared auth checker (nil if auth not configured)
-	authChecker := auth.New(cfg.Auth.Username, cfg.Auth.Password)
-	if authChecker != nil {
-		defer authChecker.Close()
-	}
-
 	// Start RTSP re-publishing server if enabled
 	if cfg.RTSPServer.Enabled {
 		rtspServer := stream.NewRTSPServer(hub, cfg.RTSPServer, authChecker, cfg.Cameras)
@@ -369,13 +378,8 @@ func main() {
 		}
 	}
 
-	server := api.New(cfg.API, authChecker, db, manager, recorder, hub)
-	go func() {
-		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("API server failed", "error", err)
-			cancel()
-		}
-	}()
+	// Wire subsystems into the API server now that everything is initialized
+	server.SetSubsystems(manager, recorder, hub)
 
 	slog.Info("vedetta started", "cameras", len(cfg.Cameras))
 

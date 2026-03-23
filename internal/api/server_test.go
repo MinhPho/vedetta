@@ -32,7 +32,8 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 	}, db, nil, "")
 
 	apiCfg := config.APIConfig{Host: "127.0.0.1", Port: 0}
-	srv := New(apiCfg, nil, db, mgr, rec, nil)
+	srv := New(apiCfg, nil, db)
+	srv.SetSubsystems(mgr, rec, nil)
 	return srv, db
 }
 
