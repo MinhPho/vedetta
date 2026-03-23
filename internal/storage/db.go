@@ -184,6 +184,16 @@ func migrate(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_object_sightings_object ON object_sightings(object_id);
 		CREATE INDEX IF NOT EXISTS idx_object_sightings_event ON object_sightings(event_id);
+
+		CREATE TABLE IF NOT EXISTS object_references (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			object_id INTEGER NOT NULL REFERENCES known_objects(id) ON DELETE CASCADE,
+			event_id TEXT,
+			embedding BLOB NOT NULL,
+			crop_path TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_object_references_object ON object_references(object_id);
 	`)
 	if err != nil {
 		return err
@@ -1364,6 +1374,15 @@ type ObjectSighting struct {
 	Timestamp  time.Time `json:"timestamp"`
 }
 
+type ObjectReference struct {
+	ID        int64     `json:"id"`
+	ObjectID  int64     `json:"object_id"`
+	EventID   string    `json:"event_id,omitempty"`
+	Embedding []byte    `json:"-"`
+	CropPath  string    `json:"crop_path,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 func (d *DB) SaveKnownObject(obj KnownObject) (int64, error) {
 	result, err := d.db.Exec(`
 		INSERT INTO known_objects (name, label, centroid, crop_path, created_at)
@@ -1378,6 +1397,11 @@ func (d *DB) SaveKnownObject(obj KnownObject) (int64, error) {
 
 func (d *DB) UpdateKnownObjectCrop(id int64, cropPath string) error {
 	_, err := d.db.Exec("UPDATE known_objects SET crop_path = ? WHERE id = ?", cropPath, id)
+	return err
+}
+
+func (d *DB) UpdateKnownObjectCentroid(id int64, centroid []byte) error {
+	_, err := d.db.Exec("UPDATE known_objects SET centroid = ? WHERE id = ?", centroid, id)
 	return err
 }
 
@@ -1486,6 +1510,51 @@ func scanObjectSightings(rows *sql.Rows) ([]ObjectSighting, error) {
 		sightings = append(sightings, s)
 	}
 	return sightings, rows.Err()
+}
+
+func (d *DB) SaveObjectReference(ref ObjectReference) (int64, error) {
+	result, err := d.db.Exec(`
+		INSERT INTO object_references (object_id, event_id, embedding, crop_path, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		ref.ObjectID, nullString(ref.EventID), ref.Embedding, nullString(ref.CropPath), utc(time.Now()),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (d *DB) ListObjectReferences(objectID int64) ([]ObjectReference, error) {
+	rows, err := d.db.Query(`SELECT id, object_id, event_id, embedding, crop_path, created_at
+		FROM object_references WHERE object_id = ? ORDER BY created_at`, objectID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var refs []ObjectReference
+	for rows.Next() {
+		var r ObjectReference
+		var eventID, cropPath sql.NullString
+		if err := rows.Scan(&r.ID, &r.ObjectID, &eventID, &r.Embedding, &cropPath, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.EventID = eventID.String
+		r.CropPath = cropPath.String
+		refs = append(refs, r)
+	}
+	return refs, rows.Err()
+}
+
+func (d *DB) DeleteObjectReference(id int64) error {
+	_, err := d.db.Exec("DELETE FROM object_references WHERE id = ?", id)
+	return err
+}
+
+func (d *DB) CountObjectReferences(objectID int64) (int, error) {
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM object_references WHERE object_id = ?", objectID).Scan(&count)
+	return count, err
 }
 
 func decodeZonePoints(z *camera.Zone, pointsJSON string) error {

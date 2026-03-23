@@ -2321,6 +2321,21 @@ function trackObject(eventId, label) {
   });
 }
 
+function addObjectReference(objectId, objectName, eventId) {
+  fetch('/api/objects/' + objectId + '/references', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({event_id: eventId})
+  }).then(function(r) {
+    if (!r.ok) return r.json().then(function(e) { throw new Error(e.error); });
+    return r.json();
+  }).then(function() {
+    toast('Reference added to "' + objectName + '"');
+  }).catch(function(e) {
+    toast('Failed: ' + e.message);
+  });
+}
+
 // Poll health every 30 seconds
 pollHealth();
 setInterval(pollHealth, 30000);
