@@ -2528,6 +2528,93 @@ kbd {
   .people-grid { grid-template-columns: 1fr; }
 }
 
+/* ─── Doorbell Notification ─── */
+.doorbell-notification {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 9999;
+  animation: doorbell-slide-in 0.3s ease-out;
+  cursor: pointer;
+}
+
+.doorbell-notification-inner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(10, 24, 38, 0.95);
+  border: 1px solid rgba(93, 215, 255, 0.4);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(93, 215, 255, 0.1);
+  backdrop-filter: blur(12px);
+  max-width: 420px;
+}
+
+.doorbell-icon {
+  flex-shrink: 0;
+  color: var(--amber);
+  animation: doorbell-ring 0.5s ease-in-out 3;
+}
+
+.doorbell-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.doorbell-title {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.doorbell-meta {
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  margin-top: 0.1rem;
+}
+
+.doorbell-snapshot {
+  width: 80px;
+  height: 60px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.doorbell-close {
+  position: absolute;
+  top: -0.5rem;
+  right: -0.5rem;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.doorbell-close:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+@keyframes doorbell-slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes doorbell-ring {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(15deg); }
+  50% { transform: rotate(-15deg); }
+  75% { transform: rotate(10deg); }
+}
+
 /* ─── Print ─── */
 @media print {
   .topnav, .bottom-tabs { display: none; }
