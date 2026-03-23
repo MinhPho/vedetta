@@ -1172,7 +1172,7 @@ func (s *Server) handleCameraGridPartial(w http.ResponseWriter, _ *http.Request)
   <div class="cam-preview">
     <img src="/api/cameras/{{.Name}}/snapshot" alt="{{.Name}}" loading="lazy">
     <div class="cam-live-badge">
-      <span class="cam-live-dot {{if .HasMotion}}motion{{else if .Online}}{{else}}offline{{end}}"></span>
+      <span class="cam-live-dot {{if .Online}}{{else}}offline{{end}}"></span>
       {{if .Online}}LIVE{{else}}OFFLINE{{end}}
     </div>
   </div>

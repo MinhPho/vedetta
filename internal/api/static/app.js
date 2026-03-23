@@ -1881,7 +1881,7 @@ function refreshGridSnapshots() {
         var dot = card.querySelector('.cam-live-dot');
         var badge = card.querySelector('.cam-live-badge');
         if (dot && badge) {
-          dot.className = 'cam-live-dot' + (cam.has_motion ? ' motion' : (cam.online ? '' : ' offline'));
+          dot.className = 'cam-live-dot' + (cam.online ? '' : ' offline');
           var label = badge.lastChild;
           if (label) label.textContent = cam.online ? 'LIVE' : 'OFFLINE';
         }
