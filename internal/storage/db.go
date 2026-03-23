@@ -337,11 +337,11 @@ func (d *DB) UpdateEventClipAvailability(eventID string, available bool) error {
 
 // QueryEvents returns events matching the given filters.
 func (d *DB) QueryEvents(cameraName, label string, limit, offset int) ([]camera.Event, error) {
-	return d.QueryEventsFiltered(cameraName, label, "", limit, offset)
+	return d.QueryEventsFiltered(cameraName, label, "", "", limit, offset)
 }
 
 // QueryEventsFiltered returns events matching all given filters including zone.
-func (d *DB) QueryEventsFiltered(cameraName, label, zoneName string, limit, offset int) ([]camera.Event, error) {
+func (d *DB) QueryEventsFiltered(cameraName, label, zoneName, objectName string, limit, offset int) ([]camera.Event, error) {
 	query := "SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name, object_name FROM events WHERE 1=1"
 	args := []any{}
 
@@ -356,6 +356,10 @@ func (d *DB) QueryEventsFiltered(cameraName, label, zoneName string, limit, offs
 	if zoneName != "" {
 		query += " AND zone_name = ?"
 		args = append(args, zoneName)
+	}
+	if objectName != "" {
+		query += " AND object_name = ?"
+		args = append(args, objectName)
 	}
 
 	query += " ORDER BY timestamp DESC"
@@ -510,7 +514,7 @@ func (d *DB) CountEventsToday() (int, error) {
 // GetEventByID returns a single event by ID, or nil if not found.
 func (d *DB) GetEventByID(id string) (*camera.Event, error) {
 	row := d.db.QueryRow(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name, object_name
 		FROM events WHERE id = ?`, id)
 
 	var e camera.Event
@@ -588,7 +592,7 @@ func (d *DB) QueryEventsForDate(cameraName string, date time.Time) ([]camera.Eve
 	dayEnd := dayStart.Add(24 * time.Hour)
 
 	rows, err := d.db.Query(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name, object_name
 		FROM events
 		WHERE camera = ? AND timestamp >= ? AND timestamp < ?
 		ORDER BY timestamp`,
@@ -753,7 +757,7 @@ func (d *DB) DeleteEvent(id string) error {
 // EventsWithSnapshots returns all events that have a non-empty snapshot_path.
 func (d *DB) EventsWithSnapshots() ([]camera.Event, error) {
 	rows, err := d.db.Query(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, snapshot_available, clip_path, clip_available, zone_name, object_name
 		FROM events WHERE (snapshot_path != '' AND snapshot_path IS NOT NULL) OR (clip_path != '' AND clip_path IS NOT NULL)`)
 	if err != nil {
 		return nil, err
@@ -906,6 +910,14 @@ func (d *DB) UpdateZonePresence(zoneID int, label string, present bool) error {
 		zoneID, label, present, now, now,
 	)
 	return err
+}
+
+// LatestObjectNameForZone returns the object_name from the most recent event
+// matching the given zone and label, or "" if none found.
+func (d *DB) LatestObjectNameForZone(zoneName, label string) string {
+	var name sql.NullString
+	d.db.QueryRow(`SELECT object_name FROM events WHERE zone_name = ? AND label = ? AND object_name IS NOT NULL AND object_name != '' ORDER BY timestamp DESC LIMIT 1`, zoneName, label).Scan(&name)
+	return name.String
 }
 
 // UpdateEventZone sets the zone_name on an event.
@@ -1401,6 +1413,11 @@ func (d *DB) SaveKnownObject(obj KnownObject) (int64, error) {
 
 func (d *DB) UpdateKnownObjectCrop(id int64, cropPath string) error {
 	_, err := d.db.Exec("UPDATE known_objects SET crop_path = ? WHERE id = ?", cropPath, id)
+	return err
+}
+
+func (d *DB) UpdateKnownObjectName(id int64, name string) error {
+	_, err := d.db.Exec("UPDATE known_objects SET name = ? WHERE id = ?", name, id)
 	return err
 }
 
