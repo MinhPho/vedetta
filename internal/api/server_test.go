@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,14 +27,14 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	mgr := camera.NewManager(nil, nil, nil, nil, nil, nil, "", 85, nil, nil, "")
+	mgr := camera.NewManager(nil, nil, config.MotionConfig{}, nil, nil, nil, nil, "", 85, "", nil, nil, "")
 	rec := recording.New(config.RecordingConfig{
 		Path: t.TempDir(),
-	}, db, nil, "")
+	}, config.EventConfig{RetainDays: 90}, db, nil, "")
 
 	apiCfg := config.APIConfig{Host: "127.0.0.1", Port: 0}
 	srv := New(apiCfg, nil, db)
-	srv.SetSubsystems(mgr, rec, nil)
+	srv.SetSubsystems(mgr, rec, nil, nil, "", "", nil)
 	return srv, db
 }
 
@@ -95,6 +96,9 @@ func TestServerStartAndShutdown(t *testing.T) {
 
 	// Start should have returned http.ErrServerClosed
 	err := <-errCh
+	if err != nil && strings.Contains(err.Error(), "operation not permitted") {
+		t.Skipf("listener unavailable in this environment: %v", err)
+	}
 	if !errors.Is(err, http.ErrServerClosed) {
 		t.Errorf("Start() returned %v, want http.ErrServerClosed", err)
 	}
