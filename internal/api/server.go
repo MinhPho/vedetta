@@ -1783,6 +1783,7 @@ func (s *Server) handleUpdatePerson(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		_ = s.db.UpdateSubLabelsForPerson(id, *req.Name)
 	}
 	if req.Ignore != nil {
 		if err := s.db.SetPersonIgnore(id, *req.Ignore); err != nil {
@@ -1934,6 +1935,12 @@ func (s *Server) handleAssignFace(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Set sub_label on the face's event
+	if p, _ := s.db.GetPerson(personID); p != nil && p.Name != "" {
+		_ = s.db.UpdateSubLabelsForPerson(personID, p.Name)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"status": "assigned", "person_id": personID})
 }
 

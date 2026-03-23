@@ -429,6 +429,9 @@ func main() {
 
 					if personID > 0 {
 						updatePersonCentroid(db, personID, result.Embedding)
+						if p, err := db.GetPerson(personID); err == nil && p != nil && p.Name != "" {
+							_ = db.UpdateEventSubLabel(fe.EventID, p.Name)
+						}
 						slog.Info("face matched to person", "person_id", personID, "similarity", fmt.Sprintf("%.3f", similarity), "camera", fe.Camera)
 					} else {
 						clusterUnmatchedFace(db, faceID, result.Embedding, fe.Camera)
