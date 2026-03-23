@@ -155,7 +155,7 @@ func NewRTSPServer(hub *rtsp.Hub, cfg config.RTSPServerConfig, authChecker *auth
 	}
 
 	for _, cam := range cameras {
-		if !cam.Enabled {
+		if !cam.IsEnabled() {
 			continue
 		}
 		// Main stream: use record_url (high-res) when available, else url.
@@ -495,10 +495,6 @@ func (rs *RTSPServer) checkRTSPAuth(req *base.Request, conn *gortsplib.ServerCon
 	}
 
 	remoteAddr := conn.NetConn().RemoteAddr().String()
-
-	if auth.IsLoopback(remoteAddr) {
-		return nil
-	}
 
 	user, pass, ok := parseRTSPBasicAuth(req.Header)
 	if !ok {

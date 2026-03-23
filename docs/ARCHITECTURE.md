@@ -9,7 +9,7 @@ object detection. Written in Go for single-binary distribution.
 
 1. **Zero-config sensible defaults** — works out of the box with minimal YAML
 2. **Single binary** — no Docker, no Python, no containers
-3. **Native acceleration** — CoreML on Mac, CUDA on Linux, CPU fallback
+3. **Deterministic deployment** — no runtime-downloaded models or codec libraries
 4. **Efficient by design** — motion gates detection, re-mux instead of re-encode
 5. **Camera-friendly** — separate detect/record streams, ONVIF discovery
 
@@ -52,7 +52,7 @@ object detection. Written in Go for single-binary distribution.
        ▼
 ┌─────────────────────────────────────────────────────┐
 │                    HTTP API + WebUI                   │
-│  REST │ WebRTC live │ HLS │ Event browser │ Config   │
+│  REST │ WebRTC live │ MJPEG │ Event browser │ Config │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -65,9 +65,9 @@ object detection. Written in Go for single-binary distribution.
 | macOS support | None | Native with CoreML |
 | Camera discovery | Manual config | ONVIF auto-discovery |
 | Live streaming | go2rtc sidecar | Embedded WebRTC |
-| Config | Static YAML, restart needed | Hot-reload, validation |
-| Hardware accel | Manual per-platform | Auto-detected |
-| First-run | Complex YAML required | CLI wizard + discovery |
+| Config | Static YAML, restart needed | Static YAML + strict validation |
+| Hardware accel | Manual per-platform | CPU / installed local decode libraries |
+| First-run | Complex YAML required | Discovery + sample config |
 
 ## Directory Structure
 
@@ -79,7 +79,7 @@ internal/
 │   ├── camera.go       Single camera lifecycle
 │   ├── manager.go      Multi-camera orchestration
 │   └── onvif.go        ONVIF discovery
-├── config/             YAML config + validation + hot-reload
+├── config/             YAML config + validation
 ├── detect/
 │   ├── detector.go     ONNX Runtime session management
 │   ├── motion.go       Contour-based motion detection
@@ -93,17 +93,12 @@ internal/
 │   ├── clip.go         Event clip extraction
 │   └── retention.go    Storage cleanup
 ├── snapshot/           JPEG snapshots with bbox overlay
-├── stream/             WebRTC / HLS live streaming
+├── stream/             WebRTC / MJPEG live streaming
 └── storage/            SQLite persistence
 ```
 
-## Hardware Acceleration Matrix
+## Deployment Notes
 
-| Platform | Video Decode | ML Inference |
-|----------|-------------|--------------|
-| macOS ARM | VideoToolbox | CoreML |
-| macOS x86 | VideoToolbox | CPU |
-| Linux NVIDIA | NVDEC | CUDA/TensorRT |
-| Linux Intel | VAAPI | OpenVINO (future) |
-| Linux ARM | V4L2 | CPU |
-| Generic | CPU | CPU |
+- Vedetta requires the ONNX model to be bundled or configured via `detect.model_path`.
+- Vedetta requires OpenH264 to be installed locally or exposed via `OPENH264_LIB`.
+- HLS/LLHLS, hot reload, and an interactive setup wizard are not part of the current shipped architecture.

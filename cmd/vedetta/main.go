@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,14 +22,21 @@ import (
 	"github.com/rvben/vedetta/internal/mqtt"
 	"github.com/rvben/vedetta/internal/recording"
 	"github.com/rvben/vedetta/internal/rtsp"
+	"github.com/rvben/vedetta/internal/snapshot"
 	"github.com/rvben/vedetta/internal/storage"
 	"github.com/rvben/vedetta/internal/stream"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
 	// Handle subcommands before flag parsing
 	if len(os.Args) > 1 && os.Args[1] == "discover" {
 		runDiscover()
+		return
+	}
+
+	if len(os.Args) > 2 && os.Args[1] == "auth" && os.Args[2] == "hash-password" {
+		runHashPassword(os.Args[3:])
 		return
 	}
 
@@ -48,7 +54,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := auth.ValidateConfig(cfg.Auth.Username, cfg.Auth.Password); err != nil {
+	if err := auth.ValidateConfig(cfg.Auth); err != nil {
 		slog.Error("invalid auth config", "error", err)
 		os.Exit(1)
 	}
@@ -63,14 +69,11 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	// Purge events whose snapshot files no longer exist on disk
-	go purgeOrphanedEvents(db)
+	// Reconcile event media availability with the filesystem without deleting metadata.
+	go reconcileEventMediaAvailability(db)
 
-	// Create shared auth checker (nil if auth not configured)
-	authChecker := auth.New(cfg.Auth.Username, cfg.Auth.Password)
-	if authChecker != nil {
-		defer authChecker.Close()
-	}
+	authChecker := auth.New(cfg.Auth, cfg.API, db)
+	defer authChecker.Close()
 
 	// Start API server early so the UI is available during initialization
 	server := api.New(cfg.API, authChecker, db)
@@ -112,11 +115,11 @@ func main() {
 
 	slog.Info("native Go media pipeline active (no ffmpeg required)")
 
-	recorder := recording.New(cfg.Recording, db, hub, cfg.Events.SnapshotPath)
+	recorder := recording.New(cfg.Recording, cfg.Events, db, hub, cfg.Events.SnapshotPath)
 
 	// Register cameras for recording
 	for _, cam := range cfg.Cameras {
-		if !cam.Enabled {
+		if !cam.IsEnabled() {
 			continue
 		}
 		recordURL := cam.RecordURL
@@ -135,7 +138,7 @@ func main() {
 	if mqttClient != nil {
 		var cameraNames []string
 		for _, cam := range cfg.Cameras {
-			if cam.Enabled {
+			if cam.IsEnabled() {
 				cameraNames = append(cameraNames, cam.Name)
 			}
 		}
@@ -147,7 +150,7 @@ func main() {
 	presenceEvents := make(chan camera.PresenceEvent, 100)
 	faceEvents := make(chan camera.FaceEvent, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, events, eventEnds, presenceEvents, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality, faceRecognizer, faceEvents, filepath.Join(cfg.Events.SnapshotPath, "faces"))
+	manager := camera.NewManager(cfg.Cameras, detector, cfg.Detect.Motion, events, eventEnds, presenceEvents, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality, cfg.Recording.Path, faceRecognizer, faceEvents, filepath.Join(cfg.Events.SnapshotPath, "faces"))
 
 	// Sync zones from config to DB and load them into cameras
 	syncConfigZones(db, cfg.Cameras, manager)
@@ -197,6 +200,7 @@ func main() {
 			tempCancel context.CancelFunc // for non-continuous temporary recording
 		}
 		active := make(map[string]*activeEvent) // eventID → state
+		cooldowns := make(map[string]time.Time)
 		maxDur := cfg.Recording.MaxEventDuration
 		timeouts := make(chan string, 100) // eventIDs that hit max duration
 
@@ -215,6 +219,7 @@ func main() {
 				"label", ev.Label,
 				"duration", duration.Round(time.Second),
 			)
+			cooldowns[cooldownKey(ev)] = endTime
 
 			if ae.tempCancel != nil {
 				tc := ae.tempCancel
@@ -267,6 +272,14 @@ func main() {
 				return
 
 			case event := <-events:
+				if until, ok := cooldowns[cooldownKey(event)]; ok && time.Since(until) < time.Duration(cfg.Events.CooldownSeconds)*time.Second {
+					slog.Info("event suppressed by cooldown",
+						"camera", event.CameraName,
+						"label", event.Label,
+						"zone", event.ZoneName,
+					)
+					continue
+				}
 				slog.Info("event detected",
 					"camera", event.CameraName,
 					"label", event.Label,
@@ -275,6 +288,12 @@ func main() {
 
 				if err := db.SaveEvent(event); err != nil {
 					slog.Error("failed to save event", "error", err)
+				} else if event.SnapshotImage != nil && event.SnapshotPath != "" {
+					if err := snapshot.SaveSnapshot(event.SnapshotImage, event.SnapshotPath, cfg.Events.SnapshotQuality); err != nil {
+						slog.Error("failed to save event snapshot", "event", event.ID, "error", err)
+					} else if err := db.UpdateEventSnapshotPath(event.ID, event.SnapshotPath); err != nil {
+						slog.Error("failed to persist event snapshot path", "event", event.ID, "error", err)
+					}
 				}
 
 				if mqttClient != nil {
@@ -333,7 +352,7 @@ func main() {
 					face := storage.Face{
 						EventID:    fe.EventID,
 						Camera:     fe.Camera,
-						Embedding:  float32ToBytes(result.Embedding),
+						Embedding:  detect.Float32ToBytes(result.Embedding),
 						CropPath:   result.CropPath,
 						Confidence: float64(result.Confidence),
 						Timestamp:  time.Now(),
@@ -350,7 +369,7 @@ func main() {
 					}
 
 					if personID == 0 {
-						newPID, createErr := db.SavePerson("", false, float32ToBytes(result.Embedding))
+						newPID, createErr := db.SavePerson("", false, detect.Float32ToBytes(result.Embedding))
 						if createErr != nil {
 							slog.Error("failed to create person for face", "error", createErr)
 							continue
@@ -379,7 +398,7 @@ func main() {
 	}
 
 	// Wire subsystems into the API server now that everything is initialized
-	server.SetSubsystems(manager, recorder, hub)
+	server.SetSubsystems(manager, recorder, hub, faceRecognizer, cfg.Events.SnapshotPath, filepath.Join(cfg.Events.SnapshotPath, "faces"), cfg.Cameras)
 
 	slog.Info("vedetta started", "cameras", len(cfg.Cameras))
 
@@ -406,7 +425,7 @@ func main() {
 // and loads all zones from DB into the corresponding cameras.
 func syncConfigZones(db *storage.DB, cameras []config.CameraConfig, manager *camera.Manager) {
 	for _, camCfg := range cameras {
-		if !camCfg.Enabled {
+		if !camCfg.IsEnabled() {
 			continue
 		}
 
@@ -421,19 +440,11 @@ func syncConfigZones(db *storage.DB, cameras []config.CameraConfig, manager *cam
 				continue // Don't overwrite zones created/modified via API
 			}
 
-			labels := cfgZone.Labels
-			if len(labels) == 0 {
-				labels = cfgZone.Objects
-			}
-
 			z := camera.Zone{
 				Camera:          camCfg.Name,
 				Name:            cfgZone.Name,
-				X1:              cfgZone.Coordinates[0],
-				Y1:              cfgZone.Coordinates[1],
-				X2:              cfgZone.Coordinates[2],
-				Y2:              cfgZone.Coordinates[3],
-				Labels:          labels,
+				Points:          cfgZone.Points,
+				Labels:          cfgZone.Labels,
 				TrackPresence:   cfgZone.TrackPresence,
 				FaceRecognition: cfgZone.FaceRecognition,
 				Enabled:         true,
@@ -482,7 +493,7 @@ func matchFaceToPerson(db *storage.DB, embedding []float32, fr *detect.FaceRecog
 		if p.Ignore || len(p.Centroid) == 0 {
 			continue
 		}
-		centroid := bytesToFloat32(p.Centroid)
+		centroid := detect.BytesToFloat32(p.Centroid)
 		sim := detect.CosineSimilarity(embedding, centroid)
 		if sim > bestSim {
 			bestSim = sim
@@ -504,13 +515,13 @@ func updatePersonCentroid(db *storage.DB, personID int64, newEmbedding []float32
 	}
 
 	if len(p.Centroid) == 0 {
-		_ = db.UpdatePersonCentroid(personID, float32ToBytes(newEmbedding))
+		_ = db.UpdatePersonCentroid(personID, detect.Float32ToBytes(newEmbedding))
 		return
 	}
 
-	old := bytesToFloat32(p.Centroid)
+	old := detect.BytesToFloat32(p.Centroid)
 	if len(old) != len(newEmbedding) {
-		_ = db.UpdatePersonCentroid(personID, float32ToBytes(newEmbedding))
+		_ = db.UpdatePersonCentroid(personID, detect.Float32ToBytes(newEmbedding))
 		return
 	}
 
@@ -528,49 +539,52 @@ func updatePersonCentroid(db *storage.DB, personID int64, newEmbedding []float32
 		}
 	}
 
-	_ = db.UpdatePersonCentroid(personID, float32ToBytes(merged))
+	_ = db.UpdatePersonCentroid(personID, detect.Float32ToBytes(merged))
 }
 
-// float32ToBytes converts a float32 slice to little-endian bytes.
-func float32ToBytes(f []float32) []byte {
-	buf := make([]byte, len(f)*4)
-	for i, v := range f {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
-	}
-	return buf
-}
-
-// bytesToFloat32 converts little-endian bytes to a float32 slice.
-func bytesToFloat32(b []byte) []float32 {
-	if len(b)%4 != 0 {
-		return nil
-	}
-	f := make([]float32, len(b)/4)
-	for i := range f {
-		f[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
-	}
-	return f
-}
-
-// purgeOrphanedEvents removes events whose snapshot files no longer exist on disk.
-func purgeOrphanedEvents(db *storage.DB) {
+func reconcileEventMediaAvailability(db *storage.DB) {
 	events, err := db.EventsWithSnapshots()
 	if err != nil {
-		slog.Error("failed to query events for orphan check", "error", err)
+		slog.Error("failed to query events for media reconciliation", "error", err)
 		return
 	}
 
-	var purged int
 	for _, ev := range events {
-		if _, err := os.Stat(ev.SnapshotPath); err != nil {
-			if err := db.DeleteEvent(ev.ID); err != nil {
-				slog.Error("failed to delete orphaned event", "id", ev.ID, "error", err)
-				continue
+		snapshotAvailable := ev.SnapshotPath != ""
+		if snapshotAvailable {
+			if _, err := os.Stat(ev.SnapshotPath); err != nil {
+				snapshotAvailable = false
 			}
-			purged++
+		}
+		if err := db.UpdateEventSnapshotAvailability(ev.ID, snapshotAvailable); err != nil {
+			slog.Error("failed to update snapshot availability", "id", ev.ID, "error", err)
+		}
+
+		clipAvailable := ev.ClipPath != ""
+		if clipAvailable {
+			if _, err := os.Stat(ev.ClipPath); err != nil {
+				clipAvailable = false
+			}
+		}
+		if err := db.UpdateEventClipAvailability(ev.ID, clipAvailable); err != nil {
+			slog.Error("failed to update clip availability", "id", ev.ID, "error", err)
 		}
 	}
-	if purged > 0 {
-		slog.Info("purged orphaned events with missing snapshots", "count", purged)
+}
+
+func cooldownKey(event camera.Event) string {
+	return event.CameraName + "|" + event.Label + "|" + event.ZoneName
+}
+
+func runHashPassword(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: vedetta auth hash-password <password>")
+		os.Exit(2)
 	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(args[0]), bcrypt.DefaultCost)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println(string(hash))
 }

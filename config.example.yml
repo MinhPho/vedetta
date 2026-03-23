@@ -2,8 +2,8 @@ cameras:
   - name: front_door
     url: rtsp://user:pass@192.168.1.100:554/stream1
     record_url: rtsp://user:pass@192.168.1.100:554/stream0  # optional high-res stream
-    enabled: true
     detect:
+      enabled: true
       width: 640
       height: 480
       fps: 5
@@ -13,13 +13,23 @@ cameras:
       fps: 15
     zones:
       - name: driveway
-        coordinates: [0.1, 0.5, 0.9, 0.5, 0.9, 1.0, 0.1, 1.0]
-        objects: [person, car]
+        points:
+          - [0.10, 0.50]
+          - [0.90, 0.50]
+          - [0.90, 1.00]
+          - [0.10, 1.00]
+        labels: [person, car]
+        track_presence: true
+        face_recognition: false
 
 detect:
   model_path: ""  # path to ONNX model (e.g., yolov8n.onnx)
   score_threshold: 0.5
-  motion_threshold: 0.02
+  motion:
+    pixel_threshold: 25
+    min_area: 200
+    background_alpha: 0.05
+    min_region_score: 0.02
 
 recording:
   path: ./recordings
@@ -29,6 +39,12 @@ recording:
   post_capture: 10s         # seconds after event to include in clip
   retain_days: 7            # delete continuous segments after N days
   event_retain_days: 30     # keep event clips longer
+
+events:
+  cooldown_seconds: 30
+  retain_days: 90
+  snapshot_path: ./snapshots
+  snapshot_quality: 85
 
 storage:
   db_path: ./vedetta.db
@@ -42,3 +58,14 @@ mqtt:
 api:
   host: 0.0.0.0
   port: 5050
+  exposure: lan
+  # trusted_proxies:
+  #   - 127.0.0.1/32
+  # tls_cert: /etc/vedetta/tls.crt
+  # tls_key: /etc/vedetta/tls.key
+
+auth:
+  users:
+    - username: admin
+      # example only: replace with `vedetta auth hash-password <password>`
+      password_hash: "$2a$10$7EqJtq98hPqEX7fNZaFWoOHi8V6I5WJFlQ7Y7S6d6n9zQ0jD4S3yu"
