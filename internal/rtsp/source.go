@@ -264,9 +264,10 @@ func (s *Source) extractTracks(desc *description.Session) {
 					codec = "PCMA"
 				}
 				s.audioTrack = &TrackInfo{
-					Codec:       codec,
-					ClockRate:   f.ClockRate(),
-					PayloadType: f.PayloadType(),
+					Codec:        codec,
+					ClockRate:    f.ClockRate(),
+					PayloadType:  f.PayloadType(),
+					ChannelCount: f.ChannelCount,
 				}
 			}
 		}

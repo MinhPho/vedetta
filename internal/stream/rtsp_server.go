@@ -12,6 +12,8 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
+	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 
@@ -30,17 +32,24 @@ type cameraStream struct {
 }
 
 // rtspServerConsumer implements rtsp.Consumer and writes RTP into a gortsplib ServerStream.
+// Video packets are depacketized and re-packetized to ensure proper RTP sizing,
+// since some cameras (Tapo C200) send oversized RTP packets over TCP that exceed
+// gortsplib's server-side MaxPacketSize (1472 bytes).
 type rtspServerConsumer struct {
 	stream     *gortsplib.ServerStream
 	videoMedia *description.Media
 	audioMedia *description.Media
 	videoPT    uint8 // expected payload type for video
 	audioPT    uint8 // expected payload type for audio
+
+	// H264 RTP decode/re-encode pipeline.
+	h264Format *format.H264
+	rtpDecoder *rtph264.Decoder
+	rtpEncoder *rtph264.Encoder
 }
 
 func (c *rtspServerConsumer) writeRTP(media *description.Media, pkt *rtp.Packet, expectedPT uint8) {
 	// Rewrite payload type if upstream differs from what we declared in our SDP.
-	// Clone the header to avoid mutating the shared packet for other consumers.
 	if pkt.Header.PayloadType != expectedPT {
 		clone := *pkt
 		clone.Header.PayloadType = expectedPT
@@ -62,7 +71,54 @@ func (c *rtspServerConsumer) OnVideoRTP(pkt *rtp.Packet) {
 	if c.videoMedia == nil {
 		return
 	}
-	c.writeRTP(c.videoMedia, pkt, c.videoPT)
+
+	// If no decoder is set up, forward raw (works for cameras with standard-sized packets).
+	if c.rtpDecoder == nil {
+		c.writeRTP(c.videoMedia, pkt, c.videoPT)
+		return
+	}
+
+	// Depacketize H264 RTP into access units.
+	au, err := c.rtpDecoder.Decode(pkt)
+	if err != nil {
+		return
+	}
+
+	// Update SPS/PPS from in-band parameters.
+	var sps, pps []byte
+	for _, nalu := range au {
+		if len(nalu) == 0 {
+			continue
+		}
+		typ := h264.NALUType(nalu[0] & 0x1F)
+		switch typ {
+		case h264.NALUTypeSPS:
+			sps = nalu
+		case h264.NALUTypePPS:
+			pps = nalu
+		}
+	}
+	if sps != nil || pps != nil {
+		curSPS, curPPS := c.h264Format.SafeParams()
+		if sps == nil {
+			sps = curSPS
+		}
+		if pps == nil {
+			pps = curPPS
+		}
+		c.h264Format.SafeSetParams(sps, pps)
+	}
+
+	// Re-packetize into properly-sized RTP packets.
+	pkts, err := c.rtpEncoder.Encode(au)
+	if err != nil {
+		return
+	}
+
+	for _, outPkt := range pkts {
+		outPkt.Header.PayloadType = c.videoPT
+		c.stream.WritePacketRTP(c.videoMedia, outPkt)
+	}
 }
 
 func (c *rtspServerConsumer) OnAudioRTP(pkt *rtp.Packet) {
@@ -174,6 +230,18 @@ func (rs *RTSPServer) initCameraStream(cs *cameraStream, desc *description.Sessi
 	}
 	if videoMedia != nil && len(videoMedia.Formats) > 0 {
 		consumer.videoPT = videoMedia.Formats[0].PayloadType()
+
+		if h264Fmt, ok := videoMedia.Formats[0].(*format.H264); ok {
+			consumer.h264Format = h264Fmt
+			dec, err := h264Fmt.CreateDecoder()
+			if err == nil {
+				enc, err := h264Fmt.CreateEncoder()
+				if err == nil {
+					consumer.rtpDecoder = dec
+					consumer.rtpEncoder = enc
+				}
+			}
+		}
 	}
 	if audioMedia != nil && len(audioMedia.Formats) > 0 {
 		consumer.audioPT = audioMedia.Formats[0].PayloadType()
