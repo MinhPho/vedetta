@@ -33,6 +33,7 @@ type Event struct {
 	ClipAvailable     bool        `json:"clip_available"`
 	ZoneName          string      `json:"zone_name,omitempty"`
 	ObjectName        string      `json:"object_name,omitempty"`
+	SubLabel          string      `json:"sub_label,omitempty"`
 	SnapshotImage     *image.RGBA `json:"-"`
 }
 
