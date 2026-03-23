@@ -345,7 +345,7 @@ func main() {
 
 				if objectEmbedder != nil && event.SnapshotImage != nil {
 					go func(ev camera.Event) {
-						matched := matchEventToKnownObjects(db, objectEmbedder, ev)
+						matched := matchEventToKnownObjects(db, objectEmbedder, ev, cfg.Detect.ObjectMatchThreshold)
 						if mqttClient != nil {
 							for _, name := range matched {
 								mqttClient.PublishObjectSighting(name, ev)
@@ -451,6 +451,7 @@ func main() {
 
 	// Wire subsystems into the API server now that everything is initialized
 	server.SetSubsystems(manager, recorder, hub, faceRecognizer, objectEmbedder, cfg.Events.SnapshotPath, filepath.Join(cfg.Events.SnapshotPath, "faces"), cfg.Cameras)
+	server.ObjectMatchThreshold = cfg.Detect.ObjectMatchThreshold
 
 	slog.Info("vedetta started", "cameras", len(cfg.Cameras))
 
@@ -653,9 +654,7 @@ func averageEmbeddings(a, b []float32) []float32 {
 	return out
 }
 
-const objectMatchThreshold = 0.65
-
-func matchEventToKnownObjects(db *storage.DB, oe *detect.ObjectEmbedder, event camera.Event) []string {
+func matchEventToKnownObjects(db *storage.DB, oe *detect.ObjectEmbedder, event camera.Event, threshold float64) []string {
 	knownObjects, err := db.ListKnownObjectsByLabel(event.Label)
 	if err != nil || len(knownObjects) == 0 {
 		return nil
@@ -674,7 +673,7 @@ func matchEventToKnownObjects(db *storage.DB, oe *detect.ObjectEmbedder, event c
 			continue
 		}
 		sim := detect.CosineSimilarity(embedding, centroid)
-		if sim >= objectMatchThreshold {
+		if sim >= threshold {
 			if _, err := db.SaveObjectSighting(storage.ObjectSighting{
 				EventID:    event.ID,
 				Camera:     event.CameraName,
@@ -686,6 +685,7 @@ func matchEventToKnownObjects(db *storage.DB, oe *detect.ObjectEmbedder, event c
 			} else {
 				matched = append(matched, obj.Name)
 				_ = db.UpdateEventObjectName(event.ID, obj.Name)
+				_ = db.UpdateEventSubLabel(event.ID, obj.Name)
 				slog.Info("object recognized", "object", obj.Name, "event", event.ID,
 					"similarity", fmt.Sprintf("%.3f", sim))
 			}

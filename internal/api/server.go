@@ -50,8 +50,9 @@ type Server struct {
 	streams        *stream.StreamManager
 	mse            *stream.MSEManager
 	faceRecognizer *detect.FaceRecognizer
-	objectEmbedder *detect.ObjectEmbedder
-	snapshotPath   string
+	objectEmbedder       *detect.ObjectEmbedder
+	ObjectMatchThreshold float64
+	snapshotPath         string
 	faceCropDir    string
 	cameraConfigs  []config.CameraConfig
 	httpSrv        *http.Server
@@ -1280,7 +1281,7 @@ func (s *Server) handleEventsGalleryPartial(w http.ResponseWriter, r *http.Reque
 			`<span class="event-label-badge {{.Label}}">{{.Label}}</span>` +
 			`<span class="event-score-badge">{{scorePercent .Score}}</span>` +
 			`{{with eventDuration .}}<span class="event-duration-badge">{{.}}</span>{{end}}` +
-			`{{if .ObjectName}}<span class="event-object-badge">{{.ObjectName}}</span>{{end}}` +
+			`{{if .SubLabel}}<span class="event-object-badge">{{.SubLabel}}</span>{{end}}` +
 			`</div>` +
 			`<div class="event-card-footer">` +
 			`<span class="event-camera-name">{{.CameraName}}</span>` +
@@ -1388,6 +1389,7 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`<div class="meta-card-header">Details</div>` +
 			`<div class="meta-row"><span class="key">Camera</span><span class="val">{{.CameraName}}</span></div>` +
 			`<div class="meta-row"><span class="key">Label</span><span class="val">{{.Label}}</span></div>` +
+			`{{if .SubLabel}}<div class="meta-row"><span class="key">Identity</span><span class="val">{{.SubLabel}}</span></div>{{end}}` +
 			`<div class="meta-row"><span class="key">Confidence</span><span class="val">{{scorePercent .Score}}</span></div>` +
 			`<div class="meta-row"><span class="key">Time</span><span class="val">{{formatTime .Timestamp}}</span></div>` +
 			`{{if .Duration}}<div class="meta-row"><span class="key">Duration</span><span class="val">{{.Duration}}</span></div>{{end}}` +
@@ -2311,6 +2313,9 @@ func (s *Server) handleCreateObject(w http.ResponseWriter, r *http.Request) {
 		CropPath:  cropPath,
 	})
 
+	// Background re-match: tag recent events with this new object
+	go s.rematchRecentEvents(id)
+
 	obj.ID = id
 	obj.CropPath = cropPath
 	writeJSON(w, http.StatusCreated, obj)
@@ -2454,7 +2459,6 @@ func (s *Server) handleIdentifyEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const matchThreshold = 0.65
 	var matches []storage.ObjectSighting
 	for _, obj := range knownObjects {
 		centroid := detect.BytesToFloat32(obj.Centroid)
@@ -2462,7 +2466,7 @@ func (s *Server) handleIdentifyEvent(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sim := detect.CosineSimilarity(embedding, centroid)
-		if sim >= matchThreshold {
+		if sim >= s.ObjectMatchThreshold {
 			sighting := storage.ObjectSighting{
 				EventID:    eventID,
 				Camera:     event.CameraName,
@@ -2561,6 +2565,9 @@ func (s *Server) handleAddObjectReference(w http.ResponseWriter, r *http.Request
 	// Recompute centroid from all references
 	s.recomputeObjectCentroid(objectID)
 
+	// Background re-match: scan recent unmatched events for this object
+	go s.rematchRecentEvents(objectID)
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":        refID,
 		"object_id": objectID,
@@ -2612,6 +2619,59 @@ func (s *Server) recomputeObjectCentroid(objectID int64) {
 	}
 
 	_ = s.db.UpdateKnownObjectCentroid(objectID, detect.Float32ToBytes(centroid))
+}
+
+func (s *Server) rematchRecentEvents(objectID int64) {
+	if s.objectEmbedder == nil {
+		return
+	}
+	obj, err := s.db.GetKnownObject(objectID)
+	if err != nil || obj == nil || len(obj.Centroid) == 0 {
+		return
+	}
+
+	centroid := detect.BytesToFloat32(obj.Centroid)
+	threshold := s.ObjectMatchThreshold
+	if threshold <= 0 {
+		threshold = 0.65
+	}
+
+	events, err := s.db.RecentUnmatchedEventsByLabel(obj.Label, 200)
+	if err != nil {
+		slog.Error("rematch: failed to query events", "error", err)
+		return
+	}
+
+	var matched int
+	for _, ev := range events {
+		if !ev.SnapshotAvailable || ev.SnapshotPath == "" {
+			continue
+		}
+		img, err := loadSnapshotImage(ev.SnapshotPath)
+		if err != nil {
+			continue
+		}
+		embedding, err := s.objectEmbedder.Embed(img, ev.Box)
+		if err != nil {
+			continue
+		}
+		sim := detect.CosineSimilarity(embedding, centroid)
+		if sim >= threshold {
+			s.db.SaveObjectSighting(storage.ObjectSighting{
+				EventID:    ev.ID,
+				Camera:     ev.CameraName,
+				ObjectID:   objectID,
+				Similarity: sim,
+				Timestamp:  ev.Timestamp,
+			})
+			_ = s.db.UpdateEventObjectName(ev.ID, obj.Name)
+			_ = s.db.UpdateEventSubLabel(ev.ID, obj.Name)
+			matched++
+		}
+	}
+	if matched > 0 {
+		slog.Info("rematch: retroactively tagged events", "object", obj.Name, "matched", matched)
+	}
 }
 
 func loadSnapshotImage(path string) (*image.RGBA, error) {
