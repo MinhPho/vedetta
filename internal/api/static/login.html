@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vedetta Login</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111a;
+      --panel: rgba(10, 24, 38, 0.92);
+      --panel-edge: rgba(125, 179, 255, 0.18);
+      --text: #f2f7fb;
+      --muted: #9fb4c6;
+      --accent: #5dd7ff;
+      --accent-strong: #1baee6;
+      --danger: #ff7d7d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(93, 215, 255, 0.18), transparent 35%),
+        linear-gradient(180deg, #0a1621 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+    .shell {
+      width: min(420px, calc(100vw - 2rem));
+      padding: 2rem;
+      border: 1px solid var(--panel-edge);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(20px);
+    }
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.8rem;
+      letter-spacing: 0.02em;
+    }
+    p {
+      margin: 0 0 1.5rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    input {
+      width: 100%;
+      margin-bottom: 1rem;
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(159, 180, 198, 0.2);
+      border-radius: 12px;
+      background: rgba(4, 12, 18, 0.7);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    button {
+      width: 100%;
+      padding: 0.9rem 1rem;
+      border: 0;
+      border-radius: 12px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+      color: #03111b;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button[disabled] {
+      opacity: 0.7;
+      cursor: wait;
+    }
+    .status {
+      min-height: 1.3rem;
+      margin-top: 1rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    .status.error {
+      color: var(--danger);
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <h1>Vedetta</h1>
+    <p>Sign in to open the control room. Session access is browser-based; API clients should use scoped bearer tokens after login.</p>
+    <form id="login-form">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button id="submit" type="submit">Sign In</button>
+      <div class="status" id="status"></div>
+    </form>
+  </main>
+
+  <script>
+    (function() {
+      var form = document.getElementById('login-form');
+      var statusEl = document.getElementById('status');
+      var submit = document.getElementById('submit');
+      var next = new URLSearchParams(location.search).get('next') || '/';
+
+      function setStatus(message, isError) {
+        statusEl.textContent = message || '';
+        statusEl.className = isError ? 'status error' : 'status';
+      }
+
+      form.addEventListener('submit', function(event) {
+        event.preventDefault();
+        submit.disabled = true;
+        setStatus('Signing in…', false);
+
+        fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value
+          })
+        })
+          .then(function(resp) {
+            return resp.json().then(function(body) {
+              if (!resp.ok) throw new Error(body.error || 'Login failed');
+              return body;
+            });
+          })
+          .then(function() {
+            location.href = next;
+          })
+          .catch(function(err) {
+            setStatus(err.message, true);
+            submit.disabled = false;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

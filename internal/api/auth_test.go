@@ -6,126 +6,134 @@ import (
 	"testing"
 
 	"github.com/rvben/vedetta/internal/auth"
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/storage"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var okHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 })
 
-func newTestChecker(t *testing.T) *auth.Checker {
+func newTestServerAuth(t *testing.T) (*Server, *auth.Checker) {
 	t.Helper()
-	c := auth.New("admin", "secret")
-	t.Cleanup(c.Close)
-	return c
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	db, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	apiCfg := config.APIConfig{Exposure: "lan"}
+	checker := auth.New(config.AuthConfig{
+		Users: []config.AuthUser{{
+			Username:     "admin",
+			PasswordHash: string(hash),
+		}},
+	}, apiCfg, db)
+	t.Cleanup(checker.Close)
+
+	return &Server{config: apiCfg, auth: checker, db: db}, checker
 }
 
-func TestAuthMiddleware_Disabled(t *testing.T) {
-	handler := authMiddleware(nil, okHandler)
+func TestAuthMiddleware_PublicLoginRoute(t *testing.T) {
+	srv, _ := newTestServerAuth(t)
+	handler := authMiddleware(srv, okHandler)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("disabled auth: status = %d, want %d", w.Code, http.StatusOK)
+		t.Fatalf("public login route status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
-func TestAuthMiddleware_LocalhostExempt(t *testing.T) {
-	checker := newTestChecker(t)
-	handler := authMiddleware(checker, okHandler)
+func TestAuthMiddleware_UnauthorizedAPIRequest(t *testing.T) {
+	srv, _ := newTestServerAuth(t)
+	handler := authMiddleware(srv, okHandler)
 
-	for _, addr := range []string{"127.0.0.1:54321", "[::1]:54321"} {
-		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-		req.RemoteAddr = addr
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Errorf("localhost exempt (%s): status = %d, want %d", addr, w.Code, http.StatusOK)
-		}
-	}
-}
-
-func TestAuthMiddleware_NoCredentials(t *testing.T) {
-	checker := newTestChecker(t)
-	handler := authMiddleware(checker, okHandler)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req.RemoteAddr = "10.0.0.5:54321"
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Errorf("no credentials: status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-	if w.Header().Get("WWW-Authenticate") == "" {
-		t.Error("missing WWW-Authenticate header")
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
 
-func TestAuthMiddleware_WrongCredentials(t *testing.T) {
-	checker := newTestChecker(t)
-	handler := authMiddleware(checker, okHandler)
+func TestAuthMiddleware_RedirectsHTMLToLogin(t *testing.T) {
+	srv, _ := newTestServerAuth(t)
+	handler := authMiddleware(srv, okHandler)
 
-	tests := []struct {
-		name, user, pass string
-	}{
-		{"wrong password", "admin", "wrong"},
-		{"wrong username", "user", "secret"},
-		{"both wrong", "user", "wrong"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-			req.RemoteAddr = "10.0.0.5:54321"
-			req.SetBasicAuth(tt.user, tt.pass)
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusUnauthorized {
-				t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-			}
-		})
-	}
-}
-
-func TestAuthMiddleware_CorrectCredentials(t *testing.T) {
-	checker := newTestChecker(t)
-	handler := authMiddleware(checker, okHandler)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req.RemoteAddr = "10.0.0.5:54321"
-	req.SetBasicAuth("admin", "secret")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusFound)
+	}
+	if location := w.Header().Get("Location"); location == "" {
+		t.Fatal("expected redirect location")
+	}
+}
+
+func TestAuthMiddleware_AllowsSessionAndEnforcesCSRF(t *testing.T) {
+	srv, checker := newTestServerAuth(t)
+	handler := authMiddleware(srv, okHandler)
+
+	session, err := checker.Login("admin", "secret", "10.0.0.1", "agent")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	rr := httptest.NewRecorder()
+	checker.SetSessionCookies(rr, httptest.NewRequest(http.MethodPost, "http://vedetta.local/api/auth/login", nil), session)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	for _, cookie := range rr.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("correct credentials: status = %d, want %d", w.Code, http.StatusOK)
+		t.Fatalf("GET with session status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/events", nil)
+	for _, cookie := range rr.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("DELETE without CSRF status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/events", nil)
+	for _, cookie := range rr.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	req.Header.Set("X-CSRF-Token", session.CSRFToken)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DELETE with CSRF status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
-func TestAuthMiddleware_RateLimited(t *testing.T) {
-	checker := newTestChecker(t)
-	handler := authMiddleware(checker, okHandler)
+func TestAuthMiddleware_MetricsRequiresAuth(t *testing.T) {
+	srv, _ := newTestServerAuth(t)
+	handler := authMiddleware(srv, okHandler)
 
-	// Exhaust rate limit from a single IP
-	for range 10 {
-		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-		req.RemoteAddr = "10.0.0.99:54321"
-		req.SetBasicAuth("admin", "wrong")
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, req)
-	}
-
-	// Even correct credentials should be blocked
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	req.RemoteAddr = "10.0.0.99:54321"
-	req.SetBasicAuth("admin", "secret")
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Errorf("rate limited: status = %d, want %d", w.Code, http.StatusUnauthorized)
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }

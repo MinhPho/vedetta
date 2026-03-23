@@ -1,262 +1,186 @@
 package auth
 
 import (
+	"crypto/tls"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/storage"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func newChecker(t *testing.T, user, pass string) *Checker {
+func newChecker(t *testing.T, apiCfg config.APIConfig) *Checker {
 	t.Helper()
-	c := New(user, pass)
-	if c != nil {
-		t.Cleanup(c.Close)
-	}
-	return c
-}
 
-func TestNew_EmptyCredentials(t *testing.T) {
-	tests := []struct {
-		user, pass string
-	}{
-		{"", ""},
-		{"admin", ""},
-		{"", "secret"},
-	}
-	for _, tt := range tests {
-		c := newChecker(t, tt.user, tt.pass)
-		if c != nil {
-			t.Errorf("New(%q, %q) should return nil", tt.user, tt.pass)
-		}
-	}
-}
-
-func TestCheck_Plaintext(t *testing.T) {
-	c := newChecker(t, "admin", "secret")
-	if c == nil {
-		t.Fatal("expected non-nil Checker")
-	}
-
-	tests := []struct {
-		user, pass string
-		want       bool
-	}{
-		{"admin", "secret", true},
-		{"admin", "wrong", false},
-		{"wrong", "secret", false},
-		{"wrong", "wrong", false},
-		{"", "", false},
-		{"admin", "", false},
-		{"", "secret", false},
-		{"Admin", "secret", false},   // case sensitive username
-		{"admin", "Secret", false},   // case sensitive password
-	}
-	for _, tt := range tests {
-		got := c.Check(tt.user, tt.pass, "10.0.0.1")
-		if got != tt.want {
-			t.Errorf("Check(%q, %q) = %v, want %v", tt.user, tt.pass, got, tt.want)
-		}
-	}
-}
-
-func TestCheck_Bcrypt_2a(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
 	if err != nil {
 		t.Fatalf("bcrypt: %v", err)
 	}
 
-	c := newChecker(t, "admin", string(hash))
-	if c == nil {
-		t.Fatal("expected non-nil Checker")
-	}
-	if !c.isBcrypt {
-		t.Fatal("expected isBcrypt=true")
-	}
-
-	if !c.Check("admin", "secret", "10.0.0.1") {
-		t.Error("correct bcrypt credentials should pass")
-	}
-	if c.Check("admin", "wrong", "10.0.0.2") {
-		t.Error("wrong bcrypt password should fail")
-	}
-	if c.Check("wrong", "secret", "10.0.0.3") {
-		t.Error("wrong username with bcrypt should fail")
-	}
-}
-
-func TestCheck_Bcrypt_2y(t *testing.T) {
-	// $2y$ is produced by htpasswd, PHP, and many online generators.
-	// Go's bcrypt package accepts $2y$ hashes transparently.
-	hash, err := bcrypt.GenerateFromPassword([]byte("mypass"), bcrypt.MinCost)
+	db, err := storage.New(":memory:")
 	if err != nil {
-		t.Fatalf("bcrypt: %v", err)
+		t.Fatalf("storage.New: %v", err)
 	}
-	// Simulate a $2y$ hash by replacing the prefix.
-	hashStr := "$2y$" + string(hash[4:])
+	t.Cleanup(func() { _ = db.Close() })
 
-	c := newChecker(t, "user", hashStr)
-	if c == nil {
-		t.Fatal("expected non-nil Checker")
-	}
-	if !c.isBcrypt {
-		t.Fatal("expected isBcrypt=true for $2y$ hash")
-	}
-	if !c.Check("user", "mypass", "10.0.0.1") {
-		t.Error("$2y$ bcrypt hash should validate correctly")
-	}
-	if c.Check("user", "wrong", "10.0.0.2") {
-		t.Error("wrong password should fail with $2y$ hash")
+	c := New(config.AuthConfig{
+		Users: []config.AuthUser{{
+			Username:     "admin",
+			PasswordHash: string(hash),
+		}},
+	}, apiCfg, db)
+	t.Cleanup(c.Close)
+	return c
+}
+
+func TestValidateConfigRejectsMalformedHash(t *testing.T) {
+	err := ValidateConfig(config.AuthConfig{
+		Users: []config.AuthUser{{
+			Username:     "admin",
+			PasswordHash: "not-a-bcrypt-hash",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected malformed hash validation error")
 	}
 }
 
-func TestRateLimiting(t *testing.T) {
-	c := newChecker(t, "admin", "secret")
-
-	ip := "192.168.1.100"
+func TestCheckRateLimitIsPerIP(t *testing.T) {
+	c := newChecker(t, config.APIConfig{Exposure: "lan"})
 
 	for range maxFailures {
-		if c.Check("admin", "wrong", ip) {
-			t.Fatal("should fail with wrong password")
+		if c.Check("admin", "wrong", "10.0.0.1") {
+			t.Fatal("wrong password should fail")
 		}
 	}
-
-	// Even correct credentials should be rate limited now
-	if c.Check("admin", "secret", ip) {
-		t.Error("should be rate limited after max failures")
+	if c.Check("admin", "secret", "10.0.0.1") {
+		t.Fatal("same IP should be rate limited")
 	}
-
-	// Different IP should not be affected
-	if !c.Check("admin", "secret", "10.0.0.99") {
-		t.Error("different IP should not be rate limited")
+	if !c.Check("admin", "secret", "10.0.0.2") {
+		t.Fatal("different IP should not be rate limited")
 	}
 }
 
-func TestRateLimiting_ClearsOnSuccess(t *testing.T) {
-	c := newChecker(t, "admin", "secret")
+func TestSessionAuthenticationAndCSRF(t *testing.T) {
+	c := newChecker(t, config.APIConfig{Exposure: "lan"})
 
-	ip := "192.168.1.200"
-
-	for range 3 {
-		c.Check("admin", "wrong", ip)
+	session, err := c.Login("admin", "secret", "10.0.0.1", "test-agent")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
 	}
 
-	if !c.Check("admin", "secret", ip) {
-		t.Error("correct credentials should succeed and clear counter")
+	rr := httptest.NewRecorder()
+	c.SetSessionCookies(rr, httptest.NewRequest(http.MethodPost, "http://vedetta.local/api/auth/login", nil), session)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras", nil)
+	for _, cookie := range rr.Result().Cookies() {
+		req.AddCookie(cookie)
 	}
 
-	// Counter is reset — we can fail again up to the limit
-	for range maxFailures - 1 {
-		c.Check("admin", "wrong", ip)
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal == nil || principal.Kind != AuthKindSession {
+		t.Fatalf("expected session principal, got %+v", principal)
 	}
 
-	// One more failure should still be under limit (exactly maxFailures-1)
-	// But at maxFailures, it should be blocked
-	c.Check("admin", "wrong", ip) // this is the 10th
-	if c.Check("admin", "secret", ip) {
-		t.Error("should be rate limited after re-exhausting failures")
+	if c.RequireCSRF(req, principal) {
+		t.Fatal("POST without X-CSRF-Token should fail")
 	}
-}
-
-func TestRateLimiting_PerIP(t *testing.T) {
-	c := newChecker(t, "admin", "secret")
-
-	// Exhaust IP A
-	for range maxFailures {
-		c.Check("admin", "wrong", "192.168.1.1")
-	}
-
-	// IP B should be unaffected
-	if !c.Check("admin", "secret", "192.168.1.2") {
-		t.Error("IP B should not be rate limited by IP A's failures")
-	}
-
-	// IP A should be blocked
-	if c.Check("admin", "secret", "192.168.1.1") {
-		t.Error("IP A should still be rate limited")
+	req.Header.Set("X-CSRF-Token", session.CSRFToken)
+	if !c.RequireCSRF(req, principal) {
+		t.Fatal("POST with matching CSRF token should pass")
 	}
 }
 
-func TestIsLoopback(t *testing.T) {
-	tests := []struct {
-		addr string
-		want bool
-	}{
-		{"127.0.0.1:1234", true},
-		{"[::1]:1234", true},
-		{"192.168.1.100:1234", false},
-		{"10.0.0.1:5050", false},
-		{"[::ffff:127.0.0.1]:1234", true},
-		{"127.0.0.1", true},
-		{"::1", true},
-		{"0.0.0.0:5050", false},
-		{"[::]:5050", false},
+func TestSetSessionCookies_LANHTTPDoesNotForceSecure(t *testing.T) {
+	c := newChecker(t, config.APIConfig{Exposure: "lan"})
+
+	session, err := c.Login("admin", "secret", "10.0.0.1", "test-agent")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
 	}
-	for _, tt := range tests {
-		got := IsLoopback(tt.addr)
-		if got != tt.want {
-			t.Errorf("IsLoopback(%q) = %v, want %v", tt.addr, got, tt.want)
+
+	req := httptest.NewRequest(http.MethodPost, "http://vedetta.local/api/auth/login", nil)
+	rr := httptest.NewRecorder()
+	c.SetSessionCookies(rr, req, session)
+
+	for _, cookie := range rr.Result().Cookies() {
+		if cookie.Secure {
+			t.Fatalf("cookie %q unexpectedly marked Secure on plain HTTP LAN request", cookie.Name)
 		}
 	}
 }
 
-func TestVerify_BcryptAlwaysRunsRegardlessOfUsername(t *testing.T) {
-	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
-	c := newChecker(t, "admin", string(hash))
+func TestSetSessionCookies_SecureTransportUsesSecureCookies(t *testing.T) {
+	c := newChecker(t, config.APIConfig{Exposure: "lan"})
 
-	// The point: wrong username must still run bcrypt (no early return).
-	// We verify both paths produce the correct boolean result.
-	if c.verify("wrong", "secret") {
-		t.Error("wrong username should fail even when password matches")
+	session, err := c.Login("admin", "secret", "10.0.0.1", "test-agent")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
 	}
-	if c.verify("admin", "wrong") {
-		t.Error("wrong password should fail")
-	}
-	if c.verify("wrong", "wrong") {
-		t.Error("both wrong should fail")
-	}
-	if !c.verify("admin", "secret") {
-		t.Error("correct credentials should pass")
+
+	req := httptest.NewRequest(http.MethodPost, "https://vedetta.local/api/auth/login", nil)
+	req.TLS = &tls.ConnectionState{}
+	rr := httptest.NewRecorder()
+	c.SetSessionCookies(rr, req, session)
+
+	for _, cookie := range rr.Result().Cookies() {
+		if !cookie.Secure {
+			t.Fatalf("cookie %q should be Secure on HTTPS requests", cookie.Name)
+		}
 	}
 }
 
-func TestValidateConfig(t *testing.T) {
-	tests := []struct {
-		name       string
-		user, pass string
-		wantErr    bool
-	}{
-		{"both empty", "", "", false},
-		{"both set plaintext", "admin", "secret", false},
-		{"username only", "admin", "", true},
-		{"password only", "", "secret", true},
-		{"valid bcrypt", "admin", func() string {
-			h, _ := bcrypt.GenerateFromPassword([]byte("x"), bcrypt.MinCost)
-			return string(h)
-		}(), false},
-		{"invalid bcrypt hash", "admin", "$2a$10$broken", true},
-		{"truncated bcrypt", "admin", "$2b$", true},
+func TestBearerTokenAuthentication(t *testing.T) {
+	c := newChecker(t, config.APIConfig{Exposure: "lan"})
+
+	token, rawToken, err := c.CreateToken("admin", "integration", []string{"api:read"}, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateConfig(tt.user, tt.pass)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateConfig(%q, %q) error = %v, wantErr = %v", tt.user, tt.pass, err, tt.wantErr)
-			}
-		})
+	if token.ID == 0 {
+		t.Fatal("expected token ID")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.Header.Set("Authorization", "Bearer "+rawToken)
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal == nil || principal.Kind != AuthKindToken {
+		t.Fatalf("expected token principal, got %+v", principal)
+	}
+	if !principal.HasAnyScope("api:read") {
+		t.Fatal("expected api:read scope")
+	}
+	if principal.Allows(http.MethodDelete, "/api/events") {
+		t.Fatal("read-only token should not allow DELETE")
 	}
 }
 
-func TestPlaintextPasswordNotStoredInCleartext(t *testing.T) {
-	c := newChecker(t, "admin", "supersecretpassword")
+func TestRequestIsSecureWithTrustedProxy(t *testing.T) {
+	c := newChecker(t, config.APIConfig{
+		Exposure:       "internet",
+		TrustedProxies: []string{"127.0.0.1/32"},
+	})
 
-	// The password field should be empty for plaintext mode.
-	// Only the SHA-256 hash is stored.
-	if c.isBcrypt {
-		t.Fatal("should not be bcrypt mode")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if !c.RequestIsSecure(req) {
+		t.Fatal("trusted proxy with X-Forwarded-Proto=https should be secure")
 	}
 
-	// Verify it still works (hash comparison, not string comparison)
-	if !c.Check("admin", "supersecretpassword", "10.0.0.1") {
-		t.Error("should authenticate with hashed password")
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.9:1234"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if c.RequestIsSecure(req) {
+		t.Fatal("untrusted proxy should not be treated as secure")
 	}
 }
