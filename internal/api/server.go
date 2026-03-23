@@ -2024,26 +2024,18 @@ func (s *Server) handleFaceBackfill(w http.ResponseWriter, r *http.Request) {
 				face.Similarity = &similarity
 			}
 
-			faceID, saveErr := s.db.SaveFace(face)
-			if saveErr != nil {
+			if _, saveErr := s.db.SaveFace(face); saveErr != nil {
 				slog.Error("backfill: failed to save face", "error", saveErr)
 				continue
 			}
 
 			totalFaces++
 
-			if personID == 0 {
-				newPID, createErr := s.db.SavePerson("", false, detect.Float32ToBytes(result.Embedding))
-				if createErr != nil {
-					slog.Error("backfill: failed to create person", "error", createErr)
-					continue
-				}
-				sim := 1.0
-				_ = s.db.UpdateFacePerson(faceID, newPID, sim)
-				totalNewPeople++
-			} else {
+			if personID > 0 {
 				s.updatePersonCentroid(personID, result.Embedding)
 				totalMatched++
+			} else {
+				totalNewPeople++
 			}
 		}
 
