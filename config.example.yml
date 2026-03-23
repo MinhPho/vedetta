@@ -25,6 +25,7 @@ cameras:
 detect:
   model_path: ""  # path to ONNX model (e.g., yolov8n.onnx)
   score_threshold: 0.5
+  object_match_threshold: 0.65  # cosine similarity threshold for object re-ID (0.0-1.0)
   motion:
     pixel_threshold: 25
     min_area: 200

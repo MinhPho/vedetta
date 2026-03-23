@@ -64,11 +64,12 @@ type Zone struct {
 }
 
 type DetectConfig struct {
-	ModelPath      string       `yaml:"model_path"`
-	Backend        string       `yaml:"backend"` // "auto" (default), "go", or "onnxruntime_c"
-	ScoreThreshold float32      `yaml:"score_threshold"`
-	Motion         MotionConfig `yaml:"motion"`
-	Labels         []string     `yaml:"labels"` // Only emit events for these labels; empty = all
+	ModelPath            string       `yaml:"model_path"`
+	Backend              string       `yaml:"backend"` // "auto" (default), "go", or "onnxruntime_c"
+	ScoreThreshold       float32      `yaml:"score_threshold"`
+	Motion               MotionConfig `yaml:"motion"`
+	Labels               []string     `yaml:"labels"`                 // Only emit events for these labels; empty = all
+	ObjectMatchThreshold float64      `yaml:"object_match_threshold"` // Cosine similarity threshold for object re-ID (0.0-1.0)
 }
 
 type MotionConfig struct {
@@ -147,7 +148,8 @@ func Load(path string) (*Config, error) {
 
 	cfg := &Config{
 		Detect: DetectConfig{
-			ScoreThreshold: 0.65,
+			ScoreThreshold:       0.65,
+			ObjectMatchThreshold: 0.65,
 			Motion: MotionConfig{
 				PixelThreshold:  25,
 				MinArea:         200,
