@@ -483,12 +483,13 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 					zoneName = matched[0].Name
 				}
 
+				box := obj.Box
 				ev := Event{
 					ID:                eventID,
 					CameraName:        c.config.Name,
 					Label:             obj.Label,
 					Score:             obj.Score,
-					Box:               obj.Box,
+					Box:               box,
 					Timestamp:         time.Now(),
 					ZoneName:          zoneName,
 					SnapshotAvailable: false,
@@ -499,6 +500,17 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 					snapFile := filepath.Join(c.eventSnapDir, c.config.Name, eventID+".jpg")
 					ev.SnapshotPath = snapFile
 					ev.SnapshotImage = annotatedFrame
+					// Scale box to snapshot resolution if different from detect resolution
+					snapW := annotatedFrame.Bounds().Dx()
+					snapH := annotatedFrame.Bounds().Dy()
+					if snapW != w || snapH != h {
+						ev.Box = [4]int{
+							box[0] * snapW / w,
+							box[1] * snapH / h,
+							box[2] * snapW / w,
+							box[3] * snapH / h,
+						}
+					}
 				}
 
 				c.events <- ev
