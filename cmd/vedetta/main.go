@@ -114,8 +114,13 @@ func main() {
 
 	events := make(chan camera.Event, 100)
 	eventEnds := make(chan camera.EventEnd, 100)
+	presenceEvents := make(chan camera.PresenceEvent, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, events, eventEnds, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality)
+	manager := camera.NewManager(cfg.Cameras, detector, events, eventEnds, presenceEvents, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality)
+
+	// Sync zones from config to DB and load them into cameras
+	syncConfigZones(db, cfg.Cameras, manager)
+
 	manager.Start(ctx)
 
 	// Periodically publish camera online/offline status to MQTT.
@@ -284,6 +289,11 @@ func main() {
 					finalizeEvent(ae, endTime)
 					delete(active, evID)
 				}
+
+			case pe := <-presenceEvents:
+				if err := db.UpdateZonePresence(pe.ZoneID, pe.Label, pe.Type == "zone_enter"); err != nil {
+					slog.Error("failed to persist presence event", "zone", pe.ZoneName, "label", pe.Label, "error", err)
+				}
 			}
 		}
 	}()
@@ -332,6 +342,66 @@ func main() {
 
 	// Wait for recording goroutines to finalize segments before closing DB
 	recorder.Close()
+}
+
+// syncConfigZones inserts zones from config into the database (if not already present)
+// and loads all zones from DB into the corresponding cameras.
+func syncConfigZones(db *storage.DB, cameras []config.CameraConfig, manager *camera.Manager) {
+	for _, camCfg := range cameras {
+		if !camCfg.Enabled {
+			continue
+		}
+
+		// Insert config zones into DB if they don't already exist
+		for _, cfgZone := range camCfg.Zones {
+			existing, err := db.GetZone(camCfg.Name, cfgZone.Name)
+			if err != nil {
+				slog.Error("failed to check zone existence", "camera", camCfg.Name, "zone", cfgZone.Name, "error", err)
+				continue
+			}
+			if existing != nil {
+				continue // Don't overwrite zones created/modified via API
+			}
+
+			labels := cfgZone.Labels
+			if len(labels) == 0 {
+				labels = cfgZone.Objects
+			}
+
+			z := camera.Zone{
+				Camera:          camCfg.Name,
+				Name:            cfgZone.Name,
+				X1:              cfgZone.Coordinates[0],
+				Y1:              cfgZone.Coordinates[1],
+				X2:              cfgZone.Coordinates[2],
+				Y2:              cfgZone.Coordinates[3],
+				Labels:          labels,
+				TrackPresence:   cfgZone.TrackPresence,
+				FaceRecognition: cfgZone.FaceRecognition,
+				Enabled:         true,
+			}
+			if err := db.SaveZone(z); err != nil {
+				slog.Error("failed to save config zone", "camera", camCfg.Name, "zone", cfgZone.Name, "error", err)
+			} else {
+				slog.Info("synced zone from config", "camera", camCfg.Name, "zone", cfgZone.Name)
+			}
+		}
+
+		// Load all zones from DB into the camera
+		cam := manager.GetCamera(camCfg.Name)
+		if cam == nil {
+			continue
+		}
+		zones, err := db.ListZones(camCfg.Name)
+		if err != nil {
+			slog.Error("failed to load zones", "camera", camCfg.Name, "error", err)
+			continue
+		}
+		cam.SetZones(zones)
+		if len(zones) > 0 {
+			slog.Info("loaded zones", "camera", camCfg.Name, "count", len(zones))
+		}
+	}
 }
 
 // purgeOrphanedEvents removes events whose snapshot files no longer exist on disk.

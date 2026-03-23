@@ -176,6 +176,52 @@ func (d *H264Decoder) Decode(nalData []byte) *image.YCbCr {
 	}
 }
 
+// Flush retrieves any buffered frame from the decoder without feeding new data.
+func (d *H264Decoder) Flush() *image.YCbCr {
+	if d == nil || d.decoder == nil {
+		return nil
+	}
+
+	var dst [3][]byte
+	var bufInfo openh264.SBufferInfo
+
+	ret := d.decoder.FlushFrame(&dst, &bufInfo)
+	if ret != 0 || dst[0] == nil {
+		return nil
+	}
+
+	sysBuf := bufInfo.UsrData_sSystemBuffer()
+	w := int(sysBuf.IWidth)
+	h := int(sysBuf.IHeight)
+	yStride := int(sysBuf.IStride[0])
+	cStride := int(sysBuf.IStride[1])
+
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+
+	yLen := yStride * h
+	cLen := cStride * (h / 2)
+
+	y := make([]byte, yLen)
+	cb := make([]byte, cLen)
+	cr := make([]byte, cLen)
+
+	copy(y, dst[0][:yLen])
+	copy(cb, dst[1][:cLen])
+	copy(cr, dst[2][:cLen])
+
+	return &image.YCbCr{
+		Y:              y,
+		Cb:             cb,
+		Cr:             cr,
+		YStride:        yStride,
+		CStride:        cStride,
+		SubsampleRatio: image.YCbCrSubsampleRatio420,
+		Rect:           image.Rect(0, 0, w, h),
+	}
+}
+
 // Close releases the decoder resources.
 func (d *H264Decoder) Close() {
 	if d != nil && d.decoder != nil {

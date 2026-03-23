@@ -2,7 +2,9 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -34,7 +36,7 @@ type DB struct {
 
 func New(path string) (*DB, error) {
 	// PRAGMAs in the DSN are applied to every new connection in the pool.
-	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	dsn := path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -85,6 +87,30 @@ func migrate(db *sql.DB) error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_segments_camera_time ON segments(camera, start_time);
+
+		CREATE TABLE IF NOT EXISTS zones (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			camera TEXT NOT NULL,
+			name TEXT NOT NULL,
+			x1 REAL NOT NULL,
+			y1 REAL NOT NULL,
+			x2 REAL NOT NULL,
+			y2 REAL NOT NULL,
+			labels TEXT NOT NULL DEFAULT '[]',
+			track_presence BOOLEAN NOT NULL DEFAULT 0,
+			face_recognition BOOLEAN NOT NULL DEFAULT 0,
+			enabled BOOLEAN NOT NULL DEFAULT 1,
+			UNIQUE(camera, name)
+		);
+
+		CREATE TABLE IF NOT EXISTS zone_presence (
+			zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+			label TEXT NOT NULL,
+			present BOOLEAN NOT NULL DEFAULT 0,
+			last_seen DATETIME,
+			last_changed DATETIME,
+			PRIMARY KEY (zone_id, label)
+		);
 	`)
 	if err != nil {
 		return err
@@ -92,6 +118,9 @@ func migrate(db *sql.DB) error {
 
 	// Add end_time column to existing databases
 	_, _ = db.Exec("ALTER TABLE events ADD COLUMN end_time DATETIME")
+
+	// Add zone_name column to existing databases
+	_, _ = db.Exec("ALTER TABLE events ADD COLUMN zone_name TEXT")
 
 	// Normalize timestamps to UTC RFC3339 format for consistent SQLite comparisons.
 	// The modernc.org/sqlite driver stores time.Time using Go's String() which includes
@@ -179,12 +208,16 @@ func (d *DB) SaveEvent(event camera.Event) error {
 		t := utc(event.EndTime)
 		endTime = &t
 	}
+	var zoneName *string
+	if event.ZoneName != "" {
+		zoneName = &event.ZoneName
+	}
 	_, err := d.db.Exec(`
-		INSERT INTO events (id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO events (id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path, zone_name)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.ID, event.CameraName, event.Label, event.Score,
 		event.Box[0], event.Box[1], event.Box[2], event.Box[3],
-		utc(event.Timestamp), endTime, event.SnapshotPath, event.ClipPath,
+		utc(event.Timestamp), endTime, event.SnapshotPath, event.ClipPath, zoneName,
 	)
 	return err
 }
@@ -206,7 +239,12 @@ func (d *DB) UpdateEventSnapshotPath(eventID, snapshotPath string) error {
 
 // QueryEvents returns events matching the given filters.
 func (d *DB) QueryEvents(cameraName, label string, limit, offset int) ([]camera.Event, error) {
-	query := "SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path FROM events WHERE 1=1"
+	return d.QueryEventsFiltered(cameraName, label, "", limit, offset)
+}
+
+// QueryEventsFiltered returns events matching all given filters including zone.
+func (d *DB) QueryEventsFiltered(cameraName, label, zoneName string, limit, offset int) ([]camera.Event, error) {
+	query := "SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path, zone_name FROM events WHERE 1=1"
 	args := []any{}
 
 	if cameraName != "" {
@@ -216,6 +254,10 @@ func (d *DB) QueryEvents(cameraName, label string, limit, offset int) ([]camera.
 	if label != "" {
 		query += " AND label = ?"
 		args = append(args, label)
+	}
+	if zoneName != "" {
+		query += " AND zone_name = ?"
+		args = append(args, zoneName)
 	}
 
 	query += " ORDER BY timestamp DESC"
@@ -370,15 +412,15 @@ func (d *DB) CountEventsToday() (int, error) {
 // GetEventByID returns a single event by ID, or nil if not found.
 func (d *DB) GetEventByID(id string) (*camera.Event, error) {
 	row := d.db.QueryRow(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path, zone_name
 		FROM events WHERE id = ?`, id)
 
 	var e camera.Event
 	var endTime sql.NullTime
-	var snapshot, clip sql.NullString
+	var snapshot, clip, zoneName sql.NullString
 	err := row.Scan(&e.ID, &e.CameraName, &e.Label, &e.Score,
 		&e.Box[0], &e.Box[1], &e.Box[2], &e.Box[3],
-		&e.Timestamp, &endTime, &snapshot, &clip,
+		&e.Timestamp, &endTime, &snapshot, &clip, &zoneName,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -391,6 +433,7 @@ func (d *DB) GetEventByID(id string) (*camera.Event, error) {
 	}
 	e.SnapshotPath = snapshot.String
 	e.ClipPath = clip.String
+	e.ZoneName = zoneName.String
 	return &e, nil
 }
 
@@ -443,7 +486,7 @@ func (d *DB) QueryEventsForDate(cameraName string, date time.Time) ([]camera.Eve
 	dayEnd := dayStart.Add(24 * time.Hour)
 
 	rows, err := d.db.Query(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path, zone_name
 		FROM events
 		WHERE camera = ? AND timestamp >= ? AND timestamp < ?
 		ORDER BY timestamp`,
@@ -576,10 +619,10 @@ func scanEvents(rows *sql.Rows) ([]camera.Event, error) {
 	for rows.Next() {
 		var e camera.Event
 		var endTime sql.NullTime
-		var snapshot, clip sql.NullString
+		var snapshot, clip, zoneName sql.NullString
 		err := rows.Scan(&e.ID, &e.CameraName, &e.Label, &e.Score,
 			&e.Box[0], &e.Box[1], &e.Box[2], &e.Box[3],
-			&e.Timestamp, &endTime, &snapshot, &clip,
+			&e.Timestamp, &endTime, &snapshot, &clip, &zoneName,
 		)
 		if err != nil {
 			return nil, err
@@ -589,6 +632,7 @@ func scanEvents(rows *sql.Rows) ([]camera.Event, error) {
 		}
 		e.SnapshotPath = snapshot.String
 		e.ClipPath = clip.String
+		e.ZoneName = zoneName.String
 		events = append(events, e)
 	}
 	return events, rows.Err()
@@ -603,7 +647,7 @@ func (d *DB) DeleteEvent(id string) error {
 // EventsWithSnapshots returns all events that have a non-empty snapshot_path.
 func (d *DB) EventsWithSnapshots() ([]camera.Event, error) {
 	rows, err := d.db.Query(`
-		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path
+		SELECT id, camera, label, score, box_x1, box_y1, box_x2, box_y2, timestamp, end_time, snapshot_path, clip_path, zone_name
 		FROM events WHERE snapshot_path != '' AND snapshot_path IS NOT NULL`)
 	if err != nil {
 		return nil, err
@@ -622,4 +666,149 @@ func scanSegments(rows *sql.Rows) ([]SegmentRecord, error) {
 		segments = append(segments, seg)
 	}
 	return segments, rows.Err()
+}
+
+// --- Zone operations ---
+
+// ListZones returns all zones for a camera.
+func (d *DB) ListZones(cameraName string) ([]camera.Zone, error) {
+	rows, err := d.db.Query(`
+		SELECT id, camera, name, x1, y1, x2, y2, labels, track_presence, face_recognition, enabled
+		FROM zones WHERE camera = ? ORDER BY name`, cameraName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanZones(rows)
+}
+
+// GetZone returns a single zone by camera and name, or nil if not found.
+func (d *DB) GetZone(cameraName, name string) (*camera.Zone, error) {
+	row := d.db.QueryRow(`
+		SELECT id, camera, name, x1, y1, x2, y2, labels, track_presence, face_recognition, enabled
+		FROM zones WHERE camera = ? AND name = ?`, cameraName, name)
+
+	z, err := scanZone(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return z, nil
+}
+
+// SaveZone upserts a zone by camera+name.
+func (d *DB) SaveZone(z camera.Zone) error {
+	labelsJSON, err := json.Marshal(z.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels: %w", err)
+	}
+
+	_, err = d.db.Exec(`
+		INSERT INTO zones (camera, name, x1, y1, x2, y2, labels, track_presence, face_recognition, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(camera, name) DO UPDATE SET
+			x1 = excluded.x1,
+			y1 = excluded.y1,
+			x2 = excluded.x2,
+			y2 = excluded.y2,
+			labels = excluded.labels,
+			track_presence = excluded.track_presence,
+			face_recognition = excluded.face_recognition,
+			enabled = excluded.enabled`,
+		z.Camera, z.Name, z.X1, z.Y1, z.X2, z.Y2,
+		string(labelsJSON), z.TrackPresence, z.FaceRecognition, z.Enabled,
+	)
+	return err
+}
+
+// DeleteZone removes a zone by camera and name.
+func (d *DB) DeleteZone(cameraName, name string) error {
+	_, err := d.db.Exec("DELETE FROM zones WHERE camera = ? AND name = ?", cameraName, name)
+	return err
+}
+
+// GetZonePresence returns the presence state for all labels in a zone.
+func (d *DB) GetZonePresence(zoneID int) ([]camera.ZonePresence, error) {
+	rows, err := d.db.Query(`
+		SELECT zone_id, label, present, last_seen, last_changed
+		FROM zone_presence WHERE zone_id = ?`, zoneID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var result []camera.ZonePresence
+	for rows.Next() {
+		var zp camera.ZonePresence
+		var lastSeen, lastChanged sql.NullTime
+		if err := rows.Scan(&zp.ZoneID, &zp.Label, &zp.Present, &lastSeen, &lastChanged); err != nil {
+			return nil, err
+		}
+		if lastSeen.Valid {
+			zp.LastSeen = lastSeen.Time
+		}
+		if lastChanged.Valid {
+			zp.LastChanged = lastChanged.Time
+		}
+		result = append(result, zp)
+	}
+	return result, rows.Err()
+}
+
+// UpdateZonePresence upserts a zone presence record.
+func (d *DB) UpdateZonePresence(zoneID int, label string, present bool) error {
+	now := utc(time.Now())
+	_, err := d.db.Exec(`
+		INSERT INTO zone_presence (zone_id, label, present, last_seen, last_changed)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(zone_id, label) DO UPDATE SET
+			present = excluded.present,
+			last_seen = excluded.last_seen,
+			last_changed = CASE WHEN zone_presence.present != excluded.present THEN excluded.last_changed ELSE zone_presence.last_changed END`,
+		zoneID, label, present, now, now,
+	)
+	return err
+}
+
+// UpdateEventZone sets the zone_name on an event.
+func (d *DB) UpdateEventZone(eventID, zoneName string) error {
+	_, err := d.db.Exec("UPDATE events SET zone_name = ? WHERE id = ?", zoneName, eventID)
+	return err
+}
+
+func scanZones(rows *sql.Rows) ([]camera.Zone, error) {
+	var zones []camera.Zone
+	for rows.Next() {
+		var z camera.Zone
+		var labelsJSON string
+		err := rows.Scan(&z.ID, &z.Camera, &z.Name, &z.X1, &z.Y1, &z.X2, &z.Y2,
+			&labelsJSON, &z.TrackPresence, &z.FaceRecognition, &z.Enabled)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(labelsJSON), &z.Labels); err != nil {
+			slog.Warn("corrupted zone labels JSON", "zone", z.Name, "camera", z.Camera, "error", err)
+			z.Labels = nil
+		}
+		zones = append(zones, z)
+	}
+	return zones, rows.Err()
+}
+
+func scanZone(row *sql.Row) (*camera.Zone, error) {
+	var z camera.Zone
+	var labelsJSON string
+	err := row.Scan(&z.ID, &z.Camera, &z.Name, &z.X1, &z.Y1, &z.X2, &z.Y2,
+		&labelsJSON, &z.TrackPresence, &z.FaceRecognition, &z.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(labelsJSON), &z.Labels); err != nil {
+		slog.Warn("corrupted zone labels JSON", "zone", z.Name, "camera", z.Camera, "error", err)
+		z.Labels = nil
+	}
+	return &z, nil
 }

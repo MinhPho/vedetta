@@ -1421,3 +1421,265 @@ func TestSoftmaxInvalidAxis(t *testing.T) {
 		t.Fatal("expected error for out-of-range softmax axis")
 	}
 }
+
+// ======================================================================
+// PRelu tests
+// ======================================================================
+
+func TestPReluBasic(t *testing.T) {
+	// x has positive and negative values, slope is per-element (same shape)
+	x := NewTensor([]int64{2, 3}, []float32{1, -2, 3, -4, 5, -6})
+	slope := NewTensor([]int64{2, 3}, []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6})
+	attrs := NewAttributes()
+
+	out, err := Execute("PRelu", []*Tensor{x, slope}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// positive: identity, negative: slope * x
+	assertTensorApprox(t, out[0], []int64{2, 3}, []float32{
+		1, -0.4, 3, -1.6, 5, -3.6,
+	}, eps)
+}
+
+func TestPReluAllPositive(t *testing.T) {
+	x := NewTensor([]int64{4}, []float32{1, 2, 3, 4})
+	slope := NewTensor([]int64{4}, []float32{0.5, 0.5, 0.5, 0.5})
+	attrs := NewAttributes()
+
+	out, err := Execute("PRelu", []*Tensor{x, slope}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All positive: output equals input
+	assertTensorApprox(t, out[0], []int64{4}, []float32{1, 2, 3, 4}, eps)
+}
+
+func TestPReluAllNegative(t *testing.T) {
+	x := NewTensor([]int64{4}, []float32{-1, -2, -3, -4})
+	slope := NewTensor([]int64{4}, []float32{0.25, 0.25, 0.25, 0.25})
+	attrs := NewAttributes()
+
+	out, err := Execute("PRelu", []*Tensor{x, slope}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTensorApprox(t, out[0], []int64{4}, []float32{-0.25, -0.5, -0.75, -1.0}, eps)
+}
+
+func TestPReluScalarSlope(t *testing.T) {
+	x := NewTensor([]int64{2, 2}, []float32{1, -2, -3, 4})
+	slope := NewTensor([]int64{1}, []float32{0.1})
+	attrs := NewAttributes()
+
+	out, err := Execute("PRelu", []*Tensor{x, slope}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{1, -0.2, -0.3, 4}, eps)
+}
+
+func TestPReluPerChannel(t *testing.T) {
+	// [1, 2, 2, 2] with slope [2, 1, 1] (per-channel)
+	x := NewTensor([]int64{1, 2, 2, 2}, []float32{
+		1, -1, 2, -2, // channel 0
+		-3, 3, -4, 4, // channel 1
+	})
+	slope := NewTensor([]int64{2, 1, 1}, []float32{0.1, 0.2})
+	attrs := NewAttributes()
+
+	out, err := Execute("PRelu", []*Tensor{x, slope}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTensorApprox(t, out[0], []int64{1, 2, 2, 2}, []float32{
+		1, -0.1, 2, -0.2, // channel 0: slope=0.1
+		-0.6, 3, -0.8, 4, // channel 1: slope=0.2
+	}, eps)
+}
+
+func TestPReluPerChannel1C11(t *testing.T) {
+	// slope shape [1,C,1,1]
+	x := NewTensor([]int64{1, 3, 1, 1}, []float32{-1, 2, -3})
+	slope := NewTensor([]int64{1, 3, 1, 1}, []float32{0.1, 0.2, 0.3})
+	attrs := NewAttributes()
+
+	out, err := Execute("PRelu", []*Tensor{x, slope}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTensorApprox(t, out[0], []int64{1, 3, 1, 1}, []float32{-0.1, 2, -0.9}, eps)
+}
+
+func TestPReluInsufficientInputs(t *testing.T) {
+	x := NewTensor([]int64{2}, []float32{1, 2})
+	attrs := NewAttributes()
+	_, err := Execute("PRelu", []*Tensor{x}, attrs)
+	if err == nil {
+		t.Fatal("expected error for insufficient inputs")
+	}
+}
+
+// ======================================================================
+// Gemm tests
+// ======================================================================
+
+func TestGemmBasicNoTranspose(t *testing.T) {
+	// A [2,3] * B [3,2] = C [2,2], alpha=1, beta=0, no bias
+	a := NewTensor([]int64{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	b := NewTensor([]int64{3, 2}, []float32{7, 8, 9, 10, 11, 12})
+	attrs := NewAttributes()
+
+	out, err := Execute("Gemm", []*Tensor{a, b}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// [1*7+2*9+3*11, 1*8+2*10+3*12] = [58, 64]
+	// [4*7+5*9+6*11, 4*8+5*10+6*12] = [139, 154]
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{58, 64, 139, 154}, eps)
+}
+
+func TestGemmTransB(t *testing.T) {
+	// A [2,3] * B^T where B is [2,3], transB=1 → B' is [3,2]
+	a := NewTensor([]int64{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	b := NewTensor([]int64{2, 3}, []float32{7, 9, 11, 8, 10, 12})
+	attrs := NewAttributes()
+	attrs.Ints["transB"] = 1
+
+	out, err := Execute("Gemm", []*Tensor{a, b}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// B^T = [[7,8],[9,10],[11,12]], same result as basic test
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{58, 64, 139, 154}, eps)
+}
+
+func TestGemmTransA(t *testing.T) {
+	// A^T where A is [3,2], transA=1 → A' is [2,3], then * B [3,2]
+	a := NewTensor([]int64{3, 2}, []float32{1, 4, 2, 5, 3, 6})
+	b := NewTensor([]int64{3, 2}, []float32{7, 8, 9, 10, 11, 12})
+	attrs := NewAttributes()
+	attrs.Ints["transA"] = 1
+
+	out, err := Execute("Gemm", []*Tensor{a, b}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A^T = [[1,2,3],[4,5,6]], same result as basic test
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{58, 64, 139, 154}, eps)
+}
+
+func TestGemmWithBias1D(t *testing.T) {
+	// A [2,3] * B [3,2] + C [2] (1D bias broadcast per row)
+	a := NewTensor([]int64{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	b := NewTensor([]int64{3, 2}, []float32{7, 8, 9, 10, 11, 12})
+	c := NewTensor([]int64{2}, []float32{100, 200})
+	attrs := NewAttributes()
+
+	out, err := Execute("Gemm", []*Tensor{a, b, c}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{158, 264, 239, 354}, eps)
+}
+
+func TestGemmWithBias2D(t *testing.T) {
+	a := NewTensor([]int64{2, 2}, []float32{1, 0, 0, 1})
+	b := NewTensor([]int64{2, 2}, []float32{5, 6, 7, 8})
+	c := NewTensor([]int64{2, 2}, []float32{10, 20, 30, 40})
+	attrs := NewAttributes()
+
+	out, err := Execute("Gemm", []*Tensor{a, b, c}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Identity * B + C = B + C
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{15, 26, 37, 48}, eps)
+}
+
+func TestGemmAlphaBeta(t *testing.T) {
+	// Y = 2.0 * A * B + 0.5 * C
+	a := NewTensor([]int64{1, 2}, []float32{1, 2})
+	b := NewTensor([]int64{2, 1}, []float32{3, 4})
+	c := NewTensor([]int64{1}, []float32{10})
+	attrs := NewAttributes()
+	attrs.Floats["alpha"] = 2.0
+	attrs.Floats["beta"] = 0.5
+
+	out, err := Execute("Gemm", []*Tensor{a, b, c}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A*B = [1*3+2*4] = [11], alpha*11 = 22, beta*10 = 5, total = 27
+	assertTensorApprox(t, out[0], []int64{1, 1}, []float32{27}, eps)
+}
+
+func TestGemmNonSquare(t *testing.T) {
+	// A [1,4] * B [4,2] = C [1,2]
+	a := NewTensor([]int64{1, 4}, []float32{1, 2, 3, 4})
+	b := NewTensor([]int64{4, 2}, []float32{1, 2, 3, 4, 5, 6, 7, 8})
+	attrs := NewAttributes()
+
+	out, err := Execute("Gemm", []*Tensor{a, b}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// [1*1+2*3+3*5+4*7, 1*2+2*4+3*6+4*8] = [50, 60]
+	assertTensorApprox(t, out[0], []int64{1, 2}, []float32{50, 60}, eps)
+}
+
+func TestGemmMobileFaceNetCase(t *testing.T) {
+	// Simulates the MobileFaceNet pattern: transB=1, weight [N,K], bias [N]
+	// A [1,4] * B^T where B is [3,4] → result [1,3] + bias [3]
+	a := NewTensor([]int64{1, 4}, []float32{1, 2, 3, 4})
+	b := NewTensor([]int64{3, 4}, []float32{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+	})
+	c := NewTensor([]int64{3}, []float32{10, 20, 30})
+	attrs := NewAttributes()
+	attrs.Ints["transB"] = 1
+
+	out, err := Execute("Gemm", []*Tensor{a, b, c}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// B^T selects first 3 elements of A: [1, 2, 3] + bias = [11, 22, 33]
+	assertTensorApprox(t, out[0], []int64{1, 3}, []float32{11, 22, 33}, eps)
+}
+
+func TestGemmDimensionMismatch(t *testing.T) {
+	a := NewTensor([]int64{2, 3}, []float32{1, 2, 3, 4, 5, 6})
+	b := NewTensor([]int64{2, 2}, []float32{1, 2, 3, 4})
+	attrs := NewAttributes()
+
+	_, err := Execute("Gemm", []*Tensor{a, b}, attrs)
+	if err == nil {
+		t.Fatal("expected error for inner dimension mismatch")
+	}
+}
+
+func TestGemmInsufficientInputs(t *testing.T) {
+	a := NewTensor([]int64{2, 2}, []float32{1, 2, 3, 4})
+	attrs := NewAttributes()
+	_, err := Execute("Gemm", []*Tensor{a}, attrs)
+	if err == nil {
+		t.Fatal("expected error for insufficient inputs")
+	}
+}
+
+func TestGemmNoBiasNonUnitAlpha(t *testing.T) {
+	// alpha=0.5, no bias
+	a := NewTensor([]int64{2, 2}, []float32{2, 0, 0, 2})
+	b := NewTensor([]int64{2, 2}, []float32{3, 0, 0, 3})
+	attrs := NewAttributes()
+	attrs.Floats["alpha"] = 0.5
+
+	out, err := Execute("Gemm", []*Tensor{a, b}, attrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A*B = [[6,0],[0,6]], * 0.5 = [[3,0],[0,3]]
+	assertTensorApprox(t, out[0], []int64{2, 2}, []float32{3, 0, 0, 3}, eps)
+}

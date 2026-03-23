@@ -8,6 +8,7 @@ import (
 func init() {
 	Register("Sigmoid", opSigmoid)
 	Register("Relu", opRelu)
+	Register("PRelu", opPRelu)
 	Register("Softmax", opSoftmax)
 }
 
@@ -78,6 +79,81 @@ func opRelu(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 		}
 	}
 
+	return []*Tensor{out}, nil
+}
+
+func opPRelu(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
+	if len(inputs) < 2 {
+		return nil, fmt.Errorf("prelu requires 2 inputs, got %d", len(inputs))
+	}
+	x, slope := inputs[0], inputs[1]
+
+	// Fast path: same shape
+	if shapesEqual(x.Shape, slope.Shape) {
+		out := newTensorUninit(x.Shape)
+		for i, v := range x.Data {
+			if v >= 0 {
+				out.Data[i] = v
+			} else {
+				out.Data[i] = slope.Data[i] * v
+			}
+		}
+		return []*Tensor{out}, nil
+	}
+
+	// Fast path: scalar slope
+	if len(slope.Shape) == 0 || len(slope.Data) == 1 {
+		sv := slope.Data[0]
+		out := newTensorUninit(x.Shape)
+		for i, v := range x.Data {
+			if v >= 0 {
+				out.Data[i] = v
+			} else {
+				out.Data[i] = sv * v
+			}
+		}
+		return []*Tensor{out}, nil
+	}
+
+	// Fast path: per-channel broadcast [N,C,H,W] with slope [C,1,1] or [1,C,1,1]
+	if spatialSize, channels, ok := isPerChannelBroadcast(x.Shape, slope.Shape); ok {
+		out := newTensorUninit(x.Shape)
+		n := int(x.Shape[0])
+		idx := 0
+		for ni := 0; ni < n; ni++ {
+			for c := 0; c < channels; c++ {
+				sv := slope.Data[c]
+				for s := 0; s < spatialSize; s++ {
+					v := x.Data[idx]
+					if v >= 0 {
+						out.Data[idx] = v
+					} else {
+						out.Data[idx] = sv * v
+					}
+					idx++
+				}
+			}
+		}
+		return []*Tensor{out}, nil
+	}
+
+	// Generic broadcast fallback
+	outShape, err := broadcastShapes(x.Shape, slope.Shape)
+	if err != nil {
+		return nil, fmt.Errorf("prelu: %w", err)
+	}
+	size := int(tensorSize(outShape))
+	out := newTensorUninit(outShape)
+	for i := 0; i < size; i++ {
+		xi := broadcastIndex(int64(i), outShape, x.Shape)
+		si := broadcastIndex(int64(i), outShape, slope.Shape)
+		v := x.Data[xi]
+		if v >= 0 {
+			out.Data[i] = v
+		} else {
+			out.Data[i] = slope.Data[si] * v
+		}
+	}
 	return []*Tensor{out}, nil
 }
 

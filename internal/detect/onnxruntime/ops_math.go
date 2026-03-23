@@ -8,6 +8,7 @@ func init() {
 	Register("Mul", opMul)
 	Register("Div", opDiv)
 	Register("MatMul", opMatMul)
+	Register("Gemm", opGemm)
 }
 
 // shapesEqual returns true if two shapes are identical.
@@ -192,6 +193,118 @@ func binaryOpSlow(a, b *Tensor, op func(x, y float32) float32) ([]*Tensor, error
 	return []*Tensor{out}, nil
 }
 
+// transposeMatrix2D returns a new row-major matrix with rows and columns swapped.
+// src is (rows x cols), result is (cols x rows). Uses pooled buffer.
+func transposeMatrix2D(src []float32, rows, cols int) []float32 {
+	dst := getGemmBuffer(rows * cols)
+	for i := range rows {
+		for j := range cols {
+			dst[j*rows+i] = src[i*cols+j]
+		}
+	}
+	return dst
+}
+
+func opGemm(inputs []*Tensor, attrs *Attributes) ([]*Tensor, error) {
+	if len(inputs) < 2 {
+		return nil, fmt.Errorf("gemm requires at least 2 inputs, got %d", len(inputs))
+	}
+	a, b := inputs[0], inputs[1]
+
+	if len(a.Shape) != 2 || len(b.Shape) != 2 {
+		return nil, fmt.Errorf("gemm requires 2D inputs, got %dD and %dD", len(a.Shape), len(b.Shape))
+	}
+
+	alpha := attrs.GetFloat("alpha", 1.0)
+	beta := attrs.GetFloat("beta", 1.0)
+	transA := attrs.GetInt("transA", 0) != 0
+	transB := attrs.GetInt("transB", 0) != 0
+
+	// Determine M, K from A (possibly transposed)
+	aRows, aCols := int(a.Shape[0]), int(a.Shape[1])
+	var m, k int
+	if transA {
+		m, k = aCols, aRows
+	} else {
+		m, k = aRows, aCols
+	}
+
+	// Determine K2, N from B (possibly transposed)
+	bRows, bCols := int(b.Shape[0]), int(b.Shape[1])
+	var k2, n int
+	if transB {
+		k2, n = bCols, bRows
+	} else {
+		k2, n = bRows, bCols
+	}
+
+	if k != k2 {
+		return nil, fmt.Errorf("gemm: inner dimensions mismatch %d vs %d", k, k2)
+	}
+
+	// Prepare row-major A' and B' for Sgemm (which computes C = A' * B')
+	aData := a.Data
+	if transA {
+		aData = transposeMatrix2D(a.Data, aRows, aCols)
+	}
+	bData := b.Data
+	if transB {
+		bData = transposeMatrix2D(b.Data, bRows, bCols)
+	}
+
+	// C = A' * B' via Sgemm
+	result := Sgemm(aData, bData, m, n, k)
+
+	// Return transpose buffers to pool
+	if transA {
+		putGemmBuffer(aData)
+	}
+	if transB {
+		putGemmBuffer(bData)
+	}
+
+	// Apply alpha if not 1.0
+	if alpha != 1.0 {
+		for i := range result {
+			result[i] *= alpha
+		}
+	}
+
+	// Add beta * C (bias) if provided
+	if len(inputs) > 2 && inputs[2] != nil && beta != 0 {
+		c := inputs[2]
+		if len(c.Shape) == 1 && c.Shape[0] == int64(n) {
+			// 1D bias broadcast: add to each row
+			for i := range m {
+				for j := range n {
+					result[i*n+j] += beta * c.Data[j]
+				}
+			}
+		} else if len(c.Shape) == 2 && c.Shape[0] == int64(m) && c.Shape[1] == int64(n) {
+			// 2D bias: element-wise add
+			for i := range result {
+				result[i] += beta * c.Data[i]
+			}
+		} else if len(c.Shape) == 0 || len(c.Data) == 1 {
+			// Scalar bias
+			bv := beta * c.Data[0]
+			for i := range result {
+				result[i] += bv
+			}
+		} else {
+			putGemmBuffer(result)
+			return nil, fmt.Errorf("gemm: unsupported bias shape %v for output [%d, %d]", c.Shape, m, n)
+		}
+	}
+
+	// Copy result into properly-pooled tensor and return Sgemm buffer
+	outShape := []int64{int64(m), int64(n)}
+	out := NewTensor(outShape, nil)
+	copy(out.Data, result)
+	putGemmBuffer(result)
+	return []*Tensor{out}, nil
+}
+
 func opMatMul(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 	if len(inputs) < 2 {
 		return nil, fmt.Errorf("matMul requires 2 inputs, got %d", len(inputs))
@@ -234,7 +347,7 @@ func opMatMul(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 
 	out := NewTensor(outShape, nil)
 
-	for batch := 0; batch < batchSize; batch++ {
+	for batch := range batchSize {
 		ai := int(broadcastIndex(int64(batch), batchShape, aBatch)) * aMatSize
 		bi := int(broadcastIndex(int64(batch), batchShape, bBatch)) * bMatSize
 		oi := batch * outMatSize
