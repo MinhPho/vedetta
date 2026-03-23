@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rvben/vedetta/internal/auth"
@@ -47,7 +48,7 @@ type Server struct {
 	httpSrv  *http.Server
 	mux      *http.ServeMux
 	funcMap  template.FuncMap
-	ready    bool
+	ready    atomic.Bool
 }
 
 func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Server {
@@ -162,7 +163,7 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-	handler := authMiddleware(s.auth, s.mux)
+	handler := s.readyMiddleware(authMiddleware(s.auth, s.mux))
 
 	s.httpSrv = &http.Server{
 		Addr:              addr,
@@ -199,8 +200,31 @@ func (s *Server) SetSubsystems(cameras *camera.Manager, recorder *recording.Reco
 	s.hub = hub
 	s.streams = stream.NewStreamManager(hub)
 	s.mse = stream.NewMSEManager(hub)
-	s.ready = true
+	s.ready.Store(true)
 	slog.Info("API server ready (all subsystems initialized)")
+}
+
+// readyMiddleware serves static files immediately but returns 503 for API/partial
+// endpoints until subsystems are initialized.
+func (s *Server) readyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.ready.Load() && (strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/partials/")) {
+			// Return JSON for API, HTML for partials
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "5")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"status":"starting","message":"Vedetta is initializing..."}`))
+			} else {
+				w.Header().Set("Content-Type", "text/html")
+				w.Header().Set("Retry-After", "5")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`<div class="empty-state"><p>Vedetta is starting up...</p></div>`))
+			}
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // --- Helper functions ---
