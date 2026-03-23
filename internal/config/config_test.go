@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,6 +65,14 @@ func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
+	if !strings.Contains(content, "\nauth:") && !strings.HasPrefix(strings.TrimSpace(content), "auth:") {
+		content += `
+auth:
+  users:
+    - username: admin
+      password_hash: "$2a$10$7EqJtq98hPqEX7fNZaFWoOHi8V6I5WJFlQ7Y7S6d6n9zQ0jD4S3yu"
+`
+	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
@@ -107,6 +116,7 @@ cameras:
 	}
 
 	cam := cfg.Cameras[0]
+	configDir := filepath.Dir(path)
 
 	// Detect stream defaults
 	if cam.Detect.Width != 640 {
@@ -131,7 +141,7 @@ cameras:
 	}
 
 	// Camera enabled by default
-	if !cam.Enabled {
+	if !cam.IsEnabled() {
 		t.Error("camera should be enabled by default")
 	}
 
@@ -139,13 +149,13 @@ cameras:
 	if cfg.Detect.ScoreThreshold != 0.65 {
 		t.Errorf("score_threshold = %f, want 0.65", cfg.Detect.ScoreThreshold)
 	}
-	if cfg.Detect.MotionThreshold != 0.02 {
-		t.Errorf("motion_threshold = %f, want 0.02", cfg.Detect.MotionThreshold)
+	if cfg.Detect.Motion.MinRegionScore != 0.02 {
+		t.Errorf("motion.min_region_score = %f, want 0.02", cfg.Detect.Motion.MinRegionScore)
 	}
 
 	// Recording defaults
-	if cfg.Recording.Path != "./recordings" {
-		t.Errorf("recording path = %q, want ./recordings", cfg.Recording.Path)
+	if cfg.Recording.Path != filepath.Join(configDir, "recordings") {
+		t.Errorf("recording path = %q, want %q", cfg.Recording.Path, filepath.Join(configDir, "recordings"))
 	}
 	if cfg.Recording.PreCapture != 5*time.Second {
 		t.Errorf("pre_capture = %v, want 5s", cfg.Recording.PreCapture)
@@ -170,16 +180,16 @@ cameras:
 	if cfg.Events.CooldownSeconds != 30 {
 		t.Errorf("cooldown_seconds = %d, want 30", cfg.Events.CooldownSeconds)
 	}
-	if cfg.Events.SnapshotPath != "./snapshots" {
-		t.Errorf("snapshot_path = %q, want ./snapshots", cfg.Events.SnapshotPath)
+	if cfg.Events.SnapshotPath != filepath.Join(configDir, "snapshots") {
+		t.Errorf("snapshot_path = %q, want %q", cfg.Events.SnapshotPath, filepath.Join(configDir, "snapshots"))
 	}
 	if cfg.Events.SnapshotQuality != 85 {
 		t.Errorf("snapshot_quality = %d, want 85", cfg.Events.SnapshotQuality)
 	}
 
 	// Storage defaults
-	if cfg.Storage.DBPath != "./vedetta.db" {
-		t.Errorf("db_path = %q, want ./vedetta.db", cfg.Storage.DBPath)
+	if cfg.Storage.DBPath != filepath.Join(configDir, "vedetta.db") {
+		t.Errorf("db_path = %q, want %q", cfg.Storage.DBPath, filepath.Join(configDir, "vedetta.db"))
 	}
 
 	// API defaults
