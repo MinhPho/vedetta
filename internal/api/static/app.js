@@ -2390,6 +2390,78 @@ function addObjectReference(objectId, objectName, eventId) {
   });
 }
 
+// ─── Real-time Event Stream (SSE) ───
+(function() {
+  var evtSource = null;
+  var reconnectTimer = null;
+
+  function connectSSE() {
+    if (evtSource) return;
+    evtSource = new EventSource('/api/events/stream');
+
+    evtSource.onmessage = function(e) {
+      try {
+        var msg = JSON.parse(e.data);
+        if (msg.type === 'doorbell') {
+          showDoorbellNotification(msg.data);
+        }
+      } catch(err) {}
+    };
+
+    evtSource.onerror = function() {
+      evtSource.close();
+      evtSource = null;
+      if (!reconnectTimer) {
+        reconnectTimer = setTimeout(function() {
+          reconnectTimer = null;
+          connectSSE();
+        }, 5000);
+      }
+    };
+  }
+
+  function showDoorbellNotification(data) {
+    var person = data.person || 'Someone';
+    var camera = (data.camera || '').replace(/_/g, ' ');
+
+    // Create notification banner
+    var banner = document.createElement('div');
+    banner.className = 'doorbell-notification';
+    banner.innerHTML = '<div class="doorbell-notification-inner">'
+      + '<div class="doorbell-icon">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
+      + '</div>'
+      + '<div class="doorbell-content">'
+      + '<div class="doorbell-title">' + person + ' at the door</div>'
+      + '<div class="doorbell-meta">' + camera + '</div>'
+      + '</div>'
+      + '<img class="doorbell-snapshot" src="/api/cameras/' + data.camera + '/snapshot?t=' + Date.now() + '" alt="snapshot">'
+      + '<button class="doorbell-close" onclick="this.parentElement.parentElement.remove()">&times;</button>'
+      + '</div>';
+
+    banner.addEventListener('click', function(e) {
+      if (e.target.tagName === 'BUTTON') return;
+      window.location.href = '/camera.html?name=' + data.camera;
+    });
+
+    document.body.appendChild(banner);
+
+    // Auto-dismiss after 30 seconds
+    setTimeout(function() {
+      if (banner.parentElement) banner.remove();
+    }, 30000);
+
+    // Play notification sound if available
+    try {
+      var audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQ==');
+      audio.volume = 0.3;
+      audio.play().catch(function(){});
+    } catch(e) {}
+  }
+
+  connectSSE();
+})();
+
 // Poll health every 30 seconds
 pollHealth();
 setInterval(pollHealth, 30000);

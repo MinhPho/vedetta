@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -67,6 +68,10 @@ type Server struct {
 	mux            *http.ServeMux
 	funcMap        template.FuncMap
 	ready          atomic.Bool
+
+	// SSE event bus for real-time browser notifications
+	sseMu      sync.Mutex
+	sseClients map[chan []byte]struct{}
 }
 
 func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Server {
@@ -74,7 +79,8 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 		config: cfg,
 		auth:   authChecker,
 		db:     db,
-		mux:    http.NewServeMux(),
+		mux:        http.NewServeMux(),
+		sseClients: make(map[chan []byte]struct{}),
 	}
 
 	s.funcMap = template.FuncMap{
@@ -180,8 +186,9 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("DELETE /api/objects/sightings/{id}", s.handleDismissSighting)
 	s.mux.HandleFunc("POST /api/events/{id}/identify", s.handleIdentifyEvent)
 
-	// Doorbell
+	// Doorbell + real-time events
 	s.mux.HandleFunc("POST /api/cameras/{name}/doorbell", s.handleDoorbellPress)
+	s.mux.HandleFunc("GET /api/events/stream", s.handleSSE)
 
 	// Streaming endpoints
 	s.mux.HandleFunc("POST /api/cameras/{name}/webrtc/offer", s.handleWebRTCOffer)
@@ -302,10 +309,81 @@ func (s *Server) TriggerDoorbell(cameraName string) {
 	}
 
 	slog.Info("doorbell event created", "camera", cameraName, "event", eventID, "person", ev.SubLabel)
+
+	s.broadcastSSE("doorbell", map[string]string{
+		"event_id": eventID,
+		"camera":   cameraName,
+		"person":   ev.SubLabel,
+	})
 }
 
 func (s *Server) SetMQTT(publisher MQTTPublisher) {
 	s.mqttClient = publisher
+}
+
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ch := make(chan []byte, 10)
+	s.sseMu.Lock()
+	s.sseClients[ch] = struct{}{}
+	s.sseMu.Unlock()
+
+	defer func() {
+		s.sseMu.Lock()
+		delete(s.sseClients, ch)
+		s.sseMu.Unlock()
+	}()
+
+	// Send initial keepalive
+	fmt.Fprintf(w, ": connected\n\n")
+	flusher.Flush()
+
+	ctx := r.Context()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case data := <-ch:
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) broadcastSSE(eventType string, data any) {
+	payload, err := json.Marshal(map[string]any{
+		"type": eventType,
+		"data": data,
+	})
+	if err != nil {
+		return
+	}
+
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	for ch := range s.sseClients {
+		select {
+		case ch <- payload:
+		default:
+			// Client too slow, skip
+		}
+	}
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -573,6 +651,12 @@ func (s *Server) handleDoorbellPress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("doorbell pressed", "camera", name, "event", eventID, "person", ev.SubLabel)
+
+	s.broadcastSSE("doorbell", map[string]string{
+		"event_id": eventID,
+		"camera":   name,
+		"person":   ev.SubLabel,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"event_id": eventID,
