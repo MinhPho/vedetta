@@ -171,6 +171,31 @@ func main() {
 	// Sync zones from config to DB and load them into cameras
 	syncConfigZones(db, cfg.Cameras, manager)
 
+	// Publish HA discovery for zone presence sensors
+	if mqttClient != nil {
+		var zoneInfos []mqtt.ZoneInfo
+		for _, camCfg := range cfg.Cameras {
+			if !camCfg.IsEnabled() {
+				continue
+			}
+			zones, err := db.ListZones(camCfg.Name)
+			if err != nil {
+				continue
+			}
+			for _, z := range zones {
+				if !z.TrackPresence || !z.Enabled {
+					continue
+				}
+				for _, label := range z.Labels {
+					zoneInfos = append(zoneInfos, mqtt.ZoneInfo{ZoneName: z.Name, Label: label})
+				}
+			}
+		}
+		if len(zoneInfos) > 0 {
+			mqttClient.PublishPresenceDiscovery(zoneInfos)
+		}
+	}
+
 	manager.Start(ctx)
 
 	// Periodically publish camera online/offline status to MQTT.
@@ -312,18 +337,21 @@ func main() {
 					}
 				}
 
-				var matchedObjects []string
-				if objectEmbedder != nil && event.SnapshotImage != nil {
-					matchedObjects = matchEventToKnownObjects(db, objectEmbedder, event)
-				}
-
 				if mqttClient != nil {
-					if err := mqttClient.PublishEvent(event, matchedObjects); err != nil {
+					if err := mqttClient.PublishEvent(event, nil); err != nil {
 						slog.Error("failed to publish event", "error", err)
 					}
-					for _, name := range matchedObjects {
-						mqttClient.PublishObjectSighting(name, event)
-					}
+				}
+
+				if objectEmbedder != nil && event.SnapshotImage != nil {
+					go func(ev camera.Event) {
+						matched := matchEventToKnownObjects(db, objectEmbedder, ev)
+						if mqttClient != nil {
+							for _, name := range matched {
+								mqttClient.PublishObjectSighting(name, ev)
+							}
+						}
+					}(event)
 				}
 
 				// Start temporary recording if continuous is off
@@ -369,7 +397,11 @@ func main() {
 					slog.Error("failed to persist presence event", "zone", pe.ZoneName, "label", pe.Label, "error", err)
 				}
 				if mqttClient != nil {
-					mqttClient.PublishPresence(pe)
+					var objectName string
+					if pe.Type == "zone_enter" {
+						objectName = db.LatestObjectNameForZone(pe.ZoneName, pe.Label)
+					}
+					mqttClient.PublishPresence(pe, objectName)
 				}
 
 			case fe := <-faceEvents:

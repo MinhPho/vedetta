@@ -14,9 +14,10 @@ import (
 // Publisher defines the interface for MQTT publishing operations.
 type Publisher interface {
 	PublishEvent(event camera.Event, matchedObjects []string) error
-	PublishPresence(pe camera.PresenceEvent)
+	PublishPresence(pe camera.PresenceEvent, objectName string)
 	PublishCameraStatus(cameraName string, online bool)
 	PublishDiscovery(cameraNames []string)
+	PublishPresenceDiscovery(zones []ZoneInfo)
 	Close()
 }
 
@@ -94,16 +95,20 @@ func (c *Client) PublishEvent(event camera.Event, matchedObjects []string) error
 	return token.Error()
 }
 
-func (c *Client) PublishPresence(pe camera.PresenceEvent) {
+func (c *Client) PublishPresence(pe camera.PresenceEvent, objectName string) {
 	state := "entered"
 	if pe.Type == "zone_leave" {
 		state = "left"
 	}
-	payload, err := json.Marshal(map[string]string{
+	m := map[string]string{
 		"zone":  pe.ZoneName,
 		"label": pe.Label,
 		"state": state,
-	})
+	}
+	if objectName != "" {
+		m["object"] = objectName
+	}
+	payload, err := json.Marshal(m)
 	if err != nil {
 		return
 	}
@@ -129,7 +134,7 @@ func (c *Client) PublishObjectSighting(objectName string, event camera.Event) {
 	}
 
 	topic := fmt.Sprintf("%s/objects/%s/sighted", c.topic, sanitizeName(objectName))
-	token := c.client.Publish(topic, 1, false, payload)
+	token := c.client.Publish(topic, 1, true, payload)
 	token.Wait()
 	if token.Error() != nil {
 		slog.Error("failed to publish object sighting", "object", objectName, "error", token.Error())
@@ -168,6 +173,56 @@ func (c *Client) PublishObjectDiscovery(objects []ObjectInfo) {
 type ObjectInfo struct {
 	Name  string
 	Label string
+}
+
+// ZoneInfo carries the minimal info needed for zone presence MQTT discovery.
+type ZoneInfo struct {
+	ZoneName string
+	Label    string
+}
+
+// PublishPresenceDiscovery publishes HA binary_sensor discovery for each zone+label combination.
+func (c *Client) PublishPresenceDiscovery(zones []ZoneInfo) {
+	for _, z := range zones {
+		c.publishPresenceSensorDiscovery(z)
+	}
+}
+
+func (c *Client) publishPresenceSensorDiscovery(z ZoneInfo) {
+	zoneSafe := sanitizeName(z.ZoneName)
+	labelSafe := sanitizeName(z.Label)
+	objectID := fmt.Sprintf("vedetta_%s_%s", zoneSafe, labelSafe)
+
+	device := haDevice{
+		Identifiers:  []string{"vedetta_zone_" + zoneSafe},
+		Name:         "Vedetta " + z.ZoneName,
+		Manufacturer: "Vedetta",
+		Model:        "Zone Presence",
+	}
+
+	sensorConfig := haPresenceSensorConfig{
+		Name:              fmt.Sprintf("%s %s", z.ZoneName, z.Label),
+		UniqueID:          objectID,
+		StateTopic:        fmt.Sprintf("%s/presence/%s/%s", c.topic, zoneSafe, labelSafe),
+		AvailabilityTopic: c.topic + "/availability",
+		DeviceClass:       "occupancy",
+		ValueTemplate:     "{{ value_json.state }}",
+		PayloadOn:         "entered",
+		PayloadOff:        "left",
+		Device:            device,
+	}
+
+	payload, err := json.Marshal(sensorConfig)
+	if err != nil {
+		return
+	}
+
+	topic := fmt.Sprintf("homeassistant/binary_sensor/%s/config", objectID)
+	token := c.client.Publish(topic, 1, true, payload)
+	token.Wait()
+	if token.Error() != nil {
+		slog.Error("failed to publish presence discovery", "zone", z.ZoneName, "label", z.Label, "error", token.Error())
+	}
 }
 
 func (c *Client) publishObjectTriggerDiscovery(obj ObjectInfo) {
@@ -284,6 +339,18 @@ type haBinarySensorConfig struct {
 	StateTopic        string   `json:"state_topic"`
 	AvailabilityTopic string   `json:"availability_topic"`
 	DeviceClass       string   `json:"device_class"`
+	PayloadOn         string   `json:"payload_on"`
+	PayloadOff        string   `json:"payload_off"`
+	Device            haDevice `json:"device"`
+}
+
+type haPresenceSensorConfig struct {
+	Name              string   `json:"name"`
+	UniqueID          string   `json:"unique_id"`
+	StateTopic        string   `json:"state_topic"`
+	AvailabilityTopic string   `json:"availability_topic"`
+	DeviceClass       string   `json:"device_class"`
+	ValueTemplate     string   `json:"value_template"`
 	PayloadOn         string   `json:"payload_on"`
 	PayloadOff        string   `json:"payload_off"`
 	Device            haDevice `json:"device"`
