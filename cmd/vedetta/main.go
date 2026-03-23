@@ -362,24 +362,16 @@ func main() {
 						face.Similarity = &similarity
 					}
 
-					faceID, saveErr := db.SaveFace(face)
-					if saveErr != nil {
+					if _, saveErr := db.SaveFace(face); saveErr != nil {
 						slog.Error("failed to save face", "error", saveErr)
 						continue
 					}
 
-					if personID == 0 {
-						newPID, createErr := db.SavePerson("", false, detect.Float32ToBytes(result.Embedding))
-						if createErr != nil {
-							slog.Error("failed to create person for face", "error", createErr)
-							continue
-						}
-						sim := 1.0
-						_ = db.UpdateFacePerson(faceID, newPID, sim)
-						slog.Info("new person created from face", "person_id", newPID, "camera", fe.Camera)
-					} else {
+					if personID > 0 {
 						updatePersonCentroid(db, personID, result.Embedding)
 						slog.Info("face matched to person", "person_id", personID, "similarity", fmt.Sprintf("%.3f", similarity), "camera", fe.Camera)
+					} else {
+						slog.Info("unmatched face saved", "camera", fe.Camera, "event", fe.EventID)
 					}
 				}
 			}
