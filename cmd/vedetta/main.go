@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"log/slog"
 	"math"
 	"net/http"
@@ -340,6 +343,11 @@ func main() {
 				if mqttClient != nil {
 					if err := mqttClient.PublishEvent(event, nil); err != nil {
 						slog.Error("failed to publish event", "error", err)
+					}
+					if event.SnapshotImage != nil {
+						if jpegData := encodeJPEG(event.SnapshotImage, cfg.Events.SnapshotQuality); jpegData != nil {
+							mqttClient.PublishSnapshot(event.CameraName, event.Label, jpegData)
+						}
 					}
 				}
 
@@ -733,6 +741,14 @@ func reconcileEventMediaAvailability(db *storage.DB) {
 
 func cooldownKey(event camera.Event) string {
 	return event.CameraName + "|" + event.Label + "|" + event.ZoneName
+}
+
+func encodeJPEG(img *image.RGBA, quality int) []byte {
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+		return nil
+	}
+	return buf.Bytes()
 }
 
 func runHashPassword(args []string) {
