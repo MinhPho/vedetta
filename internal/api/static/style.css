@@ -498,16 +498,6 @@ input, select { font-family: inherit; }
   opacity: 0.75;
 }
 
-.cam-live-dot.motion {
-  background: var(--amber);
-  animation: pulse-dot 0.8s ease-in-out infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
-  50% { opacity: 0.7; box-shadow: 0 0 0 4px transparent; }
-}
-
 /* FPS overlay */
 .cam-fps {
   position: absolute;
