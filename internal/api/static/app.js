@@ -55,6 +55,52 @@ function toast(message, type) {
   setTimeout(() => div.remove(), 4000);
 }
 
+function readCookie(name) {
+  var prefix = name + '=';
+  var parts = document.cookie ? document.cookie.split(';') : [];
+  for (var i = 0; i < parts.length; i++) {
+    var cookie = parts[i].trim();
+    if (cookie.indexOf(prefix) === 0) {
+      return decodeURIComponent(cookie.slice(prefix.length));
+    }
+  }
+  return '';
+}
+
+function isUnsafeMethod(method) {
+  method = (method || 'GET').toUpperCase();
+  return method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+}
+
+var nativeFetch = window.fetch.bind(window);
+window.fetch = function(input, init) {
+  init = init || {};
+  var method = init.method || 'GET';
+  var headers = new Headers(init.headers || {});
+  if (isUnsafeMethod(method)) {
+    var csrf = readCookie('vedetta_csrf');
+    if (csrf && !headers.has('X-CSRF-Token')) {
+      headers.set('X-CSRF-Token', csrf);
+    }
+  }
+  return nativeFetch(input, Object.assign({}, init, { headers: headers })).then(function(resp) {
+    if (resp.status === 401 && location.pathname !== '/login.html') {
+      location.href = '/login.html?next=' + encodeURIComponent(location.pathname + location.search + location.hash);
+    }
+    return resp;
+  });
+};
+
+document.body.addEventListener('htmx:configRequest', function(evt) {
+  var method = evt.detail.verb || evt.detail.method || 'GET';
+  if (isUnsafeMethod(method)) {
+    var csrf = readCookie('vedetta_csrf');
+    if (csrf) {
+      evt.detail.headers['X-CSRF-Token'] = csrf;
+    }
+  }
+});
+
 // ─── MSE over WebSocket ───
 function startMSE() {
   var name = getCameraName();
@@ -2279,6 +2325,36 @@ function zoneColor(z) {
   return { stroke: 'var(--blue)', fill: 'rgba(68, 138, 255, 0.15)' };
 }
 
+function zoneRectPoints(x1, y1, x2, y2) {
+  return [
+    [x1, y1],
+    [x2, y1],
+    [x2, y2],
+    [x1, y2]
+  ];
+}
+
+function zoneBounds(points) {
+  if (!points || !points.length) return { x1: 0, y1: 0, x2: 0, y2: 0 };
+  var x1 = points[0][0];
+  var y1 = points[0][1];
+  var x2 = x1;
+  var y2 = y1;
+  points.forEach(function(point) {
+    x1 = Math.min(x1, point[0]);
+    y1 = Math.min(y1, point[1]);
+    x2 = Math.max(x2, point[0]);
+    y2 = Math.max(y2, point[1]);
+  });
+  return { x1: x1, y1: y1, x2: x2, y2: y2 };
+}
+
+function zoneSvgPoints(points) {
+  return (points || []).map(function(point) {
+    return (point[0] * 100) + ',' + (point[1] * 100);
+  }).join(' ');
+}
+
 function initZones() {
   var name = getCameraName();
   if (!name) return;
@@ -2316,6 +2392,8 @@ function loadZones() {
 function renderZoneOverlay() {
   var svg = el('zone-overlay');
   if (!svg) return;
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('preserveAspectRatio', 'none');
 
   // Keep any in-progress draw rect
   var drawRect = zoneDragRect;
@@ -2328,35 +2406,29 @@ function renderZoneOverlay() {
 
   zoneData.forEach(function(z) {
     var colors = zoneColor(z);
-    var x = z.x1 * 100;
-    var y = z.y1 * 100;
-    var w = (z.x2 - z.x1) * 100;
-    var h = (z.y2 - z.y1) * 100;
+    var points = z.points || zoneRectPoints(z.x1 || 0, z.y1 || 0, z.x2 || 0, z.y2 || 0);
+    var bounds = zoneBounds(points);
 
-    var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x + '%');
-    rect.setAttribute('y', y + '%');
-    rect.setAttribute('width', w + '%');
-    rect.setAttribute('height', h + '%');
-    rect.setAttribute('fill', colors.fill);
-    rect.setAttribute('stroke', colors.stroke);
-    rect.setAttribute('stroke-width', '2');
-    rect.setAttribute('rx', '3');
-    rect.classList.add('zone-rect');
-    rect.dataset.zoneName = z.name;
-    if (zoneEditing === z.name) rect.classList.add('selected');
+    var polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    polygon.setAttribute('points', zoneSvgPoints(points));
+    polygon.setAttribute('fill', colors.fill);
+    polygon.setAttribute('stroke', colors.stroke);
+    polygon.setAttribute('stroke-width', '2');
+    polygon.classList.add('zone-rect');
+    polygon.dataset.zoneName = z.name;
+    if (zoneEditing === z.name) polygon.classList.add('selected');
 
-    rect.addEventListener('click', function(e) {
+    polygon.addEventListener('click', function(e) {
       e.stopPropagation();
       if (!zoneDrawing) zoneSelect(z.name);
     });
 
-    svg.appendChild(rect);
+    svg.appendChild(polygon);
 
     // Label text
     var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('x', (x + 0.5) + '%');
-    text.setAttribute('y', (y + 4) + '%');
+    text.setAttribute('x', (bounds.x1 * 100) + 0.5);
+    text.setAttribute('y', (bounds.y1 * 100) + 4);
     text.classList.add('zone-label-text');
     text.textContent = z.name;
     svg.appendChild(text);
@@ -2385,10 +2457,10 @@ function setupZoneDrawEvents() {
     zoneDragStart = pct;
 
     zoneDragRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    zoneDragRect.setAttribute('x', pct.x + '%');
-    zoneDragRect.setAttribute('y', pct.y + '%');
-    zoneDragRect.setAttribute('width', '0%');
-    zoneDragRect.setAttribute('height', '0%');
+    zoneDragRect.setAttribute('x', pct.x);
+    zoneDragRect.setAttribute('y', pct.y);
+    zoneDragRect.setAttribute('width', '0');
+    zoneDragRect.setAttribute('height', '0');
     zoneDragRect.setAttribute('fill', 'rgba(0, 229, 255, 0.15)');
     zoneDragRect.setAttribute('stroke', 'var(--cyan)');
     zoneDragRect.setAttribute('stroke-width', '2');
@@ -2406,10 +2478,10 @@ function setupZoneDrawEvents() {
     var x2 = Math.max(zoneDragStart.x, pct.x);
     var y2 = Math.max(zoneDragStart.y, pct.y);
 
-    zoneDragRect.setAttribute('x', x1 + '%');
-    zoneDragRect.setAttribute('y', y1 + '%');
-    zoneDragRect.setAttribute('width', (x2 - x1) + '%');
-    zoneDragRect.setAttribute('height', (y2 - y1) + '%');
+    zoneDragRect.setAttribute('x', x1);
+    zoneDragRect.setAttribute('y', y1);
+    zoneDragRect.setAttribute('width', (x2 - x1));
+    zoneDragRect.setAttribute('height', (y2 - y1));
   });
 
   svg.addEventListener('mouseup', function(e) {
@@ -2449,9 +2521,10 @@ function setupZoneDrawEvents() {
 
     // Show form for the new zone
     zoneEditing = null;
+    var points = zoneRectPoints(x1, y1, x2, y2);
     showZoneForm({
       name: '',
-      x1: x1, y1: y1, x2: x2, y2: y2,
+      points: points,
       labels: [],
       track_presence: false,
       face_recognition: false,
@@ -2469,10 +2542,10 @@ function setupZoneDrawEvents() {
     zoneDragStart = pct;
 
     zoneDragRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    zoneDragRect.setAttribute('x', pct.x + '%');
-    zoneDragRect.setAttribute('y', pct.y + '%');
-    zoneDragRect.setAttribute('width', '0%');
-    zoneDragRect.setAttribute('height', '0%');
+    zoneDragRect.setAttribute('x', pct.x);
+    zoneDragRect.setAttribute('y', pct.y);
+    zoneDragRect.setAttribute('width', '0');
+    zoneDragRect.setAttribute('height', '0');
     zoneDragRect.setAttribute('fill', 'rgba(0, 229, 255, 0.15)');
     zoneDragRect.setAttribute('stroke', 'var(--cyan)');
     zoneDragRect.setAttribute('stroke-width', '2');
@@ -2492,10 +2565,10 @@ function setupZoneDrawEvents() {
     var x2 = Math.max(zoneDragStart.x, pct.x);
     var y2 = Math.max(zoneDragStart.y, pct.y);
 
-    zoneDragRect.setAttribute('x', x1 + '%');
-    zoneDragRect.setAttribute('y', y1 + '%');
-    zoneDragRect.setAttribute('width', (x2 - x1) + '%');
-    zoneDragRect.setAttribute('height', (y2 - y1) + '%');
+    zoneDragRect.setAttribute('x', x1);
+    zoneDragRect.setAttribute('y', y1);
+    zoneDragRect.setAttribute('width', (x2 - x1));
+    zoneDragRect.setAttribute('height', (y2 - y1));
   }, { passive: false });
 
   svg.addEventListener('touchend', function(e) {
@@ -2532,9 +2605,10 @@ function setupZoneDrawEvents() {
     el('btn-zone-cancel').classList.add('hidden');
 
     zoneEditing = null;
+    var points = zoneRectPoints(x1, y1, x2, y2);
     showZoneForm({
       name: '',
-      x1: x1, y1: y1, x2: x2, y2: y2,
+      points: points,
       labels: [],
       track_presence: false,
       face_recognition: false,
@@ -2602,11 +2676,7 @@ function showZoneForm(z) {
   el('zone-face-recognition').checked = !!z.face_recognition;
   el('zone-enabled').checked = z.enabled !== false;
 
-  // Store coords on the form for saving
-  form.dataset.x1 = z.x1;
-  form.dataset.y1 = z.y1;
-  form.dataset.x2 = z.x2;
-  form.dataset.y2 = z.y2;
+  form.dataset.points = JSON.stringify(z.points || zoneRectPoints(z.x1 || 0, z.y1 || 0, z.x2 || 0, z.y2 || 0));
 
   // Show delete button only when editing
   var delBtn = el('btn-zone-delete');
@@ -2648,10 +2718,7 @@ function zoneSave() {
 
   var payload = {
     name: zoneName,
-    x1: parseFloat(form.dataset.x1),
-    y1: parseFloat(form.dataset.y1),
-    x2: parseFloat(form.dataset.x2),
-    y2: parseFloat(form.dataset.y2),
+    points: JSON.parse(form.dataset.points || '[]'),
     labels: labels,
     track_presence: el('zone-track-presence').checked,
     face_recognition: el('zone-face-recognition').checked,

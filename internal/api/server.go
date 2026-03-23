@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"html/template"
 	"image"
+	"image/draw"
 	"image/jpeg"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -22,6 +25,7 @@ import (
 	"github.com/rvben/vedetta/internal/auth"
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/detect"
 	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/recording"
 	"github.com/rvben/vedetta/internal/rtsp"
@@ -37,18 +41,22 @@ var staticFiles embed.FS
 var startTime = time.Now()
 
 type Server struct {
-	config   config.APIConfig
-	auth     *auth.Checker
-	db       *storage.DB
-	cameras  *camera.Manager
-	recorder *recording.Recorder
-	hub      *rtsp.Hub
-	streams  *stream.StreamManager
-	mse      *stream.MSEManager
-	httpSrv  *http.Server
-	mux      *http.ServeMux
-	funcMap  template.FuncMap
-	ready    atomic.Bool
+	config         config.APIConfig
+	auth           *auth.Checker
+	db             *storage.DB
+	cameras        *camera.Manager
+	recorder       *recording.Recorder
+	hub            *rtsp.Hub
+	streams        *stream.StreamManager
+	mse            *stream.MSEManager
+	faceRecognizer *detect.FaceRecognizer
+	snapshotPath   string
+	faceCropDir    string
+	cameraConfigs  []config.CameraConfig
+	httpSrv        *http.Server
+	mux            *http.ServeMux
+	funcMap        template.FuncMap
+	ready          atomic.Bool
 }
 
 func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Server {
@@ -98,6 +106,12 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 		},
 	}
 
+	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
+	s.mux.HandleFunc("POST /api/tokens", s.handleCreateToken)
+	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.handleDeleteToken)
+
 	// API endpoints
 	s.mux.HandleFunc("GET /api/cameras", s.handleListCameras)
 	s.mux.HandleFunc("GET /api/cameras/{name}/snapshot", s.handleSnapshot)
@@ -108,7 +122,10 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("POST /api/events/{id}/clip", s.handleReextractClip)
 	s.mux.HandleFunc("GET /api/events/counts", s.handleEventCounts)
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	s.mux.HandleFunc("GET /api/health/live", s.handleHealthLive)
+	s.mux.HandleFunc("GET /api/health/ready", s.handleHealthReady)
 	s.mux.HandleFunc("GET /api/system", s.handleSystemAPI)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	s.mux.HandleFunc("GET /api/recordings/calendar", s.handleRecordingsCalendar)
 	s.mux.HandleFunc("GET /api/recordings/summary", s.handleRecordingsSummary)
@@ -136,6 +153,8 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("GET /api/faces/unmatched", s.handleListUnmatchedFaces)
 	s.mux.HandleFunc("PUT /api/faces/{id}/assign", s.handleAssignFace)
 	s.mux.HandleFunc("GET /api/faces/{id}/crop", s.handleFaceCrop)
+	s.mux.HandleFunc("POST /api/faces/backfill", s.handleFaceBackfill)
+	s.mux.HandleFunc("POST /api/people/merge", s.handleMergePeople)
 
 	// Streaming endpoints
 	s.mux.HandleFunc("POST /api/cameras/{name}/webrtc/offer", s.handleWebRTCOffer)
@@ -163,7 +182,7 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-	handler := s.readyMiddleware(authMiddleware(s.auth, s.mux))
+	handler := s.readyMiddleware(authMiddleware(s, s.mux))
 
 	s.httpSrv = &http.Server{
 		Addr:              addr,
@@ -194,12 +213,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // SetSubsystems wires in the heavy dependencies once they're initialized.
 // After calling this, camera/recording/streaming endpoints become functional.
-func (s *Server) SetSubsystems(cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub) {
+func (s *Server) SetSubsystems(cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub, faceRecognizer *detect.FaceRecognizer, snapshotPath string, faceCropDir string, cameraConfigs []config.CameraConfig) {
 	s.cameras = cameras
 	s.recorder = recorder
 	s.hub = hub
 	s.streams = stream.NewStreamManager(hub)
 	s.mse = stream.NewMSEManager(hub)
+	s.faceRecognizer = faceRecognizer
+	s.snapshotPath = snapshotPath
+	s.faceCropDir = faceCropDir
+	s.cameraConfigs = cameraConfigs
 	s.ready.Store(true)
 	slog.Info("API server ready (all subsystems initialized)")
 }
@@ -262,6 +285,9 @@ func displayName(name string) string {
 
 // cameraStatuses returns the status of all cameras.
 func (s *Server) cameraStatuses() []camera.CameraStatus {
+	if s.cameras == nil {
+		return nil
+	}
 	names := s.cameras.ListCameras()
 	statuses := make([]camera.CameraStatus, 0, len(names))
 	for _, name := range names {
@@ -269,10 +295,7 @@ func (s *Server) cameraStatuses() []camera.CameraStatus {
 		if cam == nil {
 			continue
 		}
-		statuses = append(statuses, camera.CameraStatus{
-			Name:   name,
-			Online: cam.IsOnline(),
-		})
+		statuses = append(statuses, cam.Status())
 	}
 	return statuses
 }
@@ -411,7 +434,7 @@ func (s *Server) handleEventSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if event == nil || event.SnapshotPath == "" {
+	if event == nil || event.SnapshotPath == "" || !event.SnapshotAvailable {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "snapshot not found"})
 		return
 	}
@@ -429,7 +452,7 @@ func (s *Server) handleEventClip(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if event == nil || event.ClipPath == "" {
+	if event == nil || event.ClipPath == "" || !event.ClipAvailable {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "clip not found"})
 		return
 	}
@@ -453,6 +476,7 @@ func (s *Server) handleReextractClip(w http.ResponseWriter, r *http.Request) {
 	// Remove old clip if it exists
 	if event.ClipPath != "" {
 		os.Remove(event.ClipPath)
+		_ = s.db.UpdateEventClipAvailability(event.ID, false)
 	}
 
 	if err := s.recorder.SaveClip(r.Context(), *event); err != nil {
@@ -866,23 +890,42 @@ func (s *Server) handleCreateZone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var z camera.Zone
-	if err := json.NewDecoder(r.Body).Decode(&z); err != nil {
+	var payload struct {
+		Name            string      `json:"name"`
+		Points          [][]float64 `json:"points"`
+		X1              *float64    `json:"x1"`
+		Y1              *float64    `json:"y1"`
+		X2              *float64    `json:"x2"`
+		Y2              *float64    `json:"y2"`
+		Labels          []string    `json:"labels"`
+		TrackPresence   bool        `json:"track_presence"`
+		FaceRecognition bool        `json:"face_recognition"`
+		Enabled         *bool       `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
 
-	if z.Name == "" {
+	points := zonePayloadPoints(payload.Points, payload.X1, payload.Y1, payload.X2, payload.Y2)
+	if payload.Name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	if z.X1 < 0 || z.Y1 < 0 || z.X2 > 1 || z.Y2 > 1 || z.X1 >= z.X2 || z.Y1 >= z.Y2 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid coordinates: must be 0.0-1.0, x1<x2, y1<y2"})
+	if !validZonePoints(points) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid points: expected at least 3 polygon points in normalized 0.0-1.0 coordinates"})
 		return
 	}
 
-	z.Camera = name
-	z.Enabled = true
+	z := camera.Zone{
+		Camera:          name,
+		Name:            payload.Name,
+		Points:          points,
+		Labels:          payload.Labels,
+		TrackPresence:   payload.TrackPresence,
+		FaceRecognition: payload.FaceRecognition,
+		Enabled:         payload.Enabled == nil || *payload.Enabled,
+	}
 	if err := s.db.SaveZone(z); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -914,14 +957,15 @@ func (s *Server) handleUpdateZone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var patch struct {
-		X1              *float64 `json:"x1"`
-		Y1              *float64 `json:"y1"`
-		X2              *float64 `json:"x2"`
-		Y2              *float64 `json:"y2"`
-		Labels          []string `json:"labels"`
-		TrackPresence   *bool    `json:"track_presence"`
-		FaceRecognition *bool    `json:"face_recognition"`
-		Enabled         *bool    `json:"enabled"`
+		Points          [][]float64 `json:"points"`
+		X1              *float64    `json:"x1"`
+		Y1              *float64    `json:"y1"`
+		X2              *float64    `json:"x2"`
+		Y2              *float64    `json:"y2"`
+		Labels          []string    `json:"labels"`
+		TrackPresence   *bool       `json:"track_presence"`
+		FaceRecognition *bool       `json:"face_recognition"`
+		Enabled         *bool       `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -930,17 +974,23 @@ func (s *Server) handleUpdateZone(w http.ResponseWriter, r *http.Request) {
 
 	// Apply patch fields onto existing zone
 	z := *existing
-	if patch.X1 != nil {
-		z.X1 = *patch.X1
-	}
-	if patch.Y1 != nil {
-		z.Y1 = *patch.Y1
-	}
-	if patch.X2 != nil {
-		z.X2 = *patch.X2
-	}
-	if patch.Y2 != nil {
-		z.Y2 = *patch.Y2
+	if patch.Points != nil {
+		z.Points = patch.Points
+	} else if patch.X1 != nil || patch.Y1 != nil || patch.X2 != nil || patch.Y2 != nil {
+		x1, y1, x2, y2 := zoneBoundsFromPoints(z.Points)
+		if patch.X1 != nil {
+			x1 = *patch.X1
+		}
+		if patch.Y1 != nil {
+			y1 = *patch.Y1
+		}
+		if patch.X2 != nil {
+			x2 = *patch.X2
+		}
+		if patch.Y2 != nil {
+			y2 = *patch.Y2
+		}
+		z.Points = rectanglePoints(x1, y1, x2, y2)
 	}
 	if patch.Labels != nil {
 		z.Labels = patch.Labels
@@ -955,8 +1005,8 @@ func (s *Server) handleUpdateZone(w http.ResponseWriter, r *http.Request) {
 		z.Enabled = *patch.Enabled
 	}
 
-	if z.X1 < 0 || z.Y1 < 0 || z.X2 > 1 || z.Y2 > 1 || z.X1 >= z.X2 || z.Y1 >= z.Y2 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid coordinates: must be 0.0-1.0, x1<x2, y1<y2"})
+	if !validZonePoints(z.Points) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid points: expected at least 3 polygon points in normalized 0.0-1.0 coordinates"})
 		return
 	}
 
@@ -1023,6 +1073,66 @@ func (s *Server) handleZonePresence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, presence)
+}
+
+func zonePayloadPoints(points [][]float64, x1, y1, x2, y2 *float64) [][]float64 {
+	if len(points) > 0 {
+		return points
+	}
+	if x1 == nil || y1 == nil || x2 == nil || y2 == nil {
+		return nil
+	}
+	return rectanglePoints(*x1, *y1, *x2, *y2)
+}
+
+func rectanglePoints(x1, y1, x2, y2 float64) [][]float64 {
+	return [][]float64{
+		{x1, y1},
+		{x2, y1},
+		{x2, y2},
+		{x1, y2},
+	}
+}
+
+func validZonePoints(points [][]float64) bool {
+	if len(points) < 3 {
+		return false
+	}
+	for _, point := range points {
+		if len(point) != 2 {
+			return false
+		}
+		if point[0] < 0 || point[0] > 1 || point[1] < 0 || point[1] > 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func zoneBoundsFromPoints(points [][]float64) (x1, y1, x2, y2 float64) {
+	if len(points) == 0 {
+		return 0, 0, 0, 0
+	}
+	x1, y1 = points[0][0], points[0][1]
+	x2, y2 = x1, y1
+	for _, point := range points[1:] {
+		if len(point) != 2 {
+			continue
+		}
+		if point[0] < x1 {
+			x1 = point[0]
+		}
+		if point[0] > x2 {
+			x2 = point[0]
+		}
+		if point[1] < y1 {
+			y1 = point[1]
+		}
+		if point[1] > y2 {
+			y2 = point[1]
+		}
+	}
+	return x1, y1, x2, y2
 }
 
 // reloadCameraZones loads zones from DB and updates the camera's zone list.
@@ -1147,7 +1257,7 @@ func (s *Server) handleEventsGalleryPartial(w http.ResponseWriter, r *http.Reque
 		`{{range .}}` +
 			`<a class="event-card" href="/event.html?id={{.ID}}" role="listitem">` +
 			`<div class="event-thumb">` +
-			`{{if .SnapshotPath}}<img src="/api/events/{{.ID}}/snapshot" alt="{{.Label}}" loading="lazy">` +
+			`{{if .SnapshotAvailable}}<img src="/api/events/{{.ID}}/snapshot" alt="{{.Label}}" loading="lazy">` +
 			`{{else}}<img src="/api/cameras/{{.CameraName}}/snapshot" alt="{{.Label}}" loading="lazy">{{end}}` +
 			`<span class="event-label-badge {{.Label}}">{{.Label}}</span>` +
 			`<span class="event-score-badge">{{scorePercent .Score}}</span>` +
@@ -1239,11 +1349,11 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		`<div class="page-header"><h1>{{.Label}} Detection</h1></div>` +
 			`<div class="event-detail-layout">` +
 			`<div class="event-media">` +
-			`{{if .SnapshotPath}}<img id="event-snapshot" src="/api/events/{{.ID}}/snapshot" alt="event snapshot">` +
+			`{{if .SnapshotAvailable}}<img id="event-snapshot" src="/api/events/{{.ID}}/snapshot" alt="event snapshot">` +
 			`{{else}}<img id="event-snapshot" src="/api/cameras/{{.CameraName}}/snapshot" alt="event">{{end}}` +
 			`{{if .HasRecording}}<div class="play-overlay" id="play-overlay" onclick="playEventRecording(this, '{{.CameraName}}', '{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}')">` +
 			`<svg viewBox="0 0 24 24" fill="white" width="64" height="64"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
-			`</div>{{else if .ClipPath}}<div class="play-overlay" id="play-overlay" onclick="playEventClip(this, '{{.ID}}')">` +
+			`</div>{{else if .ClipAvailable}}<div class="play-overlay" id="play-overlay" onclick="playEventClip(this, '{{.ID}}')">` +
 			`<svg viewBox="0 0 24 24" fill="white" width="64" height="64"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
 			`</div>{{end}}` +
 			`</div>` +
@@ -1259,13 +1369,13 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`</div>` +
 			`<div class="meta-card">` +
 			`<div class="meta-card-header">Downloads</div>` +
-			`{{if .ClipPath}}<a href="/api/events/{{.ID}}/clip" download class="download-row">` +
+			`{{if .ClipAvailable}}<a href="/api/events/{{.ID}}/clip" download class="download-row">` +
 			`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` +
 			` Download Clip</a>{{end}}` +
-			`{{if .SnapshotPath}}<a href="/api/events/{{.ID}}/snapshot?download=1" download class="download-row">` +
+			`{{if .SnapshotAvailable}}<a href="/api/events/{{.ID}}/snapshot?download=1" download class="download-row">` +
 			`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>` +
 			` Download Snapshot</a>{{end}}` +
-			`{{if not .ClipPath}}{{if not .SnapshotPath}}<div class="download-row disabled">No media available</div>{{end}}{{end}}` +
+			`{{if not .ClipAvailable}}{{if not .SnapshotAvailable}}<div class="download-row disabled">No media available</div>{{end}}{{end}}` +
 			`{{if .HasRecording}}<a href="{{.RecordingURL}}" class="download-row">` +
 			`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
 			` View in Recording</a>{{end}}` +
@@ -1656,6 +1766,60 @@ func (s *Server) handleDeletePerson(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+func (s *Server) handleMergePeople(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TargetID int64 `json:"target_id"`
+		SourceID int64 `json:"source_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.TargetID == 0 || req.SourceID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target_id and source_id are required"})
+		return
+	}
+	if req.TargetID == req.SourceID {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cannot merge a person with themselves"})
+		return
+	}
+
+	if err := s.db.MergePeople(req.TargetID, req.SourceID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Recompute target person's centroid from all their faces
+	faces, _ := s.db.ListFacesByPerson(req.TargetID, 0)
+	if len(faces) > 0 {
+		var centroid []float32
+		for _, f := range faces {
+			emb := detect.BytesToFloat32(f.Embedding)
+			if centroid == nil {
+				centroid = make([]float32, len(emb))
+			}
+			for i := range emb {
+				centroid[i] += emb[i]
+			}
+		}
+		n := float32(len(faces))
+		var norm float64
+		for i := range centroid {
+			centroid[i] /= n
+			norm += float64(centroid[i]) * float64(centroid[i])
+		}
+		if norm > 1e-10 {
+			invNorm := float32(1.0 / math.Sqrt(norm))
+			for i := range centroid {
+				centroid[i] *= invNorm
+			}
+		}
+		_ = s.db.UpdatePersonCentroid(req.TargetID, detect.Float32ToBytes(centroid))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "merged"})
+}
+
 func (s *Server) handleListPersonFaces(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -1673,6 +1837,9 @@ func (s *Server) handleListPersonFaces(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if faces == nil {
+		faces = []storage.Face{}
+	}
 	writeJSON(w, http.StatusOK, faces)
 }
 
@@ -1687,6 +1854,9 @@ func (s *Server) handleListUnmatchedFaces(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if faces == nil {
+		faces = []storage.Face{}
 	}
 	writeJSON(w, http.StatusOK, faces)
 }
@@ -1747,6 +1917,230 @@ func (s *Server) handleFaceCrop(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, cropPath)
 }
 
+func (s *Server) handleFaceBackfill(w http.ResponseWriter, r *http.Request) {
+	if s.faceRecognizer == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "face recognition not available"})
+		return
+	}
+	if s.snapshotPath == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no snapshot path configured"})
+		return
+	}
+
+	// Get already-processed snapshot files to skip
+	processedEvents, err := s.db.FaceEventIDs()
+	if err != nil {
+		slog.Warn("could not load processed face events", "error", err)
+	}
+	processed := make(map[string]bool, len(processedEvents))
+	for _, eid := range processedEvents {
+		processed[eid] = true
+	}
+
+	// Scan all snapshot JPEGs on disk (not just person events)
+	type snapshotEntry struct {
+		camera  string
+		eventID string
+		path    string
+	}
+	var snapshots []snapshotEntry
+	camDirs, _ := os.ReadDir(s.snapshotPath)
+	for _, camDir := range camDirs {
+		if !camDir.IsDir() {
+			continue
+		}
+		camName := camDir.Name()
+		camPath := filepath.Join(s.snapshotPath, camName)
+		files, _ := os.ReadDir(camPath)
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jpg") {
+				continue
+			}
+			eventID := strings.TrimSuffix(f.Name(), ".jpg")
+			if processed[eventID] {
+				continue
+			}
+			snapshots = append(snapshots, snapshotEntry{
+				camera:  camName,
+				eventID: eventID,
+				path:    filepath.Join(camPath, f.Name()),
+			})
+		}
+	}
+
+	// Stream progress as JSON lines
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	flusher, canFlush := w.(http.Flusher)
+
+	var totalScanned, totalFaces, totalNewPeople, totalMatched, skipped int
+	skipped = len(processedEvents)
+
+	for _, snap := range snapshots {
+		f, err := os.Open(snap.path)
+		if err != nil {
+			continue
+		}
+
+		img, err := jpeg.Decode(f)
+		f.Close()
+		if err != nil {
+			continue
+		}
+
+		// Convert to RGBA
+		rgba, ok := img.(*image.RGBA)
+		if !ok {
+			bounds := img.Bounds()
+			rgba = image.NewRGBA(bounds)
+			draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+		}
+
+		// Use full image — let SCRFD find all faces
+		bounds := rgba.Bounds()
+		fullBox := [4]int{bounds.Min.X, bounds.Min.Y, bounds.Max.X, bounds.Max.Y}
+
+		results := s.faceRecognizer.DetectAndEmbed(rgba, fullBox, s.faceCropDir)
+		totalScanned++
+
+		if len(results) > 0 {
+			slog.Info("backfill: faces detected", "snapshot", snap.eventID, "count", len(results))
+		}
+
+		for _, result := range results {
+			personID, similarity := s.matchFaceToPerson(result.Embedding)
+
+			face := storage.Face{
+				EventID:    snap.eventID,
+				Camera:     snap.camera,
+				Embedding:  detect.Float32ToBytes(result.Embedding),
+				CropPath:   result.CropPath,
+				Confidence: float64(result.Confidence),
+				Timestamp:  time.Now(),
+			}
+			if personID > 0 {
+				face.PersonID = &personID
+				face.Similarity = &similarity
+			}
+
+			faceID, saveErr := s.db.SaveFace(face)
+			if saveErr != nil {
+				slog.Error("backfill: failed to save face", "error", saveErr)
+				continue
+			}
+
+			totalFaces++
+
+			if personID == 0 {
+				newPID, createErr := s.db.SavePerson("", false, detect.Float32ToBytes(result.Embedding))
+				if createErr != nil {
+					slog.Error("backfill: failed to create person", "error", createErr)
+					continue
+				}
+				sim := 1.0
+				_ = s.db.UpdateFacePerson(faceID, newPID, sim)
+				totalNewPeople++
+			} else {
+				s.updatePersonCentroid(personID, result.Embedding)
+				totalMatched++
+			}
+		}
+
+		// Stream progress every 20 snapshots
+		if totalScanned%20 == 0 && canFlush {
+			progress := map[string]int{
+				"scanned":    totalScanned,
+				"faces":      totalFaces,
+				"matched":    totalMatched,
+				"new_people": totalNewPeople,
+				"skipped":    skipped,
+			}
+			json.NewEncoder(w).Encode(progress)
+			flusher.Flush()
+		}
+	}
+
+	// Final result
+	result := map[string]int{
+		"scanned":    totalScanned,
+		"faces":      totalFaces,
+		"matched":    totalMatched,
+		"new_people": totalNewPeople,
+		"skipped":    skipped,
+	}
+	json.NewEncoder(w).Encode(result)
+	if canFlush {
+		flusher.Flush()
+	}
+}
+
+// matchFaceToPerson finds the best matching person for a face embedding.
+func (s *Server) matchFaceToPerson(embedding []float32) (int64, float64) {
+	if s.faceRecognizer == nil {
+		return 0, 0
+	}
+	people, err := s.db.ListPeople()
+	if err != nil {
+		return 0, 0
+	}
+
+	var bestID int64
+	var bestSim float64
+	threshold := s.faceRecognizer.MatchThreshold()
+
+	for _, p := range people {
+		if p.Ignore || len(p.Centroid) == 0 {
+			continue
+		}
+		centroid := detect.BytesToFloat32(p.Centroid)
+		sim := detect.CosineSimilarity(embedding, centroid)
+		if sim > bestSim {
+			bestSim = sim
+			bestID = p.ID
+		}
+	}
+
+	if bestSim >= threshold {
+		return bestID, bestSim
+	}
+	return 0, 0
+}
+
+// updatePersonCentroid updates a person's centroid with a running average.
+func (s *Server) updatePersonCentroid(personID int64, newEmbedding []float32) {
+	p, err := s.db.GetPerson(personID)
+	if err != nil || p == nil {
+		return
+	}
+
+	if len(p.Centroid) == 0 {
+		_ = s.db.UpdatePersonCentroid(personID, detect.Float32ToBytes(newEmbedding))
+		return
+	}
+
+	old := detect.BytesToFloat32(p.Centroid)
+	if len(old) != len(newEmbedding) {
+		_ = s.db.UpdatePersonCentroid(personID, detect.Float32ToBytes(newEmbedding))
+		return
+	}
+
+	alpha := float32(0.3)
+	merged := make([]float32, len(old))
+	var norm float64
+	for i := range merged {
+		merged[i] = (1-alpha)*old[i] + alpha*newEmbedding[i]
+		norm += float64(merged[i]) * float64(merged[i])
+	}
+	if norm > 1e-10 {
+		invNorm := float32(1.0 / math.Sqrt(norm))
+		for i := range merged {
+			merged[i] *= invNorm
+		}
+	}
+
+	_ = s.db.UpdatePersonCentroid(personID, detect.Float32ToBytes(merged))
+}
+
 func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -1754,4 +2148,3 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 		slog.Error("failed to write JSON response", "error", err)
 	}
 }
-
