@@ -95,6 +95,18 @@ func (c *Client) PublishEvent(event camera.Event, matchedObjects []string) error
 	return token.Error()
 }
 
+func (c *Client) PublishSnapshot(cameraName, label string, jpegData []byte) {
+	// Per-label snapshot (e.g., vedetta/front_door/person/snapshot)
+	labelTopic := fmt.Sprintf("%s/%s/%s/snapshot", c.topic, cameraName, label)
+	token := c.client.Publish(labelTopic, 0, true, jpegData)
+	token.Wait()
+
+	// Latest snapshot for this camera (e.g., vedetta/front_door/snapshot)
+	cameraTopic := fmt.Sprintf("%s/%s/snapshot", c.topic, cameraName)
+	token = c.client.Publish(cameraTopic, 0, true, jpegData)
+	token.Wait()
+}
+
 func (c *Client) PublishPresence(pe camera.PresenceEvent, objectName string) {
 	state := "entered"
 	if pe.Type == "zone_leave" {
@@ -310,6 +322,22 @@ func (c *Client) publishCameraDiscovery(cameraName string) {
 		slog.Error("failed to publish trigger discovery", "camera", cameraName, "error", token.Error())
 	}
 
+	// MQTT image entity for detection snapshots
+	imageConfig := haImageConfig{
+		Name:              cameraName + " Last Detection",
+		UniqueID:          objectID + "_snapshot",
+		ImageTopic:        fmt.Sprintf("%s/%s/snapshot", c.topic, cameraName),
+		AvailabilityTopic: c.topic + "/availability",
+		Device:            device,
+	}
+
+	imagePayload, err := json.Marshal(imageConfig)
+	if err == nil {
+		imageTopic := fmt.Sprintf("homeassistant/image/%s_snapshot/config", objectID)
+		token = c.client.Publish(imageTopic, 1, true, imagePayload)
+		token.Wait()
+	}
+
 	slog.Info("published HA discovery", "camera", cameraName)
 }
 
@@ -353,6 +381,14 @@ type haPresenceSensorConfig struct {
 	ValueTemplate     string   `json:"value_template"`
 	PayloadOn         string   `json:"payload_on"`
 	PayloadOff        string   `json:"payload_off"`
+	Device            haDevice `json:"device"`
+}
+
+type haImageConfig struct {
+	Name              string   `json:"name"`
+	UniqueID          string   `json:"unique_id"`
+	ImageTopic        string   `json:"image_topic"`
+	AvailabilityTopic string   `json:"availability_topic"`
 	Device            haDevice `json:"device"`
 }
 
