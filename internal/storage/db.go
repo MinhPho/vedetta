@@ -997,6 +997,31 @@ func (d *DB) UpdateFacePerson(faceID, personID int64, similarity float64) error 
 	return err
 }
 
+// DeletePerson removes a person record by ID.
+func (d *DB) DeletePerson(id int64) error {
+	_, err := d.db.Exec("DELETE FROM people WHERE id = ?", id)
+	return err
+}
+
+// SetPersonIgnore updates the ignore flag for a person.
+func (d *DB) SetPersonIgnore(id int64, ignore bool) error {
+	_, err := d.db.Exec("UPDATE people SET ignore = ? WHERE id = ?", ignore, id)
+	return err
+}
+
+// GetFaceCropPath returns the crop_path for a face by ID.
+func (d *DB) GetFaceCropPath(id int64) (string, error) {
+	var path sql.NullString
+	err := d.db.QueryRow("SELECT crop_path FROM faces WHERE id = ?", id).Scan(&path)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return path.String, nil
+}
+
 func scanFaces(rows *sql.Rows) ([]Face, error) {
 	var faces []Face
 	for rows.Next() {

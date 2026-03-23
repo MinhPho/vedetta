@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>People - Vedetta</title>
+  <link rel="stylesheet" href="/style.css">
+  <meta name="theme-color" content="#0a0e14">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+</head>
+<body>
+
+  <nav class="topnav" role="navigation" aria-label="Main">
+    <a href="/" class="topnav-brand" aria-label="Vedetta home">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>vedetta</span>
+    </a>
+    <div class="topnav-links">
+      <a href="/" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Cameras</a>
+      <a href="/events.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>Events</a>
+      <a href="/recordings.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>Recordings</a>
+      <a href="/people.html" class="topnav-link active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
+      <a href="/system.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>System</a>
+    </div>
+    <button class="btn btn-icon btn-ghost" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
+      <svg id="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg id="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+    </button>
+    <div class="topnav-spacer"></div>
+    <div class="conn-status"><span class="conn-dot ok" id="conn-dot"></span><span id="conn-label">Connected</span></div>
+  </nav>
+
+  <main class="page">
+    <div class="page-header">
+      <h1>People</h1>
+    </div>
+
+    <!-- Known People -->
+    <section>
+      <div class="people-grid" id="people-grid">
+        <div class="loading-state">Loading people...</div>
+      </div>
+    </section>
+
+    <!-- Unmatched Faces -->
+    <section class="unmatched-section" id="unmatched-section" style="display:none">
+      <div class="page-header" style="margin-top:1.5rem">
+        <h2 style="font-size:var(--text-md);font-weight:600;margin:0">Unmatched Faces</h2>
+      </div>
+      <div class="face-grid" id="unmatched-grid"></div>
+    </section>
+  </main>
+
+  <nav class="bottom-tabs" role="navigation" aria-label="Mobile navigation">
+    <div class="bottom-tabs-inner">
+      <a href="/" class="bottom-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Cameras</a>
+      <a href="/events.html" class="bottom-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>Events</a>
+      <a href="/recordings.html" class="bottom-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>Recordings</a>
+      <a href="/people.html" class="bottom-tab active" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>People</a>
+      <a href="/system.html" class="bottom-tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>System</a>
+    </div>
+  </nav>
+
+  <!-- Assign Modal -->
+  <div class="shortcut-backdrop" id="assign-backdrop"></div>
+  <div class="shortcut-modal" id="assign-modal" role="dialog" aria-label="Assign face to person">
+    <div class="shortcut-modal-header">
+      <h2>Assign to Person</h2>
+      <button class="btn btn-icon btn-ghost" onclick="closeAssignModal()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="shortcut-modal-body" style="grid-template-columns:1fr;gap:0.5rem;padding:1rem 1.25rem">
+      <button class="btn btn-sm btn-primary" onclick="assignToNewPerson()" style="width:100%">Create New Person</button>
+      <div id="assign-people-list" style="display:flex;flex-direction:column;gap:0.375rem;margin-top:0.5rem"></div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcut Modal -->
+  <div class="shortcut-backdrop" id="shortcut-backdrop"></div>
+  <div class="shortcut-modal" id="shortcut-modal" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="shortcut-modal-header">
+      <h2>Keyboard Shortcuts</h2>
+      <button class="btn btn-icon btn-ghost" onclick="closeShortcutModal()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="shortcut-modal-body">
+      <div class="shortcut-group">
+        <h3>Navigation</h3>
+        <div class="shortcut-row"><span>Cameras</span><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>1</kbd></span></div>
+        <div class="shortcut-row"><span>Events</span><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>2</kbd></span></div>
+        <div class="shortcut-row"><span>Recordings</span><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>3</kbd></span></div>
+        <div class="shortcut-row"><span>System</span><span class="shortcut-keys"><kbd>Ctrl</kbd><span class="plus">+</span><kbd>4</kbd></span></div>
+      </div>
+      <div class="shortcut-group">
+        <h3>General</h3>
+        <div class="shortcut-row"><span>This help</span><span class="shortcut-keys"><kbd>?</kbd></span></div>
+        <div class="shortcut-row"><span>Dismiss / Back</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toasts"></div>
+  <script src="/app.js"></script>
+  <script>
+    var peopleData = [];
+    var assigningFaceId = null;
+
+    function loadPeople() {
+      fetch('/api/people').then(function(r) { return r.json(); }).then(function(people) {
+        peopleData = people || [];
+        renderPeople(people || []);
+      }).catch(function() {
+        document.getElementById('people-grid').innerHTML = '<div class="loading-state">Failed to load people.</div>';
+      });
+    }
+
+    function renderPeople(people) {
+      var grid = document.getElementById('people-grid');
+      if (!people.length) {
+        grid.innerHTML = '<div class="loading-state">No people found. Faces will appear here once face recognition detects them.</div>';
+        return;
+      }
+      var html = '';
+      people.forEach(function(p) {
+        var ignoreClass = p.ignore ? ' person-card--ignored' : '';
+        html += '<div class="person-card' + ignoreClass + '" data-person-id="' + p.id + '">'
+          + '<div class="person-card-header">'
+          + '<div class="person-thumb-wrap" onclick="togglePersonFaces(' + p.id + ')">'
+          + '<div class="face-thumb person-thumb" id="person-thumb-' + p.id + '"></div>'
+          + '</div>'
+          + '<div class="person-info">'
+          + '<input type="text" class="person-name-input" value="' + escapeAttr(p.name) + '" '
+          + 'onchange="renamePerson(' + p.id + ', this.value)" '
+          + 'onfocus="this.select()">'
+          + '<div class="person-meta">'
+          + '<span class="badge badge-sm">' + p.face_count + ' face' + (p.face_count !== 1 ? 's' : '') + '</span>'
+          + '<button class="btn btn-xs ' + (p.ignore ? 'btn-primary' : 'btn-ghost') + '" onclick="toggleIgnore(' + p.id + ', ' + !p.ignore + ')">'
+          + (p.ignore ? 'Ignored' : 'Ignore') + '</button>'
+          + '<button class="btn btn-xs btn-ghost btn-danger" onclick="deletePerson(' + p.id + ', \'' + escapeAttr(p.name) + '\')">Delete</button>'
+          + '</div>'
+          + '</div>'
+          + '</div>'
+          + '<div class="person-faces hidden" id="person-faces-' + p.id + '"></div>'
+          + '</div>';
+      });
+      grid.innerHTML = html;
+
+      // Load thumbnail for each person (first face crop)
+      people.forEach(function(p) {
+        if (p.face_count > 0) {
+          fetch('/api/people/' + p.id + '/faces?limit=1').then(function(r) { return r.json(); }).then(function(faces) {
+            if (faces && faces.length > 0) {
+              var thumb = document.getElementById('person-thumb-' + p.id);
+              if (thumb) {
+                thumb.style.backgroundImage = 'url(/api/faces/' + faces[0].ID + '/crop)';
+              }
+            }
+          });
+        }
+      });
+    }
+
+    function togglePersonFaces(personId) {
+      var el = document.getElementById('person-faces-' + personId);
+      if (!el) return;
+      if (!el.classList.contains('hidden')) {
+        el.classList.add('hidden');
+        return;
+      }
+      el.classList.remove('hidden');
+      el.innerHTML = '<div class="loading-state" style="padding:0.5rem">Loading faces...</div>';
+      fetch('/api/people/' + personId + '/faces?limit=50').then(function(r) { return r.json(); }).then(function(faces) {
+        if (!faces || !faces.length) {
+          el.innerHTML = '<div class="loading-state" style="padding:0.5rem">No faces found.</div>';
+          return;
+        }
+        var html = '<div class="face-grid">';
+        faces.forEach(function(f) {
+          html += '<div class="face-thumb" style="background-image:url(/api/faces/' + f.ID + '/crop)" title="' + (f.Camera || '') + ' - ' + new Date(f.Timestamp).toLocaleString() + '"></div>';
+        });
+        html += '</div>';
+        el.innerHTML = html;
+      });
+    }
+
+    function renamePerson(id, name) {
+      fetch('/api/people/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name })
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        if (typeof showToast === 'function') showToast('Renamed to ' + name);
+      }).catch(function() {
+        if (typeof showToast === 'function') showToast('Failed to rename');
+      });
+    }
+
+    function toggleIgnore(id, ignore) {
+      fetch('/api/people/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ignore: ignore })
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        loadPeople();
+      });
+    }
+
+    function deletePerson(id, name) {
+      if (!confirm('Delete person "' + name + '"? Their faces will become unmatched.')) return;
+      fetch('/api/people/' + id, { method: 'DELETE' }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        loadPeople();
+        loadUnmatched();
+      });
+    }
+
+    function loadUnmatched() {
+      fetch('/api/faces/unmatched?limit=50').then(function(r) { return r.json(); }).then(function(faces) {
+        var section = document.getElementById('unmatched-section');
+        var grid = document.getElementById('unmatched-grid');
+        if (!faces || !faces.length) {
+          section.style.display = 'none';
+          return;
+        }
+        section.style.display = '';
+        var html = '';
+        faces.forEach(function(f) {
+          html += '<div class="face-thumb face-thumb--unmatched" '
+            + 'style="background-image:url(/api/faces/' + f.ID + '/crop)" '
+            + 'title="' + (f.Camera || '') + ' - ' + new Date(f.Timestamp).toLocaleString() + '" '
+            + 'onclick="openAssignModal(' + f.ID + ')">'
+            + '<div class="face-thumb-action">+</div>'
+            + '</div>';
+        });
+        grid.innerHTML = html;
+      }).catch(function() {
+        document.getElementById('unmatched-section').style.display = 'none';
+      });
+    }
+
+    function openAssignModal(faceId) {
+      assigningFaceId = faceId;
+      var list = document.getElementById('assign-people-list');
+      var html = '';
+      peopleData.forEach(function(p) {
+        html += '<button class="btn btn-sm btn-ghost" style="width:100%;text-align:left;justify-content:flex-start" '
+          + 'onclick="assignFace(' + faceId + ',' + p.id + ')">'
+          + escapeAttr(p.name) + ' (' + p.face_count + ' faces)</button>';
+      });
+      if (!peopleData.length) {
+        html = '<div style="color:var(--text-tertiary);font-size:var(--text-sm);padding:0.25rem 0">No existing people. Create a new one above.</div>';
+      }
+      list.innerHTML = html;
+      document.getElementById('assign-backdrop').classList.add('open');
+      document.getElementById('assign-modal').classList.add('open');
+    }
+
+    function closeAssignModal() {
+      assigningFaceId = null;
+      document.getElementById('assign-backdrop').classList.remove('open');
+      document.getElementById('assign-modal').classList.remove('open');
+    }
+
+    function assignToNewPerson() {
+      var name = prompt('Person name:');
+      if (!name) return;
+      fetch('/api/faces/' + assigningFaceId + '/assign', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person_id: 0, name: name })
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        closeAssignModal();
+        loadPeople();
+        loadUnmatched();
+      });
+    }
+
+    function assignFace(faceId, personId) {
+      fetch('/api/faces/' + faceId + '/assign', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person_id: personId })
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        closeAssignModal();
+        loadPeople();
+        loadUnmatched();
+      });
+    }
+
+    function escapeAttr(s) {
+      return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
+    }
+
+    // Initial load
+    loadPeople();
+    loadUnmatched();
+
+    // Close assign modal on backdrop click
+    document.getElementById('assign-backdrop').addEventListener('click', closeAssignModal);
+  </script>
+</body>
+</html>
