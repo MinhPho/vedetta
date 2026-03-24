@@ -2197,24 +2197,42 @@ func (s *Server) handleListPeople(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	type personResponse struct {
-		ID            int64     `json:"id"`
-		Name          string    `json:"name"`
-		Ignore        bool      `json:"ignore"`
-		FaceCount     int       `json:"face_count"`
-		SourceEventID string    `json:"source_event_id,omitempty"`
-		CreatedAt     time.Time `json:"created_at"`
+		ID              int64     `json:"id"`
+		Name            string    `json:"name"`
+		Ignore          bool      `json:"ignore"`
+		FaceCount       int       `json:"face_count"`
+		AppearanceCount int       `json:"appearance_count"`
+		BestFaceID      int64     `json:"best_face_id,omitempty"`
+		SourceEventID   string    `json:"source_event_id,omitempty"`
+		CreatedAt       time.Time `json:"created_at"`
 	}
 
 	resp := make([]personResponse, 0, len(people))
 	for _, p := range people {
 		faces, _ := s.db.ListFacesByPerson(p.ID, 0)
+		var appearanceCount int
+		if p.Name != "" {
+			events, _ := s.db.QueryEventsFiltered("", "", "", p.Name, 0, 0)
+			appearanceCount = len(events)
+		}
+		// Pick highest-confidence face for thumbnail
+		var bestFaceID int64
+		var bestConf float64
+		for _, f := range faces {
+			if f.Confidence > bestConf {
+				bestConf = f.Confidence
+				bestFaceID = f.ID
+			}
+		}
 		resp = append(resp, personResponse{
-			ID:            p.ID,
-			Name:          p.Name,
-			Ignore:        p.Ignore,
-			FaceCount:     len(faces),
-			SourceEventID: p.SourceEventID,
-			CreatedAt:     p.CreatedAt,
+			ID:              p.ID,
+			Name:            p.Name,
+			Ignore:          p.Ignore,
+			FaceCount:       len(faces),
+			AppearanceCount: appearanceCount,
+			BestFaceID:      bestFaceID,
+			SourceEventID:   p.SourceEventID,
+			CreatedAt:       p.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)

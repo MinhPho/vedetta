@@ -180,7 +180,9 @@
           + 'onchange="renamePerson(' + p.id + ', this.value)" '
           + 'onfocus="this.select()">'
           + '<div class="person-meta">'
-          + '<span class="badge badge-sm">' + p.face_count + ' face' + (p.face_count !== 1 ? 's' : '') + '</span>'
+          + (p.face_count > 0 ? '<span class="badge badge-sm">' + p.face_count + ' face' + (p.face_count !== 1 ? 's' : '') + '</span>' : '')
+          + (p.appearance_count > 0 ? '<span class="badge badge-sm">' + p.appearance_count + ' appearance' + (p.appearance_count !== 1 ? 's' : '') + '</span>' : '')
+          + (!p.face_count && !p.appearance_count ? '<span class="badge badge-sm" style="color:var(--text-tertiary)">No sightings</span>' : '')
           + '<button class="btn btn-xs ' + (p.ignore ? 'btn-primary' : 'btn-ghost') + '" onclick="toggleIgnore(' + p.id + ', ' + !p.ignore + ')">'
           + (p.ignore ? 'Ignored' : 'Ignore') + '</button>'
           + '<button class="btn btn-xs btn-ghost btn-danger" onclick="deletePerson(' + p.id + ', \'' + escapeAttr(p.name) + '\')">Delete</button>'
@@ -192,23 +194,14 @@
       });
       grid.innerHTML = html;
 
-      // Load thumbnail for each person (first face crop, or source event detection crop)
+      // Load thumbnail: best face crop, or source event detection crop
       people.forEach(function(p) {
-        if (p.face_count > 0) {
-          fetch('/api/people/' + p.id + '/faces?limit=1').then(function(r) { return r.json(); }).then(function(faces) {
-            if (faces && faces.length > 0) {
-              var thumb = document.getElementById('person-thumb-' + p.id);
-              if (thumb) {
-                thumb.style.backgroundImage = 'url(/api/faces/' + faces[0].id + '/crop)';
-              }
-            }
-          });
+        var thumb = document.getElementById('person-thumb-' + p.id);
+        if (!thumb) return;
+        if (p.best_face_id) {
+          thumb.style.backgroundImage = 'url(/api/faces/' + p.best_face_id + '/crop)';
         } else if (p.source_event_id) {
-          var thumb = document.getElementById('person-thumb-' + p.id);
-          if (thumb) {
-            thumb.style.backgroundImage = 'url(/api/events/' + p.source_event_id + '/detection-crop)';
-            thumb.title = 'From event (no face detected)';
-          }
+          thumb.style.backgroundImage = 'url(/api/events/' + p.source_event_id + '/detection-crop)';
         }
       });
     }
