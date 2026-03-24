@@ -17,11 +17,14 @@
     }
     .face-card-unmatched { display:flex; flex-direction:column; align-items:center; gap:0.25rem; }
     .face-card-actions { display:flex; gap:0.25rem; }
-    .unid-card { cursor:pointer; border:2px solid var(--border); border-radius:var(--radius-sm); transition:border-color 0.15s; position:relative; }
+    .unid-card { cursor:pointer; border:2px solid var(--border); border-radius:var(--radius-sm); transition:border-color 0.15s; position:relative; overflow:visible; }
     .unid-card:hover { border-color:var(--accent); }
     .unid-card.selected { border-color:var(--accent); }
     .unid-picker { position:absolute; top:100%; left:0; z-index:50; min-width:180px; padding:0.35rem; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 8px 24px rgba(0,0,0,0.4); }
     .unid-results { max-height:200px; overflow-y:auto; }
+    .unid-dismiss { position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%; background:var(--surface-2); border:1px solid var(--border); color:var(--text-tertiary); font-size:12px; line-height:16px; text-align:center; cursor:pointer; display:none; z-index:5; }
+    .unid-card:hover .unid-dismiss { display:block; }
+    .unid-dismiss:hover { background:var(--danger); color:#fff; border-color:var(--danger); }
   </style>
 </head>
 <body>
@@ -401,7 +404,7 @@
         var events = data.events || data || [];
         var section = document.getElementById('unidentified-section');
         var grid = document.getElementById('unidentified-grid');
-        var unidentified = events.filter(function(ev) { return !ev.sub_label && ev.snapshot_available; });
+        var unidentified = events.filter(function(ev) { return (!ev.sub_label || ev.sub_label === '') && ev.sub_label !== '_ignored' && ev.snapshot_available; });
         if (!unidentified.length) {
           section.style.display = 'none';
           return;
@@ -412,6 +415,7 @@
           var time = new Date(ev.timestamp).toLocaleString();
           html += '<div class="unid-card" data-event-id="' + ev.id + '" onclick="selectUnidentified(this, \'' + ev.id + '\')" title="' + ev.camera + ' — ' + time + '">'
             + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/events/' + ev.id + '/detection-crop);background-size:cover;background-position:center"></div>'
+            + '<button class="unid-dismiss" onclick="event.stopPropagation();dismissAppearance(\'' + ev.id + '\',this.parentElement)" title="Ignore">&times;</button>'
             + '</div>';
         });
         grid.innerHTML = html;
@@ -525,6 +529,22 @@
         loadPeople();
         loadUnmatched();
         loadUnidentified();
+      });
+    }
+
+    function dismissAppearance(eventId, card) {
+      fetch('/api/events/' + eventId + '/assign-person', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ignore: true})
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        if (card) card.remove();
+        // Hide section if empty
+        var grid = document.getElementById('unidentified-grid');
+        if (grid && !grid.children.length) {
+          document.getElementById('unidentified-section').style.display = 'none';
+        }
       });
     }
 
