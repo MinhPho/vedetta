@@ -17,6 +17,11 @@
     }
     .face-card-unmatched { display:flex; flex-direction:column; align-items:center; gap:0.25rem; }
     .face-card-actions { display:flex; gap:0.25rem; }
+    .unid-card { cursor:pointer; border:2px solid var(--border); border-radius:var(--radius-sm); transition:border-color 0.15s; position:relative; }
+    .unid-card:hover { border-color:var(--accent); }
+    .unid-card.selected { border-color:var(--accent); }
+    .unid-picker { position:absolute; top:100%; left:0; z-index:50; min-width:180px; padding:0.35rem; background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 8px 24px rgba(0,0,0,0.4); }
+    .unid-results { max-height:200px; overflow-y:auto; }
   </style>
 </head>
 <body>
@@ -389,6 +394,8 @@
       });
     }
 
+    var _unidentifiedPeople = []; // cached for search
+
     function loadUnidentified() {
       fetch('/api/events?label=person&limit=30').then(function(r) { return r.json(); }).then(function(events) {
         var section = document.getElementById('unidentified-section');
@@ -402,13 +409,121 @@
         var html = '';
         unidentified.forEach(function(ev) {
           var time = new Date(ev.timestamp).toLocaleString();
-          html += '<a href="/event.html?id=' + ev.id + '" title="' + ev.camera + ' — ' + time + '" style="display:block;position:relative">'
-            + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/events/' + ev.id + '/detection-crop);background-size:cover;background-position:center;border:2px solid var(--border);transition:border-color 0.15s"></div>'
-            + '</a>';
+          html += '<div class="unid-card" data-event-id="' + ev.id + '" onclick="selectUnidentified(this, \'' + ev.id + '\')" title="' + ev.camera + ' — ' + time + '">'
+            + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/events/' + ev.id + '/detection-crop);background-size:cover;background-position:center"></div>'
+            + '</div>';
         });
         grid.innerHTML = html;
       }).catch(function() {
         document.getElementById('unidentified-section').style.display = 'none';
+      });
+
+      // Cache people for inline picker
+      _unidentifiedPeople = (peopleData || []).filter(function(p) { return p.name && !p.ignore; });
+    }
+
+    function selectUnidentified(card, eventId) {
+      // Deselect previous
+      document.querySelectorAll('.unid-card.selected').forEach(function(c) {
+        c.classList.remove('selected');
+        var picker = c.querySelector('.unid-picker');
+        if (picker) picker.remove();
+      });
+
+      card.classList.add('selected');
+
+      var picker = document.createElement('div');
+      picker.className = 'unid-picker';
+      picker.innerHTML = '<input type="text" class="person-name-input" placeholder="Name..." '
+        + 'style="width:100%;padding:0.35rem 0.5rem;font-size:var(--text-sm);margin-top:0.25rem" '
+        + 'oninput="filterUnidPicker(this.value,\'' + eventId + '\')" '
+        + 'onkeydown="if(event.key===\'Enter\')unidEnter(this.value,\'' + eventId + '\')" '
+        + 'onclick="event.stopPropagation()">'
+        + '<div class="unid-results" id="unid-results-' + eventId + '"></div>';
+      card.appendChild(picker);
+
+      // Focus the input
+      var input = picker.querySelector('input');
+      setTimeout(function() { input.focus(); }, 50);
+
+      // Show all people initially
+      renderUnidResults('', eventId);
+
+      // Close on outside click
+      setTimeout(function() {
+        document.addEventListener('click', function closePicker(e) {
+          if (!card.contains(e.target)) {
+            card.classList.remove('selected');
+            picker.remove();
+            document.removeEventListener('click', closePicker);
+          }
+        });
+      }, 0);
+    }
+
+    function filterUnidPicker(query, eventId) {
+      renderUnidResults(query, eventId);
+    }
+
+    function renderUnidResults(query, eventId) {
+      var container = document.getElementById('unid-results-' + eventId);
+      if (!container) return;
+      var raw = (query || '').trim();
+      var q = raw.toLowerCase();
+
+      var filtered = q ? _unidentifiedPeople.filter(function(p) {
+        return p.name.toLowerCase().indexOf(q) !== -1;
+      }) : _unidentifiedPeople;
+
+      var html = '';
+      filtered.slice(0, 8).forEach(function(p) {
+        html += '<div class="identify-chip" style="margin-top:0.2rem" onclick="event.stopPropagation();assignUnidentified(' + p.id + ',\'' + p.name.replace(/'/g, "\\'") + '\',\'' + eventId + '\')">'
+          + '<div class="identify-chip-thumb" id="unid-thumb-' + p.id + '-' + eventId + '"></div>'
+          + '<span>' + p.name + '</span></div>';
+      });
+
+      if (raw && !filtered.some(function(p) { return p.name.toLowerCase() === q; })) {
+        html += '<div class="identify-chip identify-chip-new" style="margin-top:0.2rem" onclick="event.stopPropagation();createAndAssignUnidentified(\'' + raw.replace(/'/g, "\\'") + '\',\'' + eventId + '\')">'
+          + '<div class="identify-chip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--accent)">+</div>'
+          + '<span>' + raw + '</span></div>';
+      }
+
+      container.innerHTML = html;
+
+      // Load thumbs
+      filtered.slice(0, 8).forEach(function(p) {
+        var el = document.getElementById('unid-thumb-' + p.id + '-' + eventId);
+        if (el && p.best_face_id) {
+          el.style.backgroundImage = 'url(/api/faces/' + p.best_face_id + '/crop)';
+        }
+      });
+    }
+
+    function assignUnidentified(personId, personName, eventId) {
+      fetch('/api/events/' + eventId + '/assign-person', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({person_id: personId})
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        if (typeof toast === 'function') toast('Identified as ' + personName);
+        loadPeople();
+        loadUnmatched();
+        loadUnidentified();
+      });
+    }
+
+    function createAndAssignUnidentified(name, eventId) {
+      fetch('/api/events/' + eventId + '/track-person', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name})
+      }).then(function(r) {
+        if (!r.ok) throw new Error('Failed');
+        if (typeof toast === 'function') toast('"' + name + '" created');
+        loadPeople();
+        loadUnmatched();
+        loadUnidentified();
       });
     }
 
