@@ -691,8 +691,20 @@ func (s *Server) handleAssignPersonToEvent(w http.ResponseWriter, r *http.Reques
 
 	var req struct {
 		PersonID int64 `json:"person_id"`
+		Ignore   bool  `json:"ignore"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PersonID == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if req.Ignore {
+		_ = s.db.UpdateEventSubLabel(eventID, "_ignored")
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
+
+	if req.PersonID == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "person_id is required"})
 		return
 	}
