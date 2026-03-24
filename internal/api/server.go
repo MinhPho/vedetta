@@ -167,6 +167,7 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("PUT /api/people/{id}", s.handleUpdatePerson)
 	s.mux.HandleFunc("DELETE /api/people/{id}", s.handleDeletePerson)
 	s.mux.HandleFunc("GET /api/people/{id}/faces", s.handleListPersonFaces)
+	s.mux.HandleFunc("GET /api/people/{id}/events", s.handleListPersonEvents)
 	s.mux.HandleFunc("GET /api/faces/unmatched", s.handleListUnmatchedFaces)
 	s.mux.HandleFunc("PUT /api/faces/{id}/assign", s.handleAssignFace)
 	s.mux.HandleFunc("GET /api/faces/{id}/crop", s.handleFaceCrop)
@@ -2384,6 +2385,32 @@ func (s *Server) handleListPersonFaces(w http.ResponseWriter, r *http.Request) {
 		faces = []storage.Face{}
 	}
 	writeJSON(w, http.StatusOK, faces)
+}
+
+func (s *Server) handleListPersonEvents(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid person ID"})
+		return
+	}
+	person, err := s.db.GetPerson(id)
+	if err != nil || person == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "person not found"})
+		return
+	}
+	if person.Name == "" {
+		writeJSON(w, http.StatusOK, []camera.Event{})
+		return
+	}
+	events, err := s.db.QueryEventsFiltered("", "", "", person.Name, 20, 0)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if events == nil {
+		events = []camera.Event{}
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 
 func (s *Server) handleListUnmatchedFaces(w http.ResponseWriter, r *http.Request) {

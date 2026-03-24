@@ -364,8 +364,8 @@ func (d *DB) QueryEventsFiltered(cameraName, label, zoneName, objectName string,
 		args = append(args, zoneName)
 	}
 	if objectName != "" {
-		query += " AND object_name = ?"
-		args = append(args, objectName)
+		query += " AND (object_name = ? OR sub_label = ?)"
+		args = append(args, objectName, objectName)
 	}
 
 	query += " ORDER BY timestamp DESC"
