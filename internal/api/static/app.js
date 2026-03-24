@@ -2503,7 +2503,8 @@ function renderIdentifyResults(query) {
   if (!grid) return;
   var eventId = grid.dataset.eventId;
   var label = grid.dataset.label;
-  var q = (query || '').toLowerCase().trim();
+  var raw = (query || '').trim();
+  var q = raw.toLowerCase();
 
   var filtered = q ? _identifyData.filter(function(p) {
     return p.name.toLowerCase().indexOf(q) !== -1;
@@ -2528,7 +2529,7 @@ function renderIdentifyResults(query) {
   if (q && !filtered.some(function(p) { return p.name.toLowerCase() === q; })) {
     html += '<div class="identify-chip identify-chip-new" onclick="trackObject(\'' + eventId + '\',\'' + label + '\')" title="Track as new">';
     html += '<div class="identify-chip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--accent)">+</div>';
-    html += '<span>New: ' + q + '</span></div>';
+    html += '<span>New: ' + raw + '</span></div>';
   }
 
   html += '</div>';
