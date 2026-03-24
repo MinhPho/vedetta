@@ -404,7 +404,12 @@
         var events = data.events || data || [];
         var section = document.getElementById('unidentified-section');
         var grid = document.getElementById('unidentified-grid');
-        var unidentified = events.filter(function(ev) { return (!ev.sub_label || ev.sub_label === '') && ev.sub_label !== '_ignored' && ev.snapshot_available; });
+        var unidentified = events.filter(function(ev) {
+          return (!ev.sub_label || ev.sub_label === '')
+            && ev.sub_label !== '_ignored'
+            && ev.snapshot_available
+            && ev.score >= 0.65;
+        });
         if (!unidentified.length) {
           section.style.display = 'none';
           return;
