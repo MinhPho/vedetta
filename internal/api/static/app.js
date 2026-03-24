@@ -2449,6 +2449,68 @@ function toggleDetectionPopover(box, eventId, label) {
   }, 0);
 }
 
+// Populate the identify grid with face/object thumbnails
+function loadIdentifyGrid() {
+  var grid = document.getElementById('identify-grid');
+  if (!grid) return;
+  var eventId = grid.dataset.eventId;
+  var label = grid.dataset.label;
+
+  if (label === 'person') {
+    fetch('/api/people').then(function(r) { return r.json(); }).then(function(data) {
+      var people = (data.people || data || []).filter(function(p) { return p.name && !p.ignore; });
+      if (!people.length) { grid.innerHTML = '<div style="font-size:var(--text-sm);color:var(--text-tertiary)">No known people yet</div>'; return; }
+      var html = '<div style="display:flex;flex-wrap:wrap;gap:0.35rem">';
+      people.forEach(function(p) {
+        html += '<div class="identify-chip" onclick="assignPersonToEvent(' + p.id + ',\'' + p.name.replace(/'/g, "\\'") + '\',\'' + eventId + '\')" title="' + p.name + '">';
+        html += '<div class="identify-chip-thumb" id="id-thumb-' + p.id + '"></div>';
+        html += '<span>' + p.name + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+      grid.innerHTML = html;
+
+      // Load thumbnails
+      people.forEach(function(p) {
+        if (p.face_count > 0) {
+          fetch('/api/people/' + p.id + '/faces?limit=1').then(function(r) { return r.json(); }).then(function(faces) {
+            if (faces && faces.length > 0) {
+              var el = document.getElementById('id-thumb-' + p.id);
+              if (el) el.style.backgroundImage = 'url(/api/faces/' + faces[0].id + '/crop)';
+            }
+          });
+        } else if (p.source_event_id) {
+          var el = document.getElementById('id-thumb-' + p.id);
+          if (el) el.style.backgroundImage = 'url(/api/events/' + p.source_event_id + '/detection-crop)';
+        }
+      });
+    });
+  } else {
+    fetch('/api/objects').then(function(r) { return r.json(); }).then(function(objects) {
+      var filtered = (objects || []).filter(function(o) { return o.label === label; });
+      if (!filtered.length) return;
+      var html = '<div style="display:flex;flex-wrap:wrap;gap:0.35rem">';
+      filtered.forEach(function(o) {
+        html += '<div class="identify-chip" onclick="addObjectReference(' + o.id + ',\'' + o.name.replace(/'/g, "\\'") + '\',\'' + eventId + '\')" title="' + o.name + '">';
+        html += '<div class="identify-chip-thumb" style="background-image:url(/api/objects/' + o.id + '/crop)"></div>';
+        html += '<span>' + o.name + '</span>';
+        html += '</div>';
+      });
+      html += '</div>';
+      grid.innerHTML = html;
+    });
+  }
+}
+
+// Auto-load identify grid when event detail loads
+document.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'event-detail') {
+    loadIdentifyGrid();
+  }
+});
+// Also try on page load
+if (document.getElementById('identify-grid')) loadIdentifyGrid();
+
 function reloadEventDetail(eventId) {
   var detail = document.getElementById('event-detail');
   if (detail && typeof htmx !== 'undefined') {

@@ -1911,15 +1911,12 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`</div>` +
 			`{{else}}<div class="meta-card-header">Identify</div>` +
 			`<div style="display:flex;gap:0.75rem;margin-bottom:0.5rem;align-items:center">` +
-			`<img src="/api/events/{{.ID}}/detection-crop" alt="detection" style="width:80px;height:auto;border-radius:var(--radius-sm);border:2px solid var(--accent)">` +
+			`<img src="/api/events/{{.ID}}/detection-crop" alt="detection" style="width:64px;height:auto;border-radius:var(--radius-sm);border:2px solid var(--accent)">` +
 			`<span style="font-size:var(--text-sm);color:var(--text-tertiary)">Who/what is this?</span>` +
 			`</div>` +
-			`{{range .NamedPeople}}<button class="btn btn-sm" style="width:100%;margin-bottom:0.25rem" onclick="assignPersonToEvent({{.ID}}, '{{.Name}}', '{{$.ID}}')">` +
-			`This is {{.Name}}</button>{{end}}` +
-			`{{range .KnownObjects}}<button class="btn btn-sm" style="width:100%;margin-bottom:0.25rem" onclick="addObjectReference({{.ID}}, '{{.Name}}', '{{$.ID}}')">` +
-			`This is {{.Name}}</button>{{end}}` +
-			`<button class="btn btn-sm btn-ghost" style="width:100%" onclick="trackObject('{{.ID}}', '{{.Label}}')">` +
-			`Track as new {{.Label}}</button>{{end}}` +
+			`<div id="identify-grid" data-event-id="{{.ID}}" data-label="{{.Label}}"></div>` +
+			`<button class="btn btn-sm btn-ghost" style="width:100%;margin-top:0.25rem" onclick="trackObject('{{.ID}}', '{{.Label}}')">` +
+			`+ New {{.Label}}</button>{{end}}` +
 			`</div>{{end}}` +
 			`<div class="event-nav">` +
 			`{{if .PrevID}}<a href="/event.html?id={{.PrevID}}" class="btn" data-prev-id="{{.PrevID}}">&#8592; Previous</a>{{else}}<span class="btn" style="opacity:0.3;pointer-events:none">&#8592; Previous</span>{{end}}` +

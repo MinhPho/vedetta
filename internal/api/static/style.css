@@ -2528,6 +2528,36 @@ kbd {
   .people-grid { grid-template-columns: 1fr; }
 }
 
+/* ─── Identify Chips ─── */
+.identify-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem 0.2rem 0.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  transition: border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.identify-chip:hover {
+  border-color: var(--accent);
+  background: rgba(93, 215, 255, 0.08);
+}
+
+.identify-chip-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  background-size: cover;
+  background-position: center;
+  flex-shrink: 0;
+}
+
 /* ─── Detection Overlay ─── */
 .detection-overlay-wrap {
   position: relative;
