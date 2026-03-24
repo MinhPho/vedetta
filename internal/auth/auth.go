@@ -199,6 +199,23 @@ func (c *Checker) Check(user, pass, remoteIP string) bool {
 	return true
 }
 
+// ChangePassword verifies the current password and updates to the new one.
+func (c *Checker) ChangePassword(username, currentPassword, newPassword string) error {
+	if !c.verify(username, currentPassword) {
+		return ErrInvalidCredentials
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	if err := c.db.SaveAuthUser(username, string(hash)); err != nil {
+		return fmt.Errorf("save user: %w", err)
+	}
+	c.reloadUsers()
+	slog.Info("password changed", "username", username)
+	return nil
+}
+
 func (c *Checker) Login(user, pass, remoteIP, userAgent string) (*storage.AuthSession, error) {
 	if c == nil {
 		return nil, ErrInvalidCredentials

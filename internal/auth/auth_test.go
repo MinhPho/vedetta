@@ -201,6 +201,64 @@ func TestChecker_DBAuth(t *testing.T) {
 	}
 }
 
+func TestChangePassword(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer db.Close()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), bcrypt.DefaultCost)
+	db.SaveAuthUser("admin", string(hash))
+
+	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	defer checker.Close()
+
+	// Change password succeeds with correct current password
+	if err := checker.ChangePassword("admin", "oldpassword", "newpassword123"); err != nil {
+		t.Fatalf("ChangePassword should succeed: %v", err)
+	}
+
+	// Login with new password succeeds
+	session, err := checker.Login("admin", "newpassword123", "127.0.0.1", "test")
+	if err != nil {
+		t.Fatalf("Login with new password should succeed: %v", err)
+	}
+	if session.Username != "admin" {
+		t.Errorf("expected username 'admin', got %q", session.Username)
+	}
+
+	// Login with old password fails
+	_, err = checker.Login("admin", "oldpassword", "127.0.0.1", "test")
+	if err == nil {
+		t.Error("Login with old password should fail after change")
+	}
+}
+
+func TestChangePassword_WrongCurrent(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer db.Close()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
+	db.SaveAuthUser("admin", string(hash))
+
+	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	defer checker.Close()
+
+	err = checker.ChangePassword("admin", "wrongpassword", "newpassword123")
+	if err == nil {
+		t.Fatal("ChangePassword with wrong current password should fail")
+	}
+	if err != ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
+	}
+}
+
 func TestRequestIsSecureWithTrustedProxy(t *testing.T) {
 	c := newChecker(t, config.APIConfig{
 		Exposure:       "internet",
