@@ -172,6 +172,7 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("GET /api/faces/unmatched", s.handleListUnmatchedFaces)
 	s.mux.HandleFunc("PUT /api/faces/{id}/assign", s.handleAssignFace)
 	s.mux.HandleFunc("GET /api/faces/{id}/crop", s.handleFaceCrop)
+	s.mux.HandleFunc("POST /api/faces/{id}/ignore", s.handleIgnoreFace)
 	s.mux.HandleFunc("POST /api/faces/backfill", s.handleFaceBackfill)
 	s.mux.HandleFunc("POST /api/people/merge", s.handleMergePeople)
 
@@ -2529,6 +2530,19 @@ func (s *Server) handleAssignFace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "assigned", "person_id": personID})
+}
+
+func (s *Server) handleIgnoreFace(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid face ID"})
+		return
+	}
+	if err := s.db.DeleteFace(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 }
 
 func (s *Server) handleFaceCrop(w http.ResponseWriter, r *http.Request) {

@@ -618,6 +618,15 @@
     function idModalIgnore() {
       var eventId = _idModalEvents[_idModalIndex];
       dismissAppearance(eventId, null);
+
+      // Also delete any unmatched face records for this event
+      if (_idModalSource === 'faces') {
+        var face = _unmatchedFaces.find(function(f) { return f.event_id === eventId; });
+        if (face) {
+          fetch('/api/faces/' + face.id + '/ignore', { method: 'POST' });
+        }
+      }
+
       _idModalEvents.splice(_idModalIndex, 1);
       if (_idModalEvents.length === 0) { closeIdModal(); loadPeople(); loadUnmatched(); loadUnidentified(); return; }
       if (_idModalIndex >= _idModalEvents.length) _idModalIndex = _idModalEvents.length - 1;

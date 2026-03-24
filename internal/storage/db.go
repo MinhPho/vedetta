@@ -1174,6 +1174,11 @@ func (d *DB) MergePeople(targetID, sourceID int64) error {
 }
 
 // GetFaceCropPath returns the crop_path for a face by ID.
+func (d *DB) DeleteFace(id int64) error {
+	_, err := d.db.Exec("DELETE FROM faces WHERE id = ?", id)
+	return err
+}
+
 func (d *DB) GetFaceCropPath(id int64) (string, error) {
 	var path sql.NullString
 	err := d.db.QueryRow("SELECT crop_path FROM faces WHERE id = ?", id).Scan(&path)
