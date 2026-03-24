@@ -407,33 +407,40 @@
       });
     }
 
+    var _unmatchedFaces = [];
+
     function loadUnmatched() {
       fetch('/api/faces/unmatched?limit=50').then(function(r) { return r.json(); }).then(function(faces) {
+        _unmatchedFaces = faces || [];
         var section = document.getElementById('unmatched-section');
         var grid = document.getElementById('unmatched-grid');
-        if (!faces || !faces.length) {
+        if (!_unmatchedFaces.length) {
           section.style.display = 'none';
           return;
         }
         section.style.display = '';
         var html = '';
-        faces.forEach(function(f) {
-          html += '<div class="face-card-unmatched">'
-            + '<div class="face-thumb face-thumb--unmatched" '
-            + 'style="background-image:url(/api/faces/' + f.id + '/crop)" '
-            + 'title="' + (f.camera || '') + ' - ' + new Date(f.timestamp).toLocaleString() + '" '
-            + 'onclick="openAssignModal(' + f.id + ')">'
-            + '<div class="face-thumb-action">+</div>'
-            + '</div>'
-            + '<div class="face-card-actions">'
-            + '<button class="btn btn-xs btn-ghost" onclick="showFaceSnapshot(' + f.id + ',\'' + escapeAttr(f.event_id || '') + '\',\'' + escapeAttr(f.camera || '') + '\')" title="View full snapshot">Full image</button>'
-            + '</div>'
+        _unmatchedFaces.forEach(function(f, i) {
+          html += '<div class="unid-card" onclick="openFaceModal(' + i + ')" title="' + (f.camera || '') + ' — ' + new Date(f.timestamp).toLocaleString() + '">'
+            + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/faces/' + f.id + '/crop);background-size:cover;background-position:center"></div>'
             + '</div>';
         });
         grid.innerHTML = html;
       }).catch(function() {
         document.getElementById('unmatched-section').style.display = 'none';
       });
+    }
+
+    function openFaceModal(index) {
+      // Build event list from unmatched faces that have event_ids
+      _idModalEvents = [];
+      _unmatchedFaces.forEach(function(f) {
+        if (f.event_id) _idModalEvents.push(f.event_id);
+      });
+      if (!_idModalEvents.length) return;
+      _idModalIndex = Math.min(index, _idModalEvents.length - 1);
+      _idModalSource = 'faces';
+      openIdModal();
     }
 
     var _unidentifiedPeople = []; // cached for search
@@ -474,14 +481,16 @@
     var _idModalEvents = [];
     var _idModalIndex = 0;
 
+    var _idModalSource = 'appearances'; // 'faces' or 'appearances'
+
     function selectUnidentified(card, eventId) {
-      // Find this event's index in the unidentified list
       var grid = document.getElementById('unidentified-grid');
       var cards = grid.querySelectorAll('.unid-card');
       _idModalEvents = [];
       cards.forEach(function(c) { _idModalEvents.push(c.dataset.eventId); });
       _idModalIndex = _idModalEvents.indexOf(eventId);
       if (_idModalIndex < 0) _idModalIndex = 0;
+      _idModalSource = 'appearances';
       openIdModal();
     }
 
