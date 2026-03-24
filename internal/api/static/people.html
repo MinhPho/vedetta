@@ -397,10 +397,11 @@
     var _unidentifiedPeople = []; // cached for search
 
     function loadUnidentified() {
-      fetch('/api/events?label=person&limit=30').then(function(r) { return r.json(); }).then(function(events) {
+      fetch('/api/events?label=person&limit=30').then(function(r) { return r.json(); }).then(function(data) {
+        var events = data.events || data || [];
         var section = document.getElementById('unidentified-section');
         var grid = document.getElementById('unidentified-grid');
-        var unidentified = (events || []).filter(function(ev) { return !ev.sub_label && ev.snapshot_available; });
+        var unidentified = events.filter(function(ev) { return !ev.sub_label && ev.snapshot_available; });
         if (!unidentified.length) {
           section.style.display = 'none';
           return;
