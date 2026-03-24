@@ -186,6 +186,8 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("DELETE /api/objects/sightings/{id}", s.handleDismissSighting)
 	s.mux.HandleFunc("POST /api/events/{id}/identify", s.handleIdentifyEvent)
 
+	s.mux.HandleFunc("GET /api/events/{id}/detection-crop", s.handleEventDetectionCrop)
+
 	// Doorbell + real-time events
 	s.mux.HandleFunc("POST /api/cameras/{name}/doorbell", s.handleDoorbellPress)
 	s.mux.HandleFunc("GET /api/events/stream", s.handleSSE)
@@ -739,6 +741,40 @@ func (s *Server) handleEventClip(w http.ResponseWriter, r *http.Request) {
 	filename := fmt.Sprintf("%s_%s.mp4", event.ID, event.Label)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	http.ServeFile(w, r, event.ClipPath)
+}
+
+func (s *Server) handleEventDetectionCrop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	event, err := s.db.GetEventByID(id)
+	if err != nil || event == nil || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "snapshot not found"})
+		return
+	}
+
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load snapshot"})
+		return
+	}
+
+	// Crop to the event's bounding box with padding
+	bounds := img.Bounds()
+	box := event.Box
+	pad := 20
+	x1 := max(box[0]-pad, bounds.Min.X)
+	y1 := max(box[1]-pad, bounds.Min.Y)
+	x2 := min(box[2]+pad, bounds.Max.X)
+	y2 := min(box[3]+pad, bounds.Max.Y)
+
+	if x2 <= x1 || y2 <= y1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invalid bounding box"})
+		return
+	}
+
+	crop := img.SubImage(image.Rect(x1, y1, x2, y2))
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	jpeg.Encode(w, crop, &jpeg.Options{Quality: 90})
 }
 
 func (s *Server) handleReextractClip(w http.ResponseWriter, r *http.Request) {
@@ -1676,6 +1712,10 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`</div>{{end}}` +
 			`{{if .SnapshotAvailable}}<div class="meta-card">` +
 			`<div class="meta-card-header">Object Tracking</div>` +
+			`<div style="display:flex;gap:0.75rem;margin-bottom:0.5rem;align-items:center">` +
+			`<img src="/api/events/{{.ID}}/detection-crop" alt="detection" style="width:80px;height:auto;border-radius:var(--radius-sm);border:2px solid var(--accent)">` +
+			`<span style="font-size:var(--text-sm);color:var(--text-tertiary)">This {{.Label}} will be tracked</span>` +
+			`</div>` +
 			`{{range .KnownObjects}}<button class="btn btn-sm" style="width:100%;margin-bottom:0.25rem" onclick="addObjectReference({{.ID}}, '{{.Name}}', '{{$.ID}}')">` +
 			`+ Add reference to {{.Name}}</button>{{end}}` +
 			`<button class="btn btn-sm btn-ghost" style="width:100%" onclick="trackObject('{{.ID}}', '{{.Label}}')">` +
