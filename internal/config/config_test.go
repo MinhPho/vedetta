@@ -298,9 +298,9 @@ func TestLoadErrors(t *testing.T) {
 			errMsg: "url is required",
 		},
 		{
-			name:   "no cameras",
-			yaml:   "detect:\n  score_threshold: 0.5\n",
-			errMsg: "at least one camera",
+			name:   "no auth users",
+			yaml:   "cameras:\n  - name: front\n    url: rtsp://localhost/stream\nauth:\n  users: []\n",
+			errMsg: "at least one auth user",
 		},
 		{
 			name:   "invalid yaml",
@@ -446,6 +446,75 @@ cameras:
 
 	if cfg.Cameras[0].RecordURL != "rtsp://localhost/high" {
 		t.Errorf("record_url = %q, want rtsp://localhost/high", cfg.Cameras[0].RecordURL)
+	}
+}
+
+func TestLoadZeroCamerasValid(t *testing.T) {
+	path := writeConfig(t, `
+detect:
+  score_threshold: 0.5
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() should accept zero cameras, got error: %v", err)
+	}
+	if len(cfg.Cameras) != 0 {
+		t.Errorf("expected 0 cameras, got %d", len(cfg.Cameras))
+	}
+}
+
+func TestLoadOrDefaultMissingFile(t *testing.T) {
+	cfg, setupMode, err := LoadOrDefault("/nonexistent/path/config.yaml")
+	if err != nil {
+		t.Fatalf("LoadOrDefault() error: %v", err)
+	}
+	if !setupMode {
+		t.Error("expected setupMode=true for missing file")
+	}
+	if cfg.API.Port != 5050 {
+		t.Errorf("default API port = %d, want 5050", cfg.API.Port)
+	}
+	if cfg.Detect.ScoreThreshold != 0.65 {
+		t.Errorf("default score threshold = %f, want 0.65", cfg.Detect.ScoreThreshold)
+	}
+}
+
+func TestLoadOrDefaultValidFile(t *testing.T) {
+	path := writeConfig(t, `
+cameras:
+  - name: front
+    url: rtsp://192.168.1.10/stream
+`)
+
+	cfg, setupMode, err := LoadOrDefault(path)
+	if err != nil {
+		t.Fatalf("LoadOrDefault() error: %v", err)
+	}
+	if setupMode {
+		t.Error("expected setupMode=false for existing valid file")
+	}
+	if len(cfg.Cameras) != 1 {
+		t.Fatalf("expected 1 camera, got %d", len(cfg.Cameras))
+	}
+	if cfg.Cameras[0].Name != "front" {
+		t.Errorf("camera name = %q, want %q", cfg.Cameras[0].Name, "front")
+	}
+}
+
+func TestLoadOrDefaultInvalidFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("cameras:\n  - name: [invalid"), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	_, setupMode, err := LoadOrDefault(path)
+	if err == nil {
+		t.Fatal("LoadOrDefault() should return error for invalid file")
+	}
+	if setupMode {
+		t.Error("setupMode should be false on error")
 	}
 }
 

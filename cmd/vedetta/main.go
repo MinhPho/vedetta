@@ -31,6 +31,22 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// subsystems holds all initialized runtime components so both the normal and
+// setup-mode startup paths can share the same initialization logic.
+type subsystems struct {
+	mqttClient     *mqtt.Client
+	detector       *detect.Detector
+	faceRecognizer *detect.FaceRecognizer
+	objectEmbedder *detect.ObjectEmbedder
+	hub            *rtsp.Hub
+	recorder       *recording.Recorder
+	manager        *camera.Manager
+	events         chan camera.Event
+	eventEnds      chan camera.EventEnd
+	presenceEvents chan camera.PresenceEvent
+	faceEvents     chan camera.FaceEvent
+}
+
 func main() {
 	// Handle subcommands before flag parsing
 	if len(os.Args) > 1 && os.Args[1] == "discover" {
@@ -51,14 +67,9 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load(*configPath)
+	cfg, setupMode, err := config.LoadOrDefault(*configPath)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
-	}
-
-	if err := auth.ValidateConfig(cfg.Auth); err != nil {
-		slog.Error("invalid auth config", "error", err)
 		os.Exit(1)
 	}
 
@@ -72,10 +83,103 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
+	if setupMode {
+		slog.Info("no config file found, starting in setup mode", "config", *configPath)
+		slog.Info("open the web UI to complete setup", "url", fmt.Sprintf("http://localhost:%d", cfg.API.Port))
+
+		setupDone := make(chan struct{})
+		server := api.NewSetupMode(cfg.API, db, *configPath, setupDone)
+		go func() {
+			if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("API server failed", "error", err)
+				cancel()
+			}
+		}()
+
+		// Block until setup completes or process is killed
+		select {
+		case <-setupDone:
+			slog.Info("setup complete, loading config")
+		case <-ctx.Done():
+			return
+		}
+
+		// Reload the written config
+		cfg, err = config.Load(*configPath)
+		if err != nil {
+			slog.Warn("config not found after setup, using defaults", "error", err)
+			cfg = config.Defaults()
+		}
+
+		// Seed auth users from config into DB
+		for _, user := range cfg.Auth.Users {
+			if err := db.SeedAuthUser(user.Username, user.PasswordHash); err != nil {
+				slog.Error("failed to seed auth user", "username", user.Username, "error", err)
+			}
+		}
+
+		authChecker := auth.NewFromDB(cfg.API, db)
+		defer authChecker.Close()
+
+		sub := initSubsystems(ctx, cancel, cfg, db)
+		defer closeSubsystems(sub)
+
+		// Reconcile event media availability with the filesystem
+		go reconcileEventMediaAvailability(db)
+
+		runEventLoop(ctx, cfg, db, sub, server)
+		startOnvifSubscribers(ctx, cfg, server)
+
+		// Transition the running server to full mode
+		server.TransitionToFull(authChecker)
+		server.SetSubsystems(sub.manager, sub.recorder, sub.hub, sub.faceRecognizer, sub.objectEmbedder, cfg.Events.SnapshotPath, filepath.Join(cfg.Events.SnapshotPath, "faces"), cfg.Cameras)
+		server.ObjectMatchThreshold = cfg.Detect.ObjectMatchThreshold
+		if sub.mqttClient != nil {
+			server.SetMQTT(sub.mqttClient)
+		}
+
+		// Start RTSP re-publishing server if enabled
+		if cfg.RTSPServer.Enabled {
+			rtspServer := stream.NewRTSPServer(sub.hub, cfg.RTSPServer, authChecker, cfg.Cameras)
+			if err := rtspServer.Start(); err != nil {
+				slog.Error("RTSP re-publish server failed to start", "error", err)
+			} else {
+				defer rtspServer.Close()
+				slog.Info("RTSP re-publish server started", "port", cfg.RTSPServer.Port)
+			}
+		}
+
+		slog.Info("vedetta started", "cameras", len(cfg.Cameras))
+
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+
+		slog.Info("shutting down")
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Error("HTTP server shutdown error", "error", err)
+		}
+
+		cancel()
+		sub.recorder.Close()
+		return
+	}
+
+	// Normal startup path — config exists
+	// Seed auth users from config into DB so config acts as the source of truth for initial credentials.
+	for _, user := range cfg.Auth.Users {
+		if err := db.SeedAuthUser(user.Username, user.PasswordHash); err != nil {
+			slog.Error("failed to seed auth user", "username", user.Username, "error", err)
+		}
+	}
+
 	// Reconcile event media availability with the filesystem without deleting metadata.
 	go reconcileEventMediaAvailability(db)
 
-	authChecker := auth.New(cfg.Auth, cfg.API, db)
+	authChecker := auth.NewFromDB(cfg.API, db)
 	defer authChecker.Close()
 
 	// Start API server early so the UI is available during initialization
@@ -87,45 +191,91 @@ func main() {
 		}
 	}()
 
-	var mqttClient *mqtt.Client
+	sub := initSubsystems(ctx, cancel, cfg, db)
+	defer closeSubsystems(sub)
+
+	runEventLoop(ctx, cfg, db, sub, server)
+	startOnvifSubscribers(ctx, cfg, server)
+
+	// Start RTSP re-publishing server if enabled
+	if cfg.RTSPServer.Enabled {
+		rtspServer := stream.NewRTSPServer(sub.hub, cfg.RTSPServer, authChecker, cfg.Cameras)
+		if err := rtspServer.Start(); err != nil {
+			slog.Error("RTSP re-publish server failed to start", "error", err)
+		} else {
+			defer rtspServer.Close()
+			slog.Info("RTSP re-publish server started", "port", cfg.RTSPServer.Port)
+		}
+	}
+
+	// Wire subsystems into the API server now that everything is initialized
+	server.SetSubsystems(sub.manager, sub.recorder, sub.hub, sub.faceRecognizer, sub.objectEmbedder, cfg.Events.SnapshotPath, filepath.Join(cfg.Events.SnapshotPath, "faces"), cfg.Cameras)
+	server.ObjectMatchThreshold = cfg.Detect.ObjectMatchThreshold
+	if sub.mqttClient != nil {
+		server.SetMQTT(sub.mqttClient)
+	}
+
+	slog.Info("vedetta started", "cameras", len(cfg.Cameras))
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+
+	slog.Info("shutting down")
+
+	// Gracefully shut down the HTTP server (5s timeout for in-flight requests)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("HTTP server shutdown error", "error", err)
+	}
+
+	cancel()
+
+	// Wait for recording goroutines to finalize segments before closing DB
+	sub.recorder.Close()
+}
+
+// initSubsystems creates and starts all runtime components: MQTT, detector,
+// face recognizer, object embedder, RTSP hub, recorder, and camera manager.
+func initSubsystems(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, db *storage.DB) *subsystems {
+	var sub subsystems
+	var err error
+
 	if cfg.MQTT.Enabled {
-		mqttClient, err = mqtt.New(cfg.MQTT)
+		sub.mqttClient, err = mqtt.New(cfg.MQTT)
 		if err != nil {
 			slog.Error("failed to connect to MQTT", "error", err)
 			os.Exit(1)
 		}
-		defer mqttClient.Close()
 	}
 
-	detector := detect.New(cfg.Detect)
-	defer detector.Close()
+	sub.detector = detect.New(cfg.Detect)
 
-	var faceRecognizer *detect.FaceRecognizer
 	fr, frErr := detect.NewFaceRecognizer(detect.FaceRecognizerConfig{
 		CropDir: filepath.Join(cfg.Events.SnapshotPath, "faces"),
 	})
 	if frErr != nil {
 		slog.Warn("face recognition disabled", "error", frErr)
 	} else {
-		faceRecognizer = fr
-		defer fr.Close()
+		sub.faceRecognizer = fr
 		slog.Info("face recognition enabled")
 	}
 
-	objectEmbedder, oeErr := detect.NewObjectEmbedder(detect.ObjectEmbedderConfig{})
+	oe, oeErr := detect.NewObjectEmbedder(detect.ObjectEmbedderConfig{})
 	if oeErr != nil {
 		slog.Warn("object re-identification disabled", "error", oeErr)
 	} else {
+		sub.objectEmbedder = oe
 		slog.Info("object re-identification enabled")
 	}
 
 	// Create RTSP Hub — central connection manager
-	hub := rtsp.NewHub(ctx)
-	defer hub.Close()
+	sub.hub = rtsp.NewHub(ctx)
 
 	slog.Info("native Go media pipeline active (no ffmpeg required)")
 
-	recorder := recording.New(cfg.Recording, cfg.Events, db, hub, cfg.Events.SnapshotPath)
+	sub.recorder = recording.New(cfg.Recording, cfg.Events, db, sub.hub, cfg.Events.SnapshotPath)
 
 	// Register cameras for recording
 	for _, cam := range cfg.Cameras {
@@ -136,23 +286,23 @@ func main() {
 		if recordURL == "" {
 			recordURL = cam.URL
 		}
-		recorder.RegisterCamera(cam.Name, recordURL)
+		sub.recorder.RegisterCamera(cam.Name, recordURL)
 	}
 
 	// Start continuous segment recording
-	recorder.StartContinuousRecording(ctx)
-	recorder.StartRetentionCleanup(ctx)
-	recorder.StartStatsRefresh(ctx)
+	sub.recorder.StartContinuousRecording(ctx)
+	sub.recorder.StartRetentionCleanup(ctx)
+	sub.recorder.StartStatsRefresh(ctx)
 
 	// Publish HA MQTT discovery for all enabled cameras
-	if mqttClient != nil {
+	if sub.mqttClient != nil {
 		var cameraNames []string
 		for _, cam := range cfg.Cameras {
 			if cam.IsEnabled() {
 				cameraNames = append(cameraNames, cam.Name)
 			}
 		}
-		mqttClient.PublishDiscovery(cameraNames)
+		sub.mqttClient.PublishDiscovery(cameraNames)
 
 		// Publish discovery for tracked objects
 		if knownObjects, err := db.ListKnownObjects(); err == nil {
@@ -160,22 +310,22 @@ func main() {
 			for _, obj := range knownObjects {
 				objInfos = append(objInfos, mqtt.ObjectInfo{Name: obj.Name, Label: obj.Label})
 			}
-			mqttClient.PublishObjectDiscovery(objInfos)
+			sub.mqttClient.PublishObjectDiscovery(objInfos)
 		}
 	}
 
-	events := make(chan camera.Event, 100)
-	eventEnds := make(chan camera.EventEnd, 100)
-	presenceEvents := make(chan camera.PresenceEvent, 100)
-	faceEvents := make(chan camera.FaceEvent, 100)
+	sub.events = make(chan camera.Event, 100)
+	sub.eventEnds = make(chan camera.EventEnd, 100)
+	sub.presenceEvents = make(chan camera.PresenceEvent, 100)
+	sub.faceEvents = make(chan camera.FaceEvent, 100)
 
-	manager := camera.NewManager(cfg.Cameras, detector, cfg.Detect.Motion, events, eventEnds, presenceEvents, hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality, cfg.Recording.Path, faceRecognizer, faceEvents, filepath.Join(cfg.Events.SnapshotPath, "faces"))
+	sub.manager = camera.NewManager(cfg.Cameras, sub.detector, cfg.Detect.Motion, sub.events, sub.eventEnds, sub.presenceEvents, sub.hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality, cfg.Recording.Path, sub.faceRecognizer, sub.faceEvents, filepath.Join(cfg.Events.SnapshotPath, "faces"))
 
 	// Sync zones from config to DB and load them into cameras
-	syncConfigZones(db, cfg.Cameras, manager)
+	syncConfigZones(db, cfg.Cameras, sub.manager)
 
 	// Publish HA discovery for zone presence sensors
-	if mqttClient != nil {
+	if sub.mqttClient != nil {
 		var zoneInfos []mqtt.ZoneInfo
 		for _, camCfg := range cfg.Cameras {
 			if !camCfg.IsEnabled() {
@@ -195,20 +345,18 @@ func main() {
 			}
 		}
 		if len(zoneInfos) > 0 {
-			mqttClient.PublishPresenceDiscovery(zoneInfos)
+			sub.mqttClient.PublishPresenceDiscovery(zoneInfos)
 		}
 	}
 
-	manager.Start(ctx)
+	sub.manager.Start(ctx)
 
 	// Periodically publish camera online/offline status to MQTT.
-	// Uses a short initial interval so cameras that connect quickly get
-	// reported promptly, then switches to the normal 30s interval.
-	if mqttClient != nil {
+	if sub.mqttClient != nil {
 		go func() {
 			publishStatuses := func() {
-				for _, st := range manager.CameraStatuses() {
-					mqttClient.PublishCameraStatus(st.Name, st.Online)
+				for _, st := range sub.manager.CameraStatuses() {
+					sub.mqttClient.PublishCameraStatus(st.Name, st.Online)
 				}
 			}
 
@@ -235,15 +383,37 @@ func main() {
 		}()
 	}
 
-	// Event lifecycle manager: tracks active events and schedules clip extraction
-	// when the tracked object leaves the frame or max duration is reached.
+	return &sub
+}
+
+// closeSubsystems releases resources held by subsystems.
+func closeSubsystems(sub *subsystems) {
+	if sub.mqttClient != nil {
+		sub.mqttClient.Close()
+	}
+	sub.detector.Close()
+	if sub.faceRecognizer != nil {
+		sub.faceRecognizer.Close()
+	}
+	sub.hub.Close()
+}
+
+// runEventLoop starts the goroutine that manages event lifecycles, including
+// clip extraction scheduling, cooldowns, presence updates, MQTT publishing,
+// face recognition, and object re-identification.
+func runEventLoop(ctx context.Context, cfg *config.Config, db *storage.DB, sub *subsystems, server *api.Server) {
+	events := sub.events
+	eventEnds := sub.eventEnds
+	presenceEvents := sub.presenceEvents
+	faceEvents := sub.faceEvents
+
 	go func() {
 		type activeEvent struct {
 			event      camera.Event
 			timer      *time.Timer
 			tempCancel context.CancelFunc // for non-continuous temporary recording
 		}
-		active := make(map[string]*activeEvent) // eventID → state
+		active := make(map[string]*activeEvent) // eventID -> state
 		cooldowns := make(map[string]time.Time)
 		maxDur := cfg.Recording.MaxEventDuration
 		timeouts := make(chan string, 100) // eventIDs that hit max duration
@@ -285,7 +455,7 @@ func main() {
 					return
 				}
 				for attempt := range 5 {
-					err := recorder.SaveClip(ctx, ev)
+					err := sub.recorder.SaveClip(ctx, ev)
 					if err == nil {
 						return
 					}
@@ -340,8 +510,8 @@ func main() {
 					}
 				}
 
-				if mqttClient != nil {
-					if err := mqttClient.PublishEvent(event, nil); err != nil {
+				if sub.mqttClient != nil {
+					if err := sub.mqttClient.PublishEvent(event, nil); err != nil {
 						slog.Error("failed to publish event", "error", err)
 					}
 					// Use annotated image for MQTT (with bounding boxes for visual context)
@@ -351,17 +521,17 @@ func main() {
 					}
 					if mqttImg != nil {
 						if jpegData := encodeJPEG(mqttImg, cfg.Events.SnapshotQuality); jpegData != nil {
-							mqttClient.PublishSnapshot(event.CameraName, event.Label, jpegData)
+							sub.mqttClient.PublishSnapshot(event.CameraName, event.Label, jpegData)
 						}
 					}
 				}
 
-				if objectEmbedder != nil && event.SnapshotImage != nil {
+				if sub.objectEmbedder != nil && event.SnapshotImage != nil {
 					go func(ev camera.Event) {
-						matched := matchEventToKnownObjects(db, objectEmbedder, ev, cfg.Detect.ObjectMatchThreshold)
-						if mqttClient != nil {
+						matched := matchEventToKnownObjects(db, sub.objectEmbedder, ev, cfg.Detect.ObjectMatchThreshold)
+						if sub.mqttClient != nil {
 							for _, name := range matched {
-								mqttClient.PublishObjectSighting(name, ev)
+								sub.mqttClient.PublishObjectSighting(name, ev)
 							}
 						}
 					}(event)
@@ -370,10 +540,10 @@ func main() {
 				// Start temporary recording if continuous is off
 				var tempCancel context.CancelFunc
 				if !cfg.Recording.Continuous {
-					if url := recorder.CameraURL(event.CameraName); url != "" {
+					if url := sub.recorder.CameraURL(event.CameraName); url != "" {
 						tempCtx, cancel := context.WithCancel(ctx)
 						tempCancel = cancel
-						recorder.StartTemporaryRecording(tempCtx, event.CameraName, url)
+						sub.recorder.StartTemporaryRecording(tempCtx, event.CameraName, url)
 					}
 				}
 
@@ -409,17 +579,17 @@ func main() {
 				if err := db.UpdateZonePresence(pe.ZoneID, pe.Label, pe.Type == "zone_enter"); err != nil {
 					slog.Error("failed to persist presence event", "zone", pe.ZoneName, "label", pe.Label, "error", err)
 				}
-				if mqttClient != nil {
+				if sub.mqttClient != nil {
 					var objectName string
 					if pe.Type == "zone_enter" {
 						objectName = db.LatestObjectNameForZone(pe.ZoneName, pe.Label)
 					}
-					mqttClient.PublishPresence(pe, objectName)
+					sub.mqttClient.PublishPresence(pe, objectName)
 				}
 
 			case fe := <-faceEvents:
 				for _, result := range fe.Results {
-					personID, similarity := matchFaceToPerson(db, result.Embedding, faceRecognizer)
+					personID, similarity := matchFaceToPerson(db, result.Embedding, sub.faceRecognizer)
 
 					face := storage.Face{
 						EventID:    fe.EventID,
@@ -453,26 +623,11 @@ func main() {
 			}
 		}
 	}()
+}
 
-	// Start RTSP re-publishing server if enabled
-	if cfg.RTSPServer.Enabled {
-		rtspServer := stream.NewRTSPServer(hub, cfg.RTSPServer, authChecker, cfg.Cameras)
-		if err := rtspServer.Start(); err != nil {
-			slog.Error("RTSP re-publish server failed to start", "error", err)
-		} else {
-			defer rtspServer.Close()
-			slog.Info("RTSP re-publish server started", "port", cfg.RTSPServer.Port)
-		}
-	}
-
-	// Wire subsystems into the API server now that everything is initialized
-	server.SetSubsystems(manager, recorder, hub, faceRecognizer, objectEmbedder, cfg.Events.SnapshotPath, filepath.Join(cfg.Events.SnapshotPath, "faces"), cfg.Cameras)
-	server.ObjectMatchThreshold = cfg.Detect.ObjectMatchThreshold
-	if mqttClient != nil {
-		server.SetMQTT(mqttClient)
-	}
-
-	// Start ONVIF event subscribers for doorbell cameras
+// startOnvifSubscribers starts ONVIF event subscribers for doorbell cameras
+// and a goroutine that processes their events.
+func startOnvifSubscribers(ctx context.Context, cfg *config.Config, server *api.Server) {
 	onvifEvents := make(chan camera.OnvifEvent, 50)
 	for _, cam := range cfg.Cameras {
 		if !cam.IsEnabled() || !cam.Doorbell.Enabled {
@@ -501,26 +656,6 @@ func main() {
 			}
 		}
 	}()
-
-	slog.Info("vedetta started", "cameras", len(cfg.Cameras))
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-
-	slog.Info("shutting down")
-
-	// Gracefully shut down the HTTP server (5s timeout for in-flight requests)
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("HTTP server shutdown error", "error", err)
-	}
-
-	cancel()
-
-	// Wait for recording goroutines to finalize segments before closing DB
-	recorder.Close()
 }
 
 // syncConfigZones inserts zones from config into the database (if not already present)

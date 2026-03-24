@@ -69,6 +69,8 @@ type Server struct {
 	mux            *http.ServeMux
 	funcMap        template.FuncMap
 	ready          atomic.Bool
+	setupHandler   *SetupHandler
+	setupMode      bool
 
 	// SSE event bus for real-time browser notifications
 	sseMu      sync.Mutex
@@ -124,6 +126,64 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 		},
 	}
 
+	s.registerRoutes()
+
+	return s
+}
+
+// NewSetupMode creates a Server that only serves setup/onboarding endpoints.
+// No auth middleware is applied. The setupDone channel is closed when setup completes.
+func NewSetupMode(cfg config.APIConfig, db *storage.DB, configPath string, setupDone chan struct{}) *Server {
+	s := &Server{
+		config:     cfg,
+		db:         db,
+		mux:        http.NewServeMux(),
+		sseClients: make(map[chan []byte]struct{}),
+		setupMode:  true,
+	}
+
+	sh := NewSetupHandler(configPath, db, setupDone)
+	s.setupHandler = sh
+
+	// Setup-only routes (no auth middleware)
+	s.mux.HandleFunc("POST /api/setup", sh.HandleSetup)
+	s.mux.HandleFunc("GET /api/discover", sh.HandleDiscover)
+	s.mux.HandleFunc("POST /api/discover/probe", sh.HandleProbe)
+	s.mux.HandleFunc("GET /api/discover/thumbnail/{ip}", sh.HandleThumbnail)
+	s.mux.HandleFunc("POST /api/cameras", sh.HandleAddCameras)
+	s.mux.HandleFunc("POST /api/setup/complete", sh.HandleComplete)
+	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "setup"})
+	})
+
+	// Serve setup.html as default page
+	staticSub, _ := fs.Sub(staticFiles, "static")
+	fileServer := http.FileServer(http.FS(staticSub))
+	s.mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			r.URL.Path = "/setup.html"
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+
+	// Catch-all: block non-setup API routes.
+	// Uses GET and POST since those are the only methods not already covered by
+	// setup-specific handlers above; this avoids mux conflict with "GET /".
+	blockSetup := func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "setup not complete"})
+	}
+	s.mux.HandleFunc("GET /api/", blockSetup)
+	s.mux.HandleFunc("POST /api/", blockSetup)
+	s.mux.HandleFunc("DELETE /api/", blockSetup)
+	s.mux.HandleFunc("PUT /api/", blockSetup)
+	s.mux.HandleFunc("PATCH /api/", blockSetup)
+
+	return s
+}
+
+// registerRoutes registers all application routes on s.mux.
+// Called from New() and TransitionToFull().
+func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
@@ -210,6 +270,11 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("GET /partials/system-status", s.handleSystemStatusPartial)
 	s.mux.HandleFunc("GET /partials/system", s.handleSystemPartial)
 
+	// Setup status endpoint (returns "running" in normal mode)
+	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "running"})
+	})
+
 	// Serve static files at root
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
@@ -217,13 +282,15 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	} else {
 		s.mux.Handle("GET /", http.FileServer(http.FS(staticSub)))
 	}
-
-	return s
 }
 
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-	handler := s.readyMiddleware(authMiddleware(s, s.mux))
+
+	var handler http.Handler = s.mux
+	if !s.setupMode {
+		handler = s.readyMiddleware(authMiddleware(s, s.mux))
+	}
 
 	s.httpSrv = &http.Server{
 		Addr:              addr,
@@ -398,6 +465,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return s.httpSrv.Shutdown(ctx)
+}
+
+// TransitionToFull switches the server from setup mode to full operation.
+// It replaces the mux with a new one containing all application routes
+// and enables auth and ready middleware.
+func (s *Server) TransitionToFull(authChecker *auth.Checker) {
+	s.auth = authChecker
+	s.setupMode = false
+
+	newMux := http.NewServeMux()
+	s.mux = newMux
+	s.registerRoutes()
+
+	s.httpSrv.Handler = s.readyMiddleware(authMiddleware(s, newMux))
 }
 
 // SetSubsystems wires in the heavy dependencies once they're initialized.
@@ -1675,6 +1756,45 @@ func (s *Server) reloadCameraZones(name string, cam *camera.Camera) {
 func (s *Server) handleCameraGridPartial(w http.ResponseWriter, _ *http.Request) {
 	statuses := s.cameraStatuses()
 
+	w.Header().Set("Content-Type", "text/html")
+
+	if len(statuses) == 0 {
+		const emptyHTML = `<div class="empty-hero">
+  <div class="empty-icon">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+      <circle cx="12" cy="13" r="4"/>
+    </svg>
+  </div>
+  <div class="empty-title">No cameras configured yet</div>
+  <div class="empty-desc">
+    Vedetta can automatically discover cameras on your network using ONVIF. Or add one manually if you know the RTSP URL.
+  </div>
+  <div class="empty-actions">
+    <a href="#" onclick="startDiscovery(); return false;" class="action-card primary">
+      <div class="action-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M2 12h20"/>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+      </div>
+      <div class="action-text"><h3>Discover Cameras</h3><p>Scan your network for ONVIF cameras</p></div>
+    </a>
+    <a href="#" onclick="showAddManual(); return false;" class="action-card">
+      <div class="action-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </div>
+      <div class="action-text"><h3>Add Manually</h3><p>Enter an RTSP URL directly</p></div>
+    </a>
+  </div>
+</div>`
+		fmt.Fprint(w, emptyHTML)
+		return
+	}
+
 	type cameraCard struct {
 		Name        string
 		DisplayName string
@@ -1705,7 +1825,6 @@ func (s *Server) handleCameraGridPartial(w http.ResponseWriter, _ *http.Request)
   </div>
 </div>{{end}}`))
 
-	w.Header().Set("Content-Type", "text/html")
 	if err := tmpl.Execute(w, cards); err != nil {
 		slog.Error("template error", "error", err)
 	}
