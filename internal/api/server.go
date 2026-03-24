@@ -187,6 +187,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/auth/me", s.handleAuthMe)
+	s.mux.HandleFunc("POST /api/auth/change-password", s.handleChangePassword)
 	s.mux.HandleFunc("POST /api/tokens", s.handleCreateToken)
 	s.mux.HandleFunc("DELETE /api/tokens/{id}", s.handleDeleteToken)
 

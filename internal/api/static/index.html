@@ -53,6 +53,13 @@
       <svg id="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
     </button>
 
+    <button class="btn btn-icon btn-ghost" onclick="openAccountModal()" aria-label="Account" title="Account">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+    </button>
+
     <div class="topnav-spacer"></div>
 
     <div class="conn-status"><span class="conn-dot ok" id="conn-dot"></span><span id="conn-label">Connected</span></div>
@@ -165,6 +172,36 @@
         <div class="shortcut-row"><span>This help</span><span class="shortcut-keys"><kbd>?</kbd></span></div>
         <div class="shortcut-row"><span>Dismiss / Back</span><span class="shortcut-keys"><kbd>Esc</kbd></span></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Account Modal -->
+  <div class="shortcut-backdrop" id="account-backdrop"></div>
+  <div class="shortcut-modal" id="account-modal" role="dialog" aria-label="Account">
+    <div class="shortcut-modal-header">
+      <h2>Account</h2>
+      <button class="btn btn-icon btn-ghost" onclick="closeAccountModal()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="shortcut-modal-body" style="display:block">
+      <div style="margin-bottom:1rem">
+        <span class="stat-label">SIGNED IN AS</span>
+        <div id="account-username" style="font-weight:600;margin-top:0.25rem"></div>
+      </div>
+      <h3 style="font-size:var(--text-sm);margin-bottom:0.75rem">Change Password</h3>
+      <form id="change-password-form">
+        <label style="display:block;margin-bottom:0.25rem;font-size:var(--text-sm);color:var(--text-secondary)">Current Password</label>
+        <input type="password" id="cp-current" style="width:100%;margin-bottom:0.75rem;padding:0.5rem;background:var(--surface-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);color:var(--text-primary);font-size:var(--text-sm)" required>
+        <label style="display:block;margin-bottom:0.25rem;font-size:var(--text-sm);color:var(--text-secondary)">New Password</label>
+        <input type="password" id="cp-new" style="width:100%;margin-bottom:0.75rem;padding:0.5rem;background:var(--surface-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);color:var(--text-primary);font-size:var(--text-sm)" required minlength="8">
+        <label style="display:block;margin-bottom:0.25rem;font-size:var(--text-sm);color:var(--text-secondary)">Confirm New Password</label>
+        <input type="password" id="cp-confirm" style="width:100%;margin-bottom:0.75rem;padding:0.5rem;background:var(--surface-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);color:var(--text-primary);font-size:var(--text-sm)" required minlength="8">
+        <div id="cp-status" style="min-height:1.3rem;font-size:var(--text-sm);margin-bottom:0.5rem"></div>
+        <button type="submit" class="btn btn-primary" style="width:100%">Update Password</button>
+      </form>
     </div>
   </div>
 

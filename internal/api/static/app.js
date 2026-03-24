@@ -1724,7 +1724,9 @@ document.addEventListener('keydown', function(e) {
       break;
     }
     case 'Escape':
-      if (el('shortcut-modal') && el('shortcut-modal').classList.contains('open')) {
+      if (el('account-modal') && el('account-modal').classList.contains('open')) {
+        closeAccountModal();
+      } else if (el('shortcut-modal') && el('shortcut-modal').classList.contains('open')) {
         closeShortcutModal();
       } else if (document.fullscreenElement) {
         document.exitFullscreen();
@@ -2035,7 +2037,88 @@ document.addEventListener('click', function(e) {
   if (e.target && e.target.id === 'shortcut-backdrop') {
     closeShortcutModal();
   }
+  if (e.target && e.target.id === 'account-backdrop') {
+    closeAccountModal();
+  }
 });
+
+// ─── Account Modal ───
+function openAccountModal() {
+  var backdrop = el('account-backdrop');
+  var modal = el('account-modal');
+  if (!backdrop || !modal) return;
+
+  fetch('/api/auth/me').then(function(resp) {
+    if (!resp.ok) return;
+    return resp.json();
+  }).then(function(data) {
+    if (data && data.username) {
+      el('account-username').textContent = data.username;
+    }
+  });
+
+  // Reset form
+  var form = el('change-password-form');
+  if (form) form.reset();
+  var status = el('cp-status');
+  if (status) { status.textContent = ''; status.style.color = ''; }
+
+  backdrop.classList.add('open');
+  modal.classList.add('open');
+  modal.querySelector('button')?.focus();
+}
+
+function closeAccountModal() {
+  var backdrop = el('account-backdrop');
+  var modal = el('account-modal');
+  if (!backdrop || !modal) return;
+
+  backdrop.classList.remove('open');
+  modal.classList.remove('open');
+}
+
+(function() {
+  var form = document.getElementById('change-password-form');
+  if (!form) return;
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var status = document.getElementById('cp-status');
+    var newPw = document.getElementById('cp-new').value;
+    var confirmPw = document.getElementById('cp-confirm').value;
+
+    if (newPw !== confirmPw) {
+      status.textContent = 'New passwords do not match.';
+      status.style.color = 'var(--danger, #ff7d7d)';
+      return;
+    }
+
+    status.textContent = 'Updating...';
+    status.style.color = 'var(--text-secondary)';
+
+    fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_password: document.getElementById('cp-current').value,
+        new_password: newPw
+      })
+    }).then(function(resp) {
+      return resp.json().then(function(body) { return { ok: resp.ok, body: body }; });
+    }).then(function(result) {
+      if (result.ok) {
+        status.textContent = 'Password updated successfully.';
+        status.style.color = 'var(--success, #5dff7d)';
+        form.reset();
+      } else {
+        status.textContent = result.body.error || 'Failed to update password.';
+        status.style.color = 'var(--danger, #ff7d7d)';
+      }
+    }).catch(function() {
+      status.textContent = 'Network error. Please try again.';
+      status.style.color = 'var(--danger, #ff7d7d)';
+    });
+  });
+})();
 
 // ─── Real-time Playhead Animation ───
 var playheadRAF = null;
