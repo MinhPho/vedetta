@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/rvben/vedetta/internal/config"
@@ -161,6 +162,42 @@ func TestBearerTokenAuthentication(t *testing.T) {
 	}
 	if principal.Allows(http.MethodDelete, "/api/events") {
 		t.Fatal("read-only token should not allow DELETE")
+	}
+}
+
+func TestChecker_DBAuth(t *testing.T) {
+	dir := t.TempDir()
+	db, err := storage.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	defer db.Close()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
+	db.SaveAuthUser("admin", string(hash))
+
+	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	defer checker.Close()
+
+	// Valid login
+	session, err := checker.Login("admin", "secret", "127.0.0.1", "test")
+	if err != nil {
+		t.Fatalf("Login should succeed: %v", err)
+	}
+	if session.Username != "admin" {
+		t.Errorf("expected username 'admin', got %q", session.Username)
+	}
+
+	// Invalid password
+	_, err = checker.Login("admin", "wrong", "127.0.0.1", "test")
+	if err == nil {
+		t.Error("Login with wrong password should fail")
+	}
+
+	// Unknown user
+	_, err = checker.Login("nobody", "secret", "127.0.0.1", "test")
+	if err == nil {
+		t.Error("Login with unknown user should fail")
 	}
 }
 
