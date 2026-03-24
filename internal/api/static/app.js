@@ -2310,24 +2310,32 @@ function hideDiskWarning() {
 // ─── Object Tracking ───
 function trackObject(eventId, label) {
   showInputModal('Track ' + label, 'Name this ' + label + ':', '', function(name) {
-    fetch('/api/objects', {
+    var endpoint = label === 'person' ? '/api/events/' + eventId + '/track-person' : '/api/objects';
+    var body = label === 'person'
+      ? JSON.stringify({name: name})
+      : JSON.stringify({event_id: eventId, name: name});
+
+    fetch(endpoint, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({event_id: eventId, name: name})
+      body: body
     }).then(function(r) {
       if (!r.ok) return r.json().then(function(e) { throw new Error(e.error); });
       return r.json();
-    }).then(function(obj) {
-      toast('"' + obj.name + '" is now being tracked');
-      // Reload the event detail to show updated tracking options
-      if (typeof htmx !== 'undefined') {
-        var detail = document.getElementById('event-detail');
-        if (detail) htmx.trigger(detail, 'htmx:load');
-      }
+    }).then(function(result) {
+      toast('"' + name + '" is now being tracked');
+      reloadEventDetail(eventId);
     }).catch(function(e) {
       toast('Failed: ' + e.message);
     });
   });
+}
+
+function reloadEventDetail(eventId) {
+  var detail = document.getElementById('event-detail');
+  if (detail && typeof htmx !== 'undefined') {
+    htmx.ajax('GET', '/partials/event/' + eventId, {target: '#event-detail', swap: 'innerHTML'});
+  }
 }
 
 // Generic input modal (replaces prompt())
@@ -2385,6 +2393,7 @@ function addObjectReference(objectId, objectName, eventId) {
     return r.json();
   }).then(function() {
     toast('Reference added to "' + objectName + '"');
+    reloadEventDetail(eventId);
   }).catch(function(e) {
     toast('Failed: ' + e.message);
   });

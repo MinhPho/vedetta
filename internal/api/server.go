@@ -187,6 +187,7 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 	s.mux.HandleFunc("POST /api/events/{id}/identify", s.handleIdentifyEvent)
 
 	s.mux.HandleFunc("GET /api/events/{id}/detection-crop", s.handleEventDetectionCrop)
+	s.mux.HandleFunc("POST /api/events/{id}/track-person", s.handleTrackPerson)
 
 	// Doorbell + real-time events
 	s.mux.HandleFunc("POST /api/cameras/{name}/doorbell", s.handleDoorbellPress)
@@ -570,6 +571,79 @@ func (s *Server) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := jpeg.Encode(w, img, &jpeg.Options{Quality: 85}); err != nil {
 		slog.Error("failed to encode snapshot", "error", err)
 	}
+}
+
+func (s *Server) handleTrackPerson(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("id")
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+
+	event, err := s.db.GetEventByID(eventID)
+	if err != nil || event == nil || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event snapshot not found"})
+		return
+	}
+
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load snapshot"})
+		return
+	}
+
+	// Try face detection first
+	var faceEmbedding []float32
+	var cropPath string
+	if s.faceRecognizer != nil {
+		results := s.faceRecognizer.DetectAndEmbed(img, event.Box, s.faceCropDir)
+		if len(results) > 0 {
+			faceEmbedding = results[0].Embedding
+			cropPath = results[0].CropPath
+		}
+	}
+
+	// Create person record
+	var centroid []byte
+	if len(faceEmbedding) > 0 {
+		centroid = detect.Float32ToBytes(faceEmbedding)
+	}
+	personID, err := s.db.SavePerson(req.Name, false, centroid)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Save face record if we got an embedding
+	if len(faceEmbedding) > 0 {
+		face := storage.Face{
+			EventID:    eventID,
+			Camera:     event.CameraName,
+			PersonID:   &personID,
+			Embedding:  centroid,
+			CropPath:   cropPath,
+			Confidence: 1.0,
+			Timestamp:  event.Timestamp,
+		}
+		sim := 1.0
+		face.Similarity = &sim
+		s.db.SaveFace(face)
+	}
+
+	// Set sub_label on the event
+	_ = s.db.UpdateEventSubLabel(eventID, req.Name)
+
+	slog.Info("person tracked from event", "person_id", personID, "name", req.Name, "event", eventID, "has_face", len(faceEmbedding) > 0)
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"person_id": personID,
+		"name":      req.Name,
+		"has_face":  len(faceEmbedding) > 0,
+	})
 }
 
 func (s *Server) handleDoorbellPress(w http.ResponseWriter, r *http.Request) {
