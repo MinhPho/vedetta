@@ -146,13 +146,9 @@ type AuthUser struct {
 	PasswordHash string `yaml:"password_hash"`
 }
 
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading config: %w", err)
-	}
-
-	cfg := &Config{
+// Defaults returns a Config populated with all default values.
+func Defaults() *Config {
+	return &Config{
 		Detect: DetectConfig{
 			ScoreThreshold:       0.65,
 			ObjectMatchThreshold: 0.65,
@@ -192,6 +188,32 @@ func Load(path string) (*Config, error) {
 			Port: 8554,
 		},
 	}
+}
+
+// LoadOrDefault loads config from path if it exists, or returns defaults with
+// setupMode=true when the file is missing. Returns an error for invalid files.
+func LoadOrDefault(path string) (*Config, bool, error) {
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return Defaults(), true, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("checking config file: %w", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return cfg, false, nil
+}
+
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading config: %w", err)
+	}
+
+	cfg := Defaults()
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
@@ -221,9 +243,6 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	if len(cfg.Cameras) == 0 {
-		return nil, fmt.Errorf("at least one camera must be configured")
-	}
 	if len(cfg.Auth.Users) == 0 {
 		return nil, fmt.Errorf("at least one auth user must be configured")
 	}
