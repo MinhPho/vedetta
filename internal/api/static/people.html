@@ -66,6 +66,14 @@
       </div>
       <div class="face-grid" id="unmatched-grid"></div>
     </section>
+
+    <!-- Unidentified Appearances -->
+    <section class="unmatched-section" id="unidentified-section" style="display:none">
+      <div class="page-header" style="margin-top:1.5rem">
+        <h2 style="font-size:var(--text-md);font-weight:600;margin:0">Unidentified Appearances</h2>
+      </div>
+      <div id="unidentified-grid" style="display:flex;gap:0.35rem;flex-wrap:wrap"></div>
+    </section>
   </main>
 
   <nav class="bottom-tabs" role="navigation" aria-label="Mobile navigation">
@@ -381,6 +389,29 @@
       });
     }
 
+    function loadUnidentified() {
+      fetch('/api/events?label=person&limit=30').then(function(r) { return r.json(); }).then(function(events) {
+        var section = document.getElementById('unidentified-section');
+        var grid = document.getElementById('unidentified-grid');
+        var unidentified = (events || []).filter(function(ev) { return !ev.sub_label && ev.snapshot_available; });
+        if (!unidentified.length) {
+          section.style.display = 'none';
+          return;
+        }
+        section.style.display = '';
+        var html = '';
+        unidentified.forEach(function(ev) {
+          var time = new Date(ev.timestamp).toLocaleString();
+          html += '<a href="/event.html?id=' + ev.id + '" title="' + ev.camera + ' — ' + time + '" style="display:block;position:relative">'
+            + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/events/' + ev.id + '/detection-crop);background-size:cover;background-position:center;border:2px solid var(--border);transition:border-color 0.15s"></div>'
+            + '</a>';
+        });
+        grid.innerHTML = html;
+      }).catch(function() {
+        document.getElementById('unidentified-section').style.display = 'none';
+      });
+    }
+
     function openAssignModal(faceId) {
       assigningFaceId = faceId;
       var list = document.getElementById('assign-people-list');
@@ -506,6 +537,7 @@
     // Initial load
     loadPeople();
     loadUnmatched();
+    loadUnidentified();
 
     // Close modals on backdrop click
     document.getElementById('assign-backdrop').addEventListener('click', closeAssignModal);
