@@ -100,6 +100,55 @@ func New(authCfg config.AuthConfig, apiCfg config.APIConfig, db *storage.DB) *Ch
 	return c
 }
 
+// NewFromDB creates a Checker that reads users from the database rather than
+// from static config. It loads users immediately and supports reloading via
+// reloadUsers.
+func NewFromDB(apiCfg config.APIConfig, db *storage.DB) *Checker {
+	dummyHash, err := bcrypt.GenerateFromPassword([]byte("vedetta-not-a-real-password"), bcrypt.MinCost)
+	if err != nil {
+		panic(err)
+	}
+
+	c := &Checker{
+		users:          make(map[string][]byte),
+		dummyHash:      dummyHash,
+		db:             db,
+		exposure:       apiCfg.Exposure,
+		loginFailures:  make(map[string]*failureRecord),
+		tokenCreates:   make(map[string]*failureRecord),
+		done:           make(chan struct{}),
+		trustedProxies: parseTrustedProxies(apiCfg.TrustedProxies),
+	}
+
+	c.reloadUsers()
+
+	go c.cleanupLoop()
+	slog.Info("authentication enabled (db-primary)", "users", len(c.users))
+	return c
+}
+
+// reloadUsers fetches all auth users from the database and replaces the
+// in-memory user map. Safe for concurrent use.
+func (c *Checker) reloadUsers() {
+	if c.db == nil {
+		return
+	}
+
+	dbUsers, err := c.db.ListAuthUsers()
+	if err != nil {
+		slog.Error("failed to reload auth users from database", "error", err)
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.users = make(map[string][]byte, len(dbUsers))
+	for _, u := range dbUsers {
+		c.users[u.Username] = []byte(u.PasswordHash)
+	}
+}
+
 func ValidateConfig(cfg config.AuthConfig) error {
 	if len(cfg.Users) == 0 {
 		return fmt.Errorf("auth: at least one user must be configured")
