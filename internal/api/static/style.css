@@ -2528,6 +2528,33 @@ kbd {
   .people-grid { grid-template-columns: 1fr; }
 }
 
+/* ─── Detection Overlay ─── */
+.detection-overlay-wrap {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.detection-overlay-wrap img {
+  width: 100%;
+  display: block;
+}
+
+.detection-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  min-width: 180px;
+  backdrop-filter: blur(8px);
+}
+
 /* ─── Doorbell Notification ─── */
 .doorbell-notification {
   position: fixed;

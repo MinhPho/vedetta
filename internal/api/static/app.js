@@ -2347,6 +2347,108 @@ function assignPersonToEvent(personId, personName, eventId) {
   });
 }
 
+function renderDetectionOverlay(img) {
+  var wrap = img.parentElement;
+  if (!wrap || wrap.querySelector('.detection-box')) return;
+
+  var natW = img.naturalWidth;
+  var natH = img.naturalHeight;
+  if (!natW || !natH) return;
+
+  var x1 = parseInt(img.dataset.boxX1) || 0;
+  var y1 = parseInt(img.dataset.boxY1) || 0;
+  var x2 = parseInt(img.dataset.boxX2) || 0;
+  var y2 = parseInt(img.dataset.boxY2) || 0;
+  var label = img.dataset.label || '';
+  var subLabel = img.dataset.subLabel || '';
+  var score = img.dataset.score || '';
+  var eventId = img.dataset.eventId || '';
+  var identified = subLabel !== '';
+  var color = identified ? '#00ff64' : '#5dd7ff';
+
+  // Convert to percentages
+  var left = (x1 / natW * 100) + '%';
+  var top = (y1 / natH * 100) + '%';
+  var width = ((x2 - x1) / natW * 100) + '%';
+  var height = ((y2 - y1) / natH * 100) + '%';
+
+  // Bounding box
+  var box = document.createElement('div');
+  box.className = 'detection-box';
+  box.style.cssText = 'position:absolute;left:' + left + ';top:' + top + ';width:' + width + ';height:' + height
+    + ';border:2px solid ' + color + ';border-radius:3px;cursor:pointer;transition:border-color 0.2s';
+  box.addEventListener('mouseenter', function() { box.style.borderWidth = '3px'; });
+  box.addEventListener('mouseleave', function() { box.style.borderWidth = '2px'; });
+  box.addEventListener('click', function(e) {
+    e.stopPropagation();
+    toggleDetectionPopover(box, eventId, label);
+  });
+
+  // Label tag above box
+  var tag = document.createElement('div');
+  tag.className = 'detection-tag';
+  tag.style.cssText = 'position:absolute;bottom:100%;left:0;padding:1px 6px;font-size:13px;font-weight:700;'
+    + 'background:' + color + ';color:#000;border-radius:3px 3px 0 0;white-space:nowrap;pointer-events:none';
+  tag.textContent = subLabel || (label + ' ' + score);
+  box.appendChild(tag);
+
+  wrap.appendChild(box);
+}
+
+function toggleDetectionPopover(box, eventId, label) {
+  var existing = box.querySelector('.detection-popover');
+  if (existing) { existing.remove(); return; }
+
+  // Close any other open popovers
+  document.querySelectorAll('.detection-popover').forEach(function(p) { p.remove(); });
+
+  var pop = document.createElement('div');
+  pop.className = 'detection-popover';
+
+  // Build buttons from the sidebar data if available
+  var html = '<div style="font-size:var(--text-sm);font-weight:600;margin-bottom:0.25rem">Identify this ' + label + '</div>';
+
+  // Check for named people buttons in the sidebar
+  var sidebar = document.querySelector('.event-sidebar');
+  if (sidebar && label === 'person') {
+    var personBtns = sidebar.querySelectorAll('[onclick*="assignPersonToEvent"]');
+    personBtns.forEach(function(btn) {
+      var match = btn.getAttribute('onclick').match(/assignPersonToEvent\((\d+),\s*'([^']+)'/);
+      if (match) {
+        html += '<button class="btn btn-sm" style="width:100%;margin-bottom:0.2rem" '
+          + 'onclick="assignPersonToEvent(' + match[1] + ',\'' + match[2] + '\',\'' + eventId + '\')">'
+          + 'This is ' + match[2] + '</button>';
+      }
+    });
+  }
+
+  var objectBtns = sidebar ? sidebar.querySelectorAll('[onclick*="addObjectReference"]') : [];
+  objectBtns.forEach(function(btn) {
+    var match = btn.getAttribute('onclick').match(/addObjectReference\((\d+),\s*'([^']+)'/);
+    if (match) {
+      html += '<button class="btn btn-sm" style="width:100%;margin-bottom:0.2rem" '
+        + 'onclick="addObjectReference(' + match[1] + ',\'' + match[2] + '\',\'' + eventId + '\')">'
+        + 'This is ' + match[2] + '</button>';
+    }
+  });
+
+  html += '<button class="btn btn-sm btn-ghost" style="width:100%" '
+    + 'onclick="trackObject(\'' + eventId + '\',\'' + label + '\')">Track as new ' + label + '</button>';
+
+  pop.innerHTML = html;
+  box.appendChild(pop);
+
+  // Close on outside click
+  setTimeout(function() {
+    document.addEventListener('click', function closePopover(e) {
+      if (!pop.contains(e.target)) {
+        pop.remove();
+        document.removeEventListener('click', closePopover);
+      }
+    });
+  }, 0);
+}
+
 function reloadEventDetail(eventId) {
   var detail = document.getElementById('event-detail');
   if (detail && typeof htmx !== 'undefined') {

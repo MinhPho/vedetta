@@ -1860,7 +1860,14 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 		`<div class="page-header"><h1>{{.Label}} Detection</h1></div>` +
 			`<div class="event-detail-layout">` +
 			`<div class="event-media">` +
-			`{{if .SnapshotAvailable}}<img id="event-snapshot" src="/api/events/{{.ID}}/snapshot" alt="event snapshot">` +
+			`{{if .SnapshotAvailable}}<div class="detection-overlay-wrap" id="detection-wrap">` +
+			`<img id="event-snapshot" src="/api/events/{{.ID}}/snapshot" alt="event snapshot" ` +
+			`data-box-x1="{{index .Box 0}}" data-box-y1="{{index .Box 1}}" ` +
+			`data-box-x2="{{index .Box 2}}" data-box-y2="{{index .Box 3}}" ` +
+			`data-label="{{.Label}}" data-sub-label="{{.SubLabel}}" ` +
+			`data-score="{{scorePercent .Score}}" data-event-id="{{.ID}}" ` +
+			`onload="renderDetectionOverlay(this)">` +
+			`</div>` +
 			`{{else}}<img id="event-snapshot" src="/api/cameras/{{.CameraName}}/snapshot" alt="event">{{end}}` +
 			`{{if .HasRecording}}<div class="play-overlay" id="play-overlay" onclick="playEventRecording(this, '{{.CameraName}}', '{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}')">` +
 			`<svg viewBox="0 0 24 24" fill="white" width="64" height="64"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
