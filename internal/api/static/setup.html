@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vedetta Setup</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111a;
+      --panel: rgba(10, 24, 38, 0.92);
+      --panel-edge: rgba(125, 179, 255, 0.18);
+      --text: #f2f7fb;
+      --muted: #9fb4c6;
+      --accent: #5dd7ff;
+      --accent-strong: #1baee6;
+      --danger: #ff7d7d;
+      --success: #5dff97;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(93, 215, 255, 0.18), transparent 35%),
+        linear-gradient(180deg, #0a1621 0%, var(--bg) 100%);
+      color: var(--text);
+      padding: 1rem;
+    }
+
+    /* Shared panel styles */
+    .shell {
+      width: min(420px, calc(100vw - 2rem));
+      padding: 2rem;
+      border: 1px solid var(--panel-edge);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(20px);
+    }
+    .shell-wide {
+      width: min(720px, calc(100vw - 2rem));
+      padding: 2rem;
+      border: 1px solid var(--panel-edge);
+      border-radius: 20px;
+      background: var(--panel);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(20px);
+    }
+
+    /* Branding */
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.5rem;
+    }
+    .brand svg { color: var(--accent); }
+    .brand-text {
+      font-size: 1.8rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.8rem;
+      letter-spacing: 0.02em;
+    }
+    h2 {
+      font-size: 1.3rem;
+      margin-bottom: 0.25rem;
+    }
+    p {
+      margin: 0 0 1.5rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      margin-bottom: 1rem;
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(159, 180, 198, 0.2);
+      border-radius: 12px;
+      background: rgba(4, 12, 18, 0.7);
+      color: var(--text);
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.9rem 1rem;
+      border: 0;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn[disabled] { opacity: 0.7; cursor: wait; }
+    .btn-primary {
+      width: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+      color: #03111b;
+    }
+    .btn-secondary {
+      background: rgba(159, 180, 198, 0.15);
+      color: var(--text);
+      border: 1px solid var(--panel-edge);
+    }
+    .btn-small {
+      padding: 0.55rem 0.85rem;
+      font-size: 0.88rem;
+      border-radius: 8px;
+    }
+
+    /* Status messages */
+    .status {
+      min-height: 1.3rem;
+      margin-top: 1rem;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+    .status.error { color: var(--danger); }
+    .status.success { color: var(--success); }
+
+    /* Screen visibility */
+    .screen { display: none; }
+    .screen.active { display: block; }
+
+    /* Config YAML display */
+    .yaml-block {
+      position: relative;
+      margin: 1rem 0;
+    }
+    .yaml-block pre {
+      background: rgba(4, 12, 18, 0.85);
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      padding: 1rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: var(--accent);
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .yaml-block .copy-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+    }
+
+    /* Scanning animation */
+    .scan-status {
+      text-align: center;
+      padding: 2rem 0;
+    }
+    .pulse-ring {
+      display: inline-block;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.3;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(0.8); opacity: 0.3; }
+      50% { transform: scale(1.2); opacity: 0.6; }
+    }
+
+    /* Camera cards */
+    .camera-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin: 1rem 0;
+    }
+    .camera-card {
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      padding: 1rem;
+      background: rgba(4, 12, 18, 0.5);
+      transition: border-color 0.2s;
+    }
+    .camera-card.probed-ok {
+      border-color: rgba(93, 255, 151, 0.4);
+    }
+    .camera-card.probed-fail {
+      border-color: rgba(255, 125, 125, 0.4);
+    }
+    .camera-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .camera-header input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }
+    .camera-info { flex: 1; min-width: 0; }
+    .camera-name {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+    .camera-meta {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+    }
+    .camera-probe-status {
+      font-size: 0.92rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .camera-probe-status.ok { color: var(--success); }
+    .camera-probe-status.fail { color: var(--danger); }
+    .camera-details {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(159, 180, 198, 0.1);
+    }
+    .camera-streams {
+      font-size: 0.82rem;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .camera-streams div { margin-bottom: 0.25rem; }
+    .camera-thumbnail {
+      margin-top: 0.5rem;
+      max-width: 100%;
+      border-radius: 8px;
+    }
+    .camera-override {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid rgba(159, 180, 198, 0.1);
+    }
+    .camera-override summary {
+      font-size: 0.88rem;
+      color: var(--muted);
+      cursor: pointer;
+      margin-bottom: 0.5rem;
+    }
+    .override-fields {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .override-fields input {
+      flex: 1;
+      min-width: 120px;
+      margin-bottom: 0.5rem;
+    }
+
+    /* Credentials section */
+    .cred-section {
+      border: 1px solid var(--panel-edge);
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      background: rgba(4, 12, 18, 0.4);
+    }
+    .cred-section h3 {
+      font-size: 0.95rem;
+      margin-bottom: 0.75rem;
+      color: var(--muted);
+    }
+    .cred-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .cred-row .field { flex: 1; min-width: 140px; }
+    .cred-row .field input { margin-bottom: 0; }
+    .cred-row .btn { margin-bottom: 0; align-self: flex-end; }
+
+    /* Footer actions */
+    .actions {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .actions .btn-primary { flex: 1; }
+    .skip-link {
+      display: block;
+      text-align: center;
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .skip-link:hover { color: var(--text); }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <!-- Screen 1: Create Admin Account -->
+  <div id="screen-admin" class="screen active">
+    <main class="shell">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span class="brand-text">vedetta</span>
+      </div>
+      <p>Create your admin account</p>
+      <form id="admin-form">
+        <label for="admin-username">Username</label>
+        <input id="admin-username" type="text" autocomplete="username" required>
+        <label for="admin-password">Password</label>
+        <input id="admin-password" type="password" autocomplete="new-password" required>
+        <label for="admin-confirm">Confirm Password</label>
+        <input id="admin-confirm" type="password" autocomplete="new-password" required>
+        <button type="submit" class="btn btn-primary" id="admin-submit">Create Account &amp; Continue</button>
+        <div class="status" id="admin-status"></div>
+      </form>
+
+      <!-- Config readonly fallback -->
+      <div id="config-readonly" class="hidden">
+        <div class="yaml-block">
+          <pre><code id="config-yaml"></code></pre>
+          <button type="button" class="btn btn-secondary btn-small copy-btn" id="copy-yaml">Copy</button>
+        </div>
+        <p id="config-readonly-msg"></p>
+        <button type="button" class="btn btn-primary" id="continue-to-cameras">Continue to Camera Discovery</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- Screen 2: Camera Discovery -->
+  <div id="screen-cameras" class="screen">
+    <main class="shell-wide">
+      <div class="brand">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+        <span class="brand-text">vedetta</span>
+      </div>
+      <h2>Camera Discovery</h2>
+      <p id="discover-subtitle">Scanning your network for cameras...</p>
+
+      <div id="scan-loading" class="scan-status">
+        <div class="pulse-ring"></div>
+      </div>
+
+      <div id="scan-results" class="hidden">
+        <div id="no-cameras" class="hidden">
+          <p>No cameras found on the network. You can add cameras manually later from Settings.</p>
+        </div>
+
+        <div id="cameras-found" class="hidden">
+          <div class="cred-section">
+            <h3>Camera Credentials</h3>
+            <div class="cred-row">
+              <div class="field">
+                <label for="cam-username">Username</label>
+                <input id="cam-username" type="text" placeholder="admin">
+              </div>
+              <div class="field">
+                <label for="cam-password">Password</label>
+                <input id="cam-password" type="password">
+              </div>
+              <button type="button" class="btn btn-secondary btn-small" id="test-creds">Test Credentials</button>
+            </div>
+            <div class="status" id="cred-status"></div>
+          </div>
+
+          <div id="camera-list" class="camera-list"></div>
+
+          <div class="actions">
+            <button type="button" class="btn btn-primary" id="add-cameras" disabled>Add Selected Cameras</button>
+          </div>
+        </div>
+
+        <a class="skip-link" id="skip-setup">Skip for Now</a>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function() {
+      // --- Utilities ---
+      function $(id) { return document.getElementById(id); }
+
+      function setStatus(el, message, type) {
+        el.textContent = message || '';
+        el.className = 'status' + (type ? ' ' + type : '');
+      }
+
+      function showScreen(id) {
+        document.querySelectorAll('.screen').forEach(function(s) {
+          s.classList.remove('active');
+        });
+        $(id).classList.add('active');
+      }
+
+      function show(el) { el.classList.remove('hidden'); }
+      function hide(el) { el.classList.add('hidden'); }
+
+      // --- Screen 1: Admin Account ---
+      var adminForm = $('admin-form');
+      var adminStatus = $('admin-status');
+      var adminSubmit = $('admin-submit');
+
+      adminForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var username = $('admin-username').value.trim();
+        var password = $('admin-password').value;
+        var confirm = $('admin-confirm').value;
+
+        if (!username || !password || !confirm) {
+          setStatus(adminStatus, 'All fields are required.', 'error');
+          return;
+        }
+        if (password !== confirm) {
+          setStatus(adminStatus, 'Passwords do not match.', 'error');
+          return;
+        }
+
+        adminSubmit.disabled = true;
+        setStatus(adminStatus, 'Creating account...', '');
+
+        fetch('/api/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password })
+        })
+          .then(function(resp) {
+            return resp.json().then(function(body) {
+              if (!resp.ok) throw new Error(body.error || 'Setup failed');
+              return body;
+            });
+          })
+          .then(function(data) {
+            if (data.status === 'config_readonly') {
+              hide(adminForm);
+              show($('config-readonly'));
+              $('config-yaml').textContent = data.config_yaml;
+              $('config-readonly-msg').textContent = data.message;
+              setStatus(adminStatus, '', '');
+            } else {
+              goToCameraScreen();
+            }
+          })
+          .catch(function(err) {
+            setStatus(adminStatus, err.message, 'error');
+            adminSubmit.disabled = false;
+          });
+      });
+
+      // Copy YAML button
+      $('copy-yaml').addEventListener('click', function() {
+        var yaml = $('config-yaml').textContent;
+        navigator.clipboard.writeText(yaml).then(function() {
+          $('copy-yaml').textContent = 'Copied!';
+          setTimeout(function() { $('copy-yaml').textContent = 'Copy'; }, 2000);
+        });
+      });
+
+      // Continue to cameras after config_readonly
+      $('continue-to-cameras').addEventListener('click', goToCameraScreen);
+
+      // --- Screen 2: Camera Discovery ---
+      var discoveredCameras = [];
+      var probeResults = {};
+
+      function goToCameraScreen() {
+        showScreen('screen-cameras');
+        startDiscovery();
+      }
+
+      function startDiscovery() {
+        hide($('scan-results'));
+        show($('scan-loading'));
+        $('discover-subtitle').textContent = 'Scanning your network for cameras...';
+
+        fetch('/api/discover')
+          .then(function(resp) { return resp.json(); })
+          .then(function(data) {
+            discoveredCameras = data.cameras || [];
+            hide($('scan-loading'));
+            show($('scan-results'));
+
+            if (discoveredCameras.length === 0) {
+              show($('no-cameras'));
+              hide($('cameras-found'));
+              $('discover-subtitle').textContent = 'Network scan complete';
+            } else {
+              hide($('no-cameras'));
+              show($('cameras-found'));
+              $('discover-subtitle').textContent = 'Found ' + discoveredCameras.length + ' camera' + (discoveredCameras.length > 1 ? 's' : '') + ' on your network';
+              renderCameras();
+            }
+          })
+          .catch(function(err) {
+            hide($('scan-loading'));
+            show($('scan-results'));
+            show($('no-cameras'));
+            hide($('cameras-found'));
+            $('discover-subtitle').textContent = 'Scan failed: ' + err.message;
+          });
+      }
+
+      function renderCameras() {
+        var list = $('camera-list');
+        list.innerHTML = '';
+
+        discoveredCameras.forEach(function(cam, i) {
+          var card = document.createElement('div');
+          card.className = 'camera-card';
+          card.id = 'cam-card-' + i;
+
+          var result = probeResults[cam.ip];
+          if (result) {
+            card.classList.add(result.status === 'ok' ? 'probed-ok' : 'probed-fail');
+          }
+
+          var name = cam.name || cam.manufacturer || 'Camera';
+          var meta = [cam.manufacturer, cam.model, cam.ip].filter(Boolean).join(' \u00B7 ');
+
+          var html = '<div class="camera-header">';
+          html += '<input type="checkbox" id="cam-check-' + i + '" data-index="' + i + '"' + (result && result.status === 'ok' ? ' checked' : '') + '>';
+          html += '<div class="camera-info">';
+          html += '<div class="camera-name">' + escapeHtml(name) + '</div>';
+          html += '<div class="camera-meta">' + escapeHtml(meta) + '</div>';
+          html += '</div>';
+
+          if (result) {
+            if (result.status === 'ok') {
+              html += '<span class="camera-probe-status ok">\u2713 Connected</span>';
+            } else {
+              html += '<span class="camera-probe-status fail">\u2717 Failed</span>';
+            }
+          }
+          html += '</div>';
+
+          // Show details for probed cameras
+          if (result && result.status === 'ok') {
+            html += '<div class="camera-details">';
+            if (result.streams && result.streams.length > 0) {
+              html += '<div class="camera-streams">';
+              result.streams.forEach(function(s) {
+                html += '<div>' + escapeHtml(s.name || s.codec || 'Stream') + ': ' + escapeHtml(s.url || '') + '</div>';
+              });
+              html += '</div>';
+            }
+            if (result.thumbnail) {
+              html += '<img class="camera-thumbnail" src="' + escapeHtml(result.thumbnail) + '" alt="Camera preview" loading="lazy">';
+            }
+            html += '</div>';
+          }
+
+          // Show override fields for failed probes
+          if (result && result.status !== 'ok') {
+            html += '<div class="camera-override">';
+            html += '<details><summary>Use different credentials</summary>';
+            html += '<div class="override-fields">';
+            html += '<input type="text" placeholder="Username" id="override-user-' + i + '">';
+            html += '<input type="password" placeholder="Password" id="override-pass-' + i + '">';
+            html += '<button type="button" class="btn btn-secondary btn-small" onclick="retryProbe(' + i + ')">Retry</button>';
+            html += '</div></details>';
+            html += '</div>';
+          }
+
+          card.innerHTML = html;
+          list.appendChild(card);
+        });
+
+        // Update checkbox listeners
+        list.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
+          cb.addEventListener('change', updateAddButton);
+        });
+        updateAddButton();
+      }
+
+      function updateAddButton() {
+        var checked = document.querySelectorAll('#camera-list input[type="checkbox"]:checked');
+        var btn = $('add-cameras');
+        btn.disabled = checked.length === 0;
+        btn.textContent = checked.length > 0 ? 'Add ' + checked.length + ' Camera' + (checked.length > 1 ? 's' : '') : 'Add Selected Cameras';
+      }
+
+      // Test credentials
+      $('test-creds').addEventListener('click', function() {
+        var username = $('cam-username').value.trim();
+        var password = $('cam-password').value;
+        if (!username || !password) {
+          setStatus($('cred-status'), 'Enter username and password to test.', 'error');
+          return;
+        }
+
+        var btn = $('test-creds');
+        btn.disabled = true;
+        setStatus($('cred-status'), 'Testing credentials...', '');
+
+        var camerasToProbe = discoveredCameras.map(function(c) {
+          return { ip: c.ip, port: c.port || 554, manufacturer: c.manufacturer || '' };
+        });
+
+        fetch('/api/discover/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cameras: camerasToProbe, username: username, password: password })
+        })
+          .then(function(resp) { return resp.json(); })
+          .then(function(data) {
+            var results = data.results || [];
+            var okCount = 0;
+            results.forEach(function(r) {
+              probeResults[r.ip] = r;
+              if (r.status === 'ok') okCount++;
+            });
+            renderCameras();
+            setStatus($('cred-status'), okCount + ' of ' + results.length + ' cameras connected successfully.', okCount > 0 ? 'success' : 'error');
+            btn.disabled = false;
+          })
+          .catch(function(err) {
+            setStatus($('cred-status'), 'Probe failed: ' + err.message, 'error');
+            btn.disabled = false;
+          });
+      });
+
+      // Retry probe with per-camera credentials
+      window.retryProbe = function(index) {
+        var cam = discoveredCameras[index];
+        var username = document.getElementById('override-user-' + index).value.trim();
+        var password = document.getElementById('override-pass-' + index).value;
+        if (!username || !password) return;
+
+        fetch('/api/discover/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cameras: [{ ip: cam.ip, port: cam.port || 554, manufacturer: cam.manufacturer || '' }],
+            username: username,
+            password: password
+          })
+        })
+          .then(function(resp) { return resp.json(); })
+          .then(function(data) {
+            var results = data.results || [];
+            if (results.length > 0) {
+              probeResults[results[0].ip] = results[0];
+              renderCameras();
+            }
+          });
+      };
+
+      // Add selected cameras
+      $('add-cameras').addEventListener('click', function() {
+        var btn = $('add-cameras');
+        btn.disabled = true;
+
+        var selected = [];
+        document.querySelectorAll('#camera-list input[type="checkbox"]:checked').forEach(function(cb) {
+          var idx = parseInt(cb.dataset.index, 10);
+          var cam = discoveredCameras[idx];
+          var result = probeResults[cam.ip];
+
+          var name = cam.name || cam.manufacturer || 'Camera ' + (idx + 1);
+          var streamUrl = '';
+          var recordUrl = '';
+
+          if (result && result.streams && result.streams.length > 0) {
+            streamUrl = result.streams[0].url || '';
+            if (result.streams.length > 1) {
+              recordUrl = result.streams[result.streams.length - 1].url || '';
+            } else {
+              recordUrl = streamUrl;
+            }
+          }
+
+          selected.push({ name: name, url: streamUrl, record_url: recordUrl });
+        });
+
+        fetch('/api/cameras', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cameras: selected })
+        })
+          .then(function(resp) { return resp.json(); })
+          .then(function(data) {
+            if (data.status === 'config_readonly' && data.yaml_snippets) {
+              alert('Could not write to config file. Please add cameras manually:\n\n' + data.yaml_snippets.join('\n'));
+            }
+            location.href = '/';
+          })
+          .catch(function(err) {
+            alert('Failed to add cameras: ' + err.message);
+            btn.disabled = false;
+          });
+      });
+
+      // Skip setup
+      $('skip-setup').addEventListener('click', function(e) {
+        e.preventDefault();
+        fetch('/api/setup/complete', { method: 'POST' })
+          .then(function() { location.href = '/'; })
+          .catch(function() { location.href = '/'; });
+      });
+
+      function escapeHtml(str) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+      }
+    })();
+  </script>
+</body>
+</html>
