@@ -758,7 +758,7 @@
             if (data.status === 'config_readonly' && data.yaml_snippets) {
               alert('Could not write to config file. Please add cameras manually:\n\n' + data.yaml_snippets.join('\n'));
             }
-            location.href = '/';
+            location.href = '/login.html';
           })
           .catch(function(err) {
             alert('Failed to add cameras: ' + err.message);
@@ -770,8 +770,8 @@
       $('skip-setup').addEventListener('click', function(e) {
         e.preventDefault();
         fetch('/api/setup/complete', { method: 'POST' })
-          .then(function() { location.href = '/'; })
-          .catch(function() { location.href = '/'; });
+          .then(function() { location.href = '/login.html'; })
+          .catch(function() { location.href = '/login.html'; });
       });
 
       function escapeHtml(str) {
