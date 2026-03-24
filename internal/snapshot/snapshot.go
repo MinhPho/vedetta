@@ -53,6 +53,25 @@ func DrawDetectionsInPlace(img *image.RGBA, detections []detect.Detection) {
 	}
 }
 
+// DrawDetectionsWithPrimary draws all detections but highlights the primary one
+// (the detection that triggered the event) with a thicker, brighter box.
+func DrawDetectionsWithPrimary(img *image.RGBA, detections []detect.Detection, primaryBox [4]int) {
+	for _, d := range detections {
+		if d.Box == primaryBox {
+			// Primary: bright green, thick
+			c := color.RGBA{R: 0, G: 255, B: 100, A: 255}
+			drawThickBox(img, d.Box, c, 4)
+			label := fmt.Sprintf("%s %.0f%%", d.Label, d.Score*100)
+			drawLabel(img, d.Box[0], d.Box[1]-2, label, c)
+		} else {
+			// Secondary: dimmed
+			c := colorForLabel(d.Label)
+			c.A = 180
+			drawBox(img, d.Box, c)
+		}
+	}
+}
+
 func colorForLabel(label string) color.RGBA {
 	if c, ok := labelColors[label]; ok {
 		return c
@@ -135,6 +154,43 @@ func drawBox(img *image.RGBA, box [4]int, c color.RGBA) {
 		}
 		for y := y1; y < y2; y++ {
 			setPixel(x, y)
+		}
+	}
+}
+
+// drawThickBox draws a rectangle with variable thickness.
+func drawThickBox(img *image.RGBA, box [4]int, c color.RGBA, thickness int) {
+	x1, y1, x2, y2 := box[0], box[1], box[2], box[3]
+	bounds := img.Bounds()
+
+	if x1 < bounds.Min.X { x1 = bounds.Min.X }
+	if y1 < bounds.Min.Y { y1 = bounds.Min.Y }
+	if x2 > bounds.Max.X { x2 = bounds.Max.X }
+	if y2 > bounds.Max.Y { y2 = bounds.Max.Y }
+	if x1 >= x2 || y1 >= y2 { return }
+
+	stride := img.Stride
+	pix := img.Pix
+	minX := bounds.Min.X
+	minY := bounds.Min.Y
+
+	setPixel := func(x, y int) {
+		off := (y-minY)*stride + (x-minX)*4
+		pix[off] = c.R; pix[off+1] = c.G; pix[off+2] = c.B; pix[off+3] = c.A
+	}
+
+	for t := 0; t < thickness; t++ {
+		if y := y1 + t; y < bounds.Max.Y {
+			for x := x1; x < x2; x++ { setPixel(x, y) }
+		}
+		if y := y2 - 1 - t; y >= bounds.Min.Y {
+			for x := x1; x < x2; x++ { setPixel(x, y) }
+		}
+		if x := x1 + t; x < bounds.Max.X {
+			for y := y1; y < y2; y++ { setPixel(x, y) }
+		}
+		if x := x2 - 1 - t; x >= bounds.Min.X {
+			for y := y1; y < y2; y++ { setPixel(x, y) }
 		}
 	}
 }
