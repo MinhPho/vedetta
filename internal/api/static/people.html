@@ -181,7 +181,6 @@
           + 'onfocus="this.select()">'
           + '<div class="person-meta">'
           + '<span class="badge badge-sm">' + p.face_count + ' face' + (p.face_count !== 1 ? 's' : '') + '</span>'
-          + (p.source_event_id ? '<a href="/event.html?id=' + p.source_event_id + '" class="btn btn-xs btn-ghost" title="View source event">Source</a>' : '')
           + '<button class="btn btn-xs ' + (p.ignore ? 'btn-primary' : 'btn-ghost') + '" onclick="toggleIgnore(' + p.id + ', ' + !p.ignore + ')">'
           + (p.ignore ? 'Ignored' : 'Ignore') + '</button>'
           + '<button class="btn btn-xs btn-ghost btn-danger" onclick="deletePerson(' + p.id + ', \'' + escapeAttr(p.name) + '\')">Delete</button>'
@@ -222,19 +221,46 @@
         return;
       }
       el.classList.remove('hidden');
-      el.innerHTML = '<div class="loading-state" style="padding:0.5rem">Loading faces...</div>';
-      fetch('/api/people/' + personId + '/faces?limit=50').then(function(r) { return r.json(); }).then(function(faces) {
-        if (!faces || !faces.length) {
-          el.innerHTML = '<div class="loading-state" style="padding:0.5rem">No faces found.</div>';
-          return;
+      el.innerHTML = '<div class="loading-state" style="padding:0.5rem">Loading...</div>';
+
+      Promise.all([
+        fetch('/api/people/' + personId + '/faces?limit=50').then(function(r) { return r.json(); }),
+        fetch('/api/people/' + personId + '/events').then(function(r) { return r.json(); })
+      ]).then(function(results) {
+        var faces = results[0] || [];
+        var events = results[1] || [];
+        var html = '';
+
+        // Faces section
+        if (faces.length > 0) {
+          html += '<div style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-bottom:0.25rem">Faces (' + faces.length + ')</div>';
+          html += '<div class="face-grid">';
+          faces.forEach(function(f) {
+            html += '<div class="face-thumb-wrap-link" onclick="showFaceSnapshot(' + f.id + ',\'' + escapeAttr(f.event_id || '') + '\',\'' + escapeAttr(f.camera || '') + '\')">'
+              + '<div class="face-thumb" style="background-image:url(/api/faces/' + f.id + '/crop)" title="' + (f.camera || '') + ' - ' + new Date(f.timestamp).toLocaleString() + '"></div>'
+              + '</div>';
+          });
+          html += '</div>';
         }
-        var html = '<div class="face-grid">';
-        faces.forEach(function(f) {
-          html += '<div class="face-thumb-wrap-link" onclick="showFaceSnapshot(' + f.id + ',\'' + escapeAttr(f.event_id || '') + '\',\'' + escapeAttr(f.camera || '') + '\')">'
-            + '<div class="face-thumb" style="background-image:url(/api/faces/' + f.id + '/crop)" title="' + (f.camera || '') + ' - ' + new Date(f.timestamp).toLocaleString() + ' (click for full image)"></div>'
-            + '</div>';
-        });
-        html += '</div>';
+
+        // Events section (sightings — both face and body)
+        if (events.length > 0) {
+          html += '<div style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin:0.5rem 0 0.25rem">Appearances (' + events.length + ')</div>';
+          html += '<div style="display:flex;gap:0.35rem;flex-wrap:wrap">';
+          events.forEach(function(ev) {
+            var src = ev.snapshot_available ? '/api/events/' + ev.id + '/detection-crop' : '/api/cameras/' + ev.camera + '/snapshot';
+            var time = new Date(ev.timestamp).toLocaleString();
+            html += '<a href="/event.html?id=' + ev.id + '" title="' + ev.camera + ' — ' + time + '" style="display:block">'
+              + '<div style="width:70px;height:70px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(' + src + ');background-size:cover;background-position:center;border:1px solid var(--border)"></div>'
+              + '</a>';
+          });
+          html += '</div>';
+        }
+
+        if (!faces.length && !events.length) {
+          html = '<div class="loading-state" style="padding:0.5rem">No faces or appearances found.</div>';
+        }
+
         el.innerHTML = html;
       });
     }
