@@ -344,8 +344,13 @@ func main() {
 					if err := mqttClient.PublishEvent(event, nil); err != nil {
 						slog.Error("failed to publish event", "error", err)
 					}
-					if event.SnapshotImage != nil {
-						if jpegData := encodeJPEG(event.SnapshotImage, cfg.Events.SnapshotQuality); jpegData != nil {
+					// Use annotated image for MQTT (with bounding boxes for visual context)
+					mqttImg := event.AnnotatedImage
+					if mqttImg == nil {
+						mqttImg = event.SnapshotImage
+					}
+					if mqttImg != nil {
+						if jpegData := encodeJPEG(mqttImg, cfg.Events.SnapshotQuality); jpegData != nil {
 							mqttClient.PublishSnapshot(event.CameraName, event.Label, jpegData)
 						}
 					}

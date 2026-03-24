@@ -34,7 +34,8 @@ type Event struct {
 	ZoneName          string      `json:"zone_name,omitempty"`
 	ObjectName        string      `json:"object_name,omitempty"`
 	SubLabel          string      `json:"sub_label,omitempty"`
-	SnapshotImage     *image.RGBA `json:"-"`
+	SnapshotImage     *image.RGBA `json:"-"` // clean frame for disk/embeddings
+	AnnotatedImage    *image.RGBA `json:"-"` // annotated frame for MQTT display
 }
 
 // EventEnd signals that a tracked object has left the frame.
@@ -392,7 +393,8 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 
 		// Generate one annotated frame with ALL bounding boxes (reused for all new events).
 		// Prefer the full-resolution main stream frame; fall back to the detection frame.
-		var annotatedFrame *image.RGBA
+		var cleanFrame *image.RGBA   // clean snapshot for disk (embeddings, crops)
+		var annotatedFrame *image.RGBA // annotated snapshot for display (MQTT)
 		if c.eventSnapDir != "" {
 			hasNewTrack := false
 			for _, obj := range tracked {
@@ -407,7 +409,10 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 					fullRes = sc.LastFrame()
 				}
 				if fullRes != nil {
-					// Copy so we don't mutate the snapshot consumer's cached frame
+					// Clean copy for disk storage (no annotations)
+					cleanFrame = image.NewRGBA(fullRes.Bounds())
+					copy(cleanFrame.Pix, fullRes.Pix)
+					// Annotated copy for display
 					annotatedFrame = image.NewRGBA(fullRes.Bounds())
 					copy(annotatedFrame.Pix, fullRes.Pix)
 					// Scale detection boxes from detect resolution to full resolution
@@ -429,7 +434,9 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 					snapshot.DrawDetectionsInPlace(annotatedFrame, scaled)
 				} else {
 					// No full-res frame available, use detection frame
-					annotatedFrame = rawToRGBA(buf, w, h)
+					cleanFrame = rawToRGBA(buf, w, h)
+					annotatedFrame = image.NewRGBA(cleanFrame.Bounds())
+					copy(annotatedFrame.Pix, cleanFrame.Pix)
 					snapshot.DrawDetectionsInPlace(annotatedFrame, allDetections)
 				}
 			}
@@ -498,13 +505,14 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 					ClipAvailable:     false,
 				}
 
-				if annotatedFrame != nil {
+				if cleanFrame != nil {
 					snapFile := filepath.Join(c.eventSnapDir, c.config.Name, eventID+".jpg")
 					ev.SnapshotPath = snapFile
-					ev.SnapshotImage = annotatedFrame
+					ev.SnapshotImage = cleanFrame // clean frame for disk (embeddings, crops)
+					ev.AnnotatedImage = annotatedFrame // annotated for MQTT display
 					// Scale box to snapshot resolution if different from detect resolution
-					snapW := annotatedFrame.Bounds().Dx()
-					snapH := annotatedFrame.Bounds().Dy()
+					snapW := cleanFrame.Bounds().Dx()
+					snapH := cleanFrame.Bounds().Dy()
 					if snapW != w || snapH != h {
 						ev.Box = [4]int{
 							box[0] * snapW / w,
