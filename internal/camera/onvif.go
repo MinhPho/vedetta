@@ -277,6 +277,33 @@ func ProbeRTSPForBrand(ip string, port int, manufacturer string) ([]StreamProfil
 	return profiles, nil
 }
 
+// ProbeRTSPWithCredentials wraps ProbeRTSPForBrand, injecting credentials into
+// each discovered stream URL and verifying they are reachable.
+func ProbeRTSPWithCredentials(ip string, port int, manufacturer, username, password string) ([]StreamProfile, error) {
+	profiles, err := ProbeRTSPForBrand(ip, port, manufacturer)
+	if err != nil {
+		return nil, err
+	}
+
+	var authed []StreamProfile
+	for _, p := range profiles {
+		u, err := url.Parse(p.URL)
+		if err != nil {
+			continue
+		}
+		u.User = url.UserPassword(username, password)
+		if testRTSPURL(u.String()) {
+			authed = append(authed, StreamProfile{URL: u.String(), Resolution: p.Resolution})
+		}
+	}
+
+	if len(authed) == 0 && len(profiles) > 0 {
+		return nil, fmt.Errorf("authentication failed")
+	}
+
+	return authed, nil
+}
+
 // testRTSPURL uses gortsplib Describe to check if an RTSP URL is reachable.
 func testRTSPURL(rtspURL string) bool {
 	u, err := url.Parse(rtspURL)
