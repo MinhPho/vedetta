@@ -71,7 +71,9 @@ type Zone struct {
 
 type DetectConfig struct {
 	ModelPath            string       `yaml:"model_path"`
-	Backend              string       `yaml:"backend"` // "auto" (default), "go", or "onnxruntime_c"
+	TFLiteModelPath      string       `yaml:"tflite_model_path"`      // TFLite model file (for tflite/edgetpu backends)
+	Backend              string       `yaml:"backend"`                 // "auto" (default), "go", "onnxruntime_c", "tflite", or "edgetpu"
+	ModelType            string       `yaml:"model_type"`              // "auto" (default), "yolo", or "ssd"
 	ScoreThreshold       float32      `yaml:"score_threshold"`
 	Motion               MotionConfig `yaml:"motion"`
 	Labels               []string     `yaml:"labels"`                 // Only emit events for these labels; empty = all
@@ -252,6 +254,7 @@ func Load(path string) (*Config, error) {
 	cfg.Recording.Path = normalizePath(configDir, cfg.Recording.Path)
 	cfg.Events.SnapshotPath = normalizePath(configDir, cfg.Events.SnapshotPath)
 	cfg.Detect.ModelPath = normalizePath(configDir, cfg.Detect.ModelPath)
+	cfg.Detect.TFLiteModelPath = normalizePath(configDir, cfg.Detect.TFLiteModelPath)
 	cfg.API.TLSCert = normalizePath(configDir, cfg.API.TLSCert)
 	cfg.API.TLSKey = normalizePath(configDir, cfg.API.TLSKey)
 

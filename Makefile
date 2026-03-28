@@ -1,4 +1,4 @@
-.PHONY: build build-capi build-deploy run test bench lint clean fmt check docker-build docker-push deploy
+.PHONY: build build-capi build-tflite build-edgetpu build-deploy run test bench bench-detect lint clean fmt check docker-build docker-build-edgetpu docker-push deploy
 
 BINARY := vedetta
 BUILD_DIR := ./build
@@ -27,6 +27,12 @@ deploy: build-deploy
 build-capi:
 	go build -tags cgo_onnxruntime -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
 
+build-tflite:
+	CGO_ENABLED=1 go build -tags tflite -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
+
+build-edgetpu:
+	CGO_ENABLED=1 go build -tags "tflite edgetpu" -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
+
 run: build
 	$(BUILD_DIR)/$(BINARY) -config config.example.yml
 
@@ -35,6 +41,9 @@ test:
 
 bench:
 	go test ./internal/detect/ -bench=. -benchmem -count=1
+
+bench-detect:
+	go test ./internal/detect/ -bench=BenchmarkDetect -benchmem -count=3 -benchtime=10s
 
 lint:
 	golangci-lint run ./...
@@ -50,6 +59,9 @@ check: lint test
 
 docker-build:
 	docker build -t $(DOCKER_IMAGE):$(VERSION) -t $(DOCKER_IMAGE):latest .
+
+docker-build-edgetpu:
+	docker build -f Dockerfile.edgetpu -t $(DOCKER_IMAGE):$(VERSION)-edgetpu -t $(DOCKER_IMAGE):latest-edgetpu .
 
 docker-push:
 	docker push $(DOCKER_IMAGE):$(VERSION)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+	"math"
 	"os"
 	"sync"
 
@@ -25,8 +26,18 @@ type Detector struct {
 	config       config.DetectConfig
 	backend      Backend
 	enabled      bool
-	inputBuf     []float32       // reusable preprocessing buffer [3*640*640], guarded by mu
+	inputBuf     []float32       // reusable preprocessing buffer, guarded by mu
 	labelAllowed map[string]bool // nil = allow all labels
+
+	// Model type determines pre/post-processing pipeline.
+	// "yolo" uses CHW input + YOLOv8 output parsing.
+	// "ssd" uses HWC input + SSD/EfficientDet output parsing.
+	modelType string
+
+	// SSD-specific fields (only set when modelType == "ssd").
+	ssdLayout    SSDOutputLayout
+	ssdInputW    int // model input width (e.g. 320 for EfficientDet-Lite0)
+	ssdInputH    int // model input height
 }
 
 func New(cfg config.DetectConfig) *Detector {
@@ -50,7 +61,9 @@ func New(cfg config.DetectConfig) *Detector {
 	}
 
 	d.enabled = true
-	slog.Info("object detection initialized", "backend", d.backend.Name())
+	slog.Info("object detection initialized",
+		"backend", d.backend.Name(),
+		"model_type", d.modelType)
 
 	return d
 }
@@ -94,18 +107,37 @@ func (d *Detector) Detect(img *image.RGBA) (result []Detection) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.inputBuf == nil {
-		d.inputBuf = make([]float32, 3*modelInputSize*modelInputSize)
-	}
-	inputData, scale, padX, padY := prepareInputInto(d.inputBuf, img)
+	switch d.modelType {
+	case "ssd":
+		bounds := img.Bounds()
+		bufSize := d.ssdInputW * d.ssdInputH * 3
+		if d.inputBuf == nil || len(d.inputBuf) < bufSize {
+			d.inputBuf = make([]float32, bufSize)
+		}
+		inputData, scale, padX, padY := prepareSSDInputRGBA(
+			d.inputBuf, img.Pix, bounds.Dx(), bounds.Dy(), d.ssdInputW, d.ssdInputH)
 
-	output, err := d.backend.Run(inputData)
-	if err != nil {
-		slog.Error("inference failed", "error", err)
-		return nil
-	}
+		output, err := d.backend.Run(inputData)
+		if err != nil {
+			slog.Error("inference failed", "error", err)
+			return nil
+		}
+		return d.filterLabels(processSSDOutput(output, d.ssdLayout,
+			d.config.ScoreThreshold, bounds.Dx(), bounds.Dy(), scale, padX, padY))
 
-	return d.filterLabels(processOutput(output, d.config.ScoreThreshold, scale, padX, padY))
+	default: // "yolo"
+		if d.inputBuf == nil || len(d.inputBuf) < 3*modelInputSize*modelInputSize {
+			d.inputBuf = make([]float32, 3*modelInputSize*modelInputSize)
+		}
+		inputData, scale, padX, padY := prepareInputInto(d.inputBuf, img)
+
+		output, err := d.backend.Run(inputData)
+		if err != nil {
+			slog.Error("inference failed", "error", err)
+			return nil
+		}
+		return d.filterLabels(processOutput(output, d.config.ScoreThreshold, scale, padX, padY))
+	}
 }
 
 // DetectRGB24 runs object detection directly on RGB24 frame data,
@@ -127,18 +159,35 @@ func (d *Detector) DetectRGB24(data []byte, w, h int) (result []Detection) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if d.inputBuf == nil {
-		d.inputBuf = make([]float32, 3*modelInputSize*modelInputSize)
-	}
-	inputData, scale, padX, padY := prepareInputFromRGB24Into(d.inputBuf, data, w, h)
+	switch d.modelType {
+	case "ssd":
+		bufSize := d.ssdInputW * d.ssdInputH * 3
+		if d.inputBuf == nil || len(d.inputBuf) < bufSize {
+			d.inputBuf = make([]float32, bufSize)
+		}
+		inputData, scale, padX, padY := prepareSSDInput(d.inputBuf, data, w, h, d.ssdInputW, d.ssdInputH)
 
-	output, err := d.backend.Run(inputData)
-	if err != nil {
-		slog.Error("inference failed", "error", err)
-		return nil
-	}
+		output, err := d.backend.Run(inputData)
+		if err != nil {
+			slog.Error("inference failed", "error", err)
+			return nil
+		}
+		return d.filterLabels(processSSDOutput(output, d.ssdLayout,
+			d.config.ScoreThreshold, w, h, scale, padX, padY))
 
-	return d.filterLabels(processOutput(output, d.config.ScoreThreshold, scale, padX, padY))
+	default: // "yolo"
+		if d.inputBuf == nil || len(d.inputBuf) < 3*modelInputSize*modelInputSize {
+			d.inputBuf = make([]float32, 3*modelInputSize*modelInputSize)
+		}
+		inputData, scale, padX, padY := prepareInputFromRGB24Into(d.inputBuf, data, w, h)
+
+		output, err := d.backend.Run(inputData)
+		if err != nil {
+			slog.Error("inference failed", "error", err)
+			return nil
+		}
+		return d.filterLabels(processOutput(output, d.config.ScoreThreshold, scale, padX, padY))
+	}
 }
 
 func (d *Detector) Close() {
@@ -148,6 +197,11 @@ func (d *Detector) Close() {
 }
 
 func (d *Detector) init(cfg config.DetectConfig) error {
+	// TFLite/EdgeTPU backends load from file path, not byte slice.
+	if cfg.Backend == "tflite" || cfg.Backend == "edgetpu" {
+		return d.initTFLite(cfg)
+	}
+
 	modelData, err := d.loadModelData(cfg.ModelPath)
 	if err != nil {
 		return fmt.Errorf("load model: %w", err)
@@ -159,10 +213,113 @@ func (d *Detector) init(cfg config.DetectConfig) error {
 	}
 
 	d.backend = backend
+	d.modelType = resolveModelType(cfg.ModelType, cfg.Backend)
 	return nil
 }
 
-// selectBackend picks the best available backend based on config and build tags.
+// initTFLite initializes the detector with a TFLite backend.
+// TFLite models are loaded from file (supports memory-mapping).
+func (d *Detector) initTFLite(cfg config.DetectConfig) error {
+	modelPath := cfg.TFLiteModelPath
+	if modelPath == "" {
+		// Auto-download an EfficientDet-Lite model for EdgeTPU.
+		var err error
+		modelPath, err = downloadTFLiteModel(cfg.Backend == "edgetpu")
+		if err != nil {
+			return fmt.Errorf("tflite model: %w", err)
+		}
+	}
+
+	useEdgeTPU := cfg.Backend == "edgetpu"
+	backend, err := NewTFLiteBackend(modelPath, useEdgeTPU)
+	if err != nil {
+		return fmt.Errorf("tflite backend: %w", err)
+	}
+
+	d.backend = backend
+	d.modelType = resolveModelType(cfg.ModelType, cfg.Backend)
+
+	// If using SSD model type, inspect the TFLite output tensors to build the layout.
+	if d.modelType == "ssd" {
+		if err := d.initSSDLayout(backend); err != nil {
+			backend.Close()
+			return err
+		}
+	}
+
+	return nil
+}
+
+// initSSDLayout reads TFLite output tensor dimensions to configure SSD post-processing.
+func (d *Detector) initSSDLayout(b *TFLiteBackend) error {
+	if b.OutputTensorCount() < 4 {
+		return fmt.Errorf("ssd model requires 4 output tensors, got %d", b.OutputTensorCount())
+	}
+
+	boxesSize := b.OutputTensorSize(0)  // N * 4
+	classSize := b.OutputTensorSize(1)  // N
+	scoreSize := b.OutputTensorSize(2)  // N
+	countSize := b.OutputTensorSize(3)  // 1
+
+	if classSize == 0 || boxesSize != classSize*4 {
+		return fmt.Errorf("ssd output layout mismatch: boxes=%d classes=%d scores=%d count=%d",
+			boxesSize, classSize, scoreSize, countSize)
+	}
+
+	d.ssdLayout = SSDOutputLayout{
+		BoxesSize: boxesSize,
+		ClassSize: classSize,
+		ScoreSize: scoreSize,
+		CountSize: countSize,
+	}
+
+	// Infer input dimensions from the TFLite input tensor.
+	// SSD models typically have input shape [1, H, W, 3].
+	inputElements := b.InputSize()
+	// inputElements = 1 * H * W * 3, and for square models H == W.
+	side := int(math.Sqrt(float64(inputElements / 3)))
+	if side*side*3 != inputElements {
+		// Non-square — try common sizes.
+		for _, sz := range []int{300, 320, 384, 448, 512} {
+			if sz*sz*3 == inputElements {
+				side = sz
+				break
+			}
+		}
+	}
+	d.ssdInputW = side
+	d.ssdInputH = side
+
+	slog.Info("ssd model configured",
+		"input_size", side,
+		"max_detections", classSize,
+		"boxes", boxesSize)
+
+	return nil
+}
+
+// resolveModelType determines the post-processing pipeline based on config and backend.
+func resolveModelType(configured string, backend string) string {
+	switch configured {
+	case "yolo":
+		return "yolo"
+	case "ssd":
+		return "ssd"
+	case "", "auto":
+		// TFLite/EdgeTPU backends default to SSD (EfficientDet-Lite).
+		// ONNX backends default to YOLO (YOLOv8n).
+		if backend == "tflite" || backend == "edgetpu" {
+			return "ssd"
+		}
+		return "yolo"
+	default:
+		slog.Warn("unknown model_type, defaulting to yolo", "model_type", configured)
+		return "yolo"
+	}
+}
+
+// selectBackend picks the best available ONNX backend based on config and build tags.
+// TFLite backends are handled separately in initTFLite().
 func selectBackend(preference string, modelData []byte) (Backend, error) {
 	switch preference {
 	case "go":
@@ -186,7 +343,7 @@ func selectBackend(preference string, modelData []byte) (Backend, error) {
 		return NewGoBackend(modelData)
 
 	default:
-		return nil, fmt.Errorf("unknown backend %q: use \"auto\", \"go\", or \"onnxruntime_c\"", preference)
+		return nil, fmt.Errorf("unknown backend %q: use \"auto\", \"go\", \"onnxruntime_c\", \"tflite\", or \"edgetpu\"", preference)
 	}
 }
 

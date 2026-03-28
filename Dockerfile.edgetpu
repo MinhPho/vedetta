@@ -1,0 +1,76 @@
+# Dockerfile.edgetpu — Vedetta with TFLite + EdgeTPU support
+#
+# Build: docker build -f Dockerfile.edgetpu -t vedetta:edgetpu .
+# Run:   docker run --device /dev/bus/usb -v ./config.yml:/config/config.yml vedetta:edgetpu
+
+# Build stage — requires TFLite C library and EdgeTPU runtime headers
+FROM golang:1.24-bookworm AS builder
+
+# Install TFLite C library and EdgeTPU runtime for linking.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg \
+    curl \
+    ca-certificates && \
+    echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
+        > /etc/apt/sources.list.d/coral-edgetpu.list && \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+        gpg --dearmor -o /etc/apt/trusted.gpg.d/coral.gpg && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libedgetpu-dev \
+        libtensorflowlite-c-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+# Build with TFLite + EdgeTPU tags. CGO is required for TFLite C bindings.
+# VEDETTA_EDGETPU enables the EdgeTPU delegate linkage in backend_tflite.go.
+RUN CGO_ENABLED=1 \
+    CGO_CFLAGS="-DVEDETTA_EDGETPU" \
+    go build -tags "tflite" -ldflags="-s -w" -o /vedetta ./cmd/vedetta
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+LABEL org.opencontainers.image.source=https://github.com/rvben/vedetta
+LABEL org.opencontainers.image.description="Vedetta NVR with EdgeTPU support"
+LABEL org.opencontainers.image.licenses=MIT
+
+# Install EdgeTPU runtime (standard clock — use libedgetpu1-max for max clock).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg \
+    curl \
+    ca-certificates && \
+    echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
+        > /etc/apt/sources.list.d/coral-edgetpu.list && \
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
+        gpg --dearmor -o /etc/apt/trusted.gpg.d/coral.gpg && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libedgetpu1-std \
+        libtensorflowlite-c0 && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get purge -y gnupg curl && \
+    apt-get autoremove -y
+
+RUN groupadd -r vedetta && useradd -r -g vedetta -d /data -s /sbin/nologin vedetta
+
+RUN mkdir -p /data/recordings /data/snapshots /config && \
+    chown -R vedetta:vedetta /data
+
+COPY --from=builder /vedetta /usr/local/bin/vedetta
+
+# EdgeTPU USB access requires the vedetta user to be in the plugdev group.
+RUN usermod -aG plugdev vedetta
+
+USER vedetta
+
+EXPOSE 5050
+
+VOLUME ["/data", "/config"]
+
+ENTRYPOINT ["vedetta"]
+CMD ["-config", "/config/config.yml"]
