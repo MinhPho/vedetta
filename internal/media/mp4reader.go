@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	gomp4 "github.com/abema/go-mp4"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
 )
 
 // ProbeDuration reads the duration of an MP4 file.
@@ -616,112 +618,116 @@ func copyFragmentAdjusted(src io.ReadSeeker, dst io.Writer, frag fragment, seqNu
 	return err
 }
 
-// GenerateHLSPlaylist builds an HLS m3u8 playlist with byte-range addressing for
-// one or more fMP4 files. Each HLS segment starts at a video keyframe. The start
-// parameter skips fragments before that time offset in the first file. The paths
-// slice contains filesystem paths used to open and index each file, while uris
-// contains the corresponding URIs that appear in the playlist output.
-func GenerateHLSPlaylist(paths []string, uris []string, start time.Duration) (string, error) {
+// HLSSegmentInfo describes one HLS segment's location within an fMP4 file.
+type HLSSegmentInfo struct {
+	ByteStart int64
+	ByteEnd   int64
+	Duration  float64
+}
+
+// HLSPlaylistResult contains the generated playlist and segment index for serving.
+type HLSPlaylistResult struct {
+	Playlist string
+	// FileSegments maps segment file paths to their HLS segment ranges, keyed
+	// by a segment index (0-based across all files).
+	Segments []HLSSegmentRef
+}
+
+// HLSSegmentRef maps an HLS segment index to a file path and byte range.
+type HLSSegmentRef struct {
+	FilePath  string
+	ByteStart int64
+	ByteEnd   int64
+}
+
+// GenerateHLSPlaylist builds an HLS m3u8 playlist for one or more fMP4 files.
+// Instead of byte-range addressing (which fails with multi-track moofs), it uses
+// indexed segment URLs. The server re-segments each chunk on the fly using
+// ServeHLSSegment. The baseURI is used to construct segment URLs like
+// "{baseURI}/hls/{segNum}.m4s" and init segment URLs like "{baseURI}/hls/init.mp4".
+func GenerateHLSPlaylist(paths []string, baseURIs []string, start time.Duration) (*HLSPlaylistResult, error) {
 	if len(paths) == 0 {
-		return "", fmt.Errorf("no paths provided")
+		return nil, fmt.Errorf("no paths provided")
 	}
-	if len(paths) != len(uris) {
-		return "", fmt.Errorf("paths and uris length mismatch")
-	}
-
-	type hlsSegment struct {
-		uri        string
-		byteStart  int64
-		byteLength int64
-		duration   float64 // seconds
+	if len(paths) != len(baseURIs) {
+		return nil, fmt.Errorf("paths and baseURIs length mismatch")
 	}
 
-	var segments []hlsSegment
+	type hlsSeg struct {
+		fileIdx  int
+		duration float64
+		ref      HLSSegmentRef
+	}
+	var segments []hlsSeg
 
-	// Track which file index each segment belongs to, so we can insert
-	// EXT-X-MAP tags when the file changes.
 	type initInfo struct {
-		uri       string
+		fileIdx   int
 		byteStart int64
 		byteLen   int64
 	}
-	var segmentInits []initInfo
-	var fileInits []initInfo
+	var segInits []initInfo
 
 	for fileIdx, path := range paths {
 		f, err := os.Open(path)
 		if err != nil {
-			return "", fmt.Errorf("open %s: %w", path, err)
+			return nil, fmt.Errorf("open %s: %w", path, err)
 		}
 
 		initBoxes, fragments, trackTimeScales, err := indexFile(f)
 		f.Close()
 		if err != nil {
-			return "", fmt.Errorf("index %s: %w", path, err)
+			return nil, fmt.Errorf("index %s: %w", path, err)
 		}
 
-		// Compute init segment byte range (ftyp+moov+styp combined)
-		var initStart, initEnd int64
+		var initSize int64
 		if len(initBoxes) > 0 {
-			initStart = initBoxes[0].offset
 			last := initBoxes[len(initBoxes)-1]
-			initEnd = last.offset + last.size
+			initSize = last.offset + last.size
 		}
-		fi := initInfo{
-			uri:       uris[fileIdx],
-			byteStart: initStart,
-			byteLen:   initEnd - initStart,
-		}
-		fileInits = append(fileInits, fi)
 
-		// Identify the video track: pick the track with the highest timescale,
-		// falling back to the track with the most fragments.
 		videoTrackID := findVideoTrack(fragments, trackTimeScales)
 		videoTS := trackTimeScales[videoTrackID]
 		if videoTS == 0 {
 			videoTS = 90000
 		}
 
-		// Filter fragments by start time (first file only)
 		var startTick uint64
 		if fileIdx == 0 && start > 0 {
 			startTick = uint64(start.Seconds() * float64(videoTS))
 		}
 
-		// Group fragments into HLS segments aligned to video keyframes.
-		// Target ~4 seconds per segment to reduce parsing overhead (each segment
-		// contains many per-frame moof+mdat pairs from the fMP4 recording format).
-		const targetSegmentDuration = 4.0 // seconds
+		const targetSegDur = 4.0
 		var curByteStart int64 = -1
 		var curByteEnd int64
-		var curDurationTicks uint64
+		var curDurTicks uint64
 
-		flushSegment := func() {
+		flush := func() {
 			if curByteStart < 0 {
 				return
 			}
-			dur := float64(curDurationTicks) / float64(videoTS)
-			segments = append(segments, hlsSegment{
-				uri:        uris[fileIdx],
-				byteStart:  curByteStart,
-				byteLength: curByteEnd - curByteStart,
-				duration:   dur,
+			dur := float64(curDurTicks) / float64(videoTS)
+			segments = append(segments, hlsSeg{
+				fileIdx:  fileIdx,
+				duration: dur,
+				ref: HLSSegmentRef{
+					FilePath:  path,
+					ByteStart: curByteStart,
+					ByteEnd:   curByteEnd,
+				},
 			})
-			segmentInits = append(segmentInits, fi)
+			segInits = append(segInits, initInfo{fileIdx: fileIdx, byteStart: 0, byteLen: initSize})
 			curByteStart = -1
 			curByteEnd = 0
-			curDurationTicks = 0
+			curDurTicks = 0
 		}
 
 		for _, frag := range fragments {
-			// Skip fragments before start offset
 			fragTS := trackTimeScales[frag.trackID]
 			if fragTS == 0 {
 				fragTS = 90000
 			}
 			if fileIdx == 0 && start > 0 {
 				fragStartTick := frag.decodeTime
-				// Convert to video timescale for comparison if different track
 				if frag.trackID != videoTrackID && fragTS != videoTS {
 					fragStartTick = uint64(float64(fragStartTick) / float64(fragTS) * float64(videoTS))
 				}
@@ -732,12 +738,9 @@ func GenerateHLSPlaylist(paths []string, uris []string, start time.Duration) (st
 			}
 
 			fragEnd := frag.mdatOffset + frag.mdatSize
-
-			// Start a new segment at a video keyframe, but only if we've
-			// accumulated enough duration to meet the target.
-			curDurSec := float64(curDurationTicks) / float64(videoTS)
-			if frag.trackID == videoTrackID && frag.isSync && curByteStart >= 0 && curDurSec >= targetSegmentDuration {
-				flushSegment()
+			curDurSec := float64(curDurTicks) / float64(videoTS)
+			if frag.trackID == videoTrackID && frag.isSync && curByteStart >= 0 && curDurSec >= targetSegDur {
+				flush()
 			}
 
 			if curByteStart < 0 {
@@ -746,20 +749,17 @@ func GenerateHLSPlaylist(paths []string, uris []string, start time.Duration) (st
 			if fragEnd > curByteEnd {
 				curByteEnd = fragEnd
 			}
-
-			// Accumulate duration from video track fragments only
 			if frag.trackID == videoTrackID {
-				curDurationTicks += uint64(frag.duration)
+				curDurTicks += uint64(frag.duration)
 			}
 		}
-		flushSegment()
+		flush()
 	}
 
 	if len(segments) == 0 {
-		return "", fmt.Errorf("no segments produced")
+		return nil, fmt.Errorf("no segments produced")
 	}
 
-	// Compute target duration (ceiling of max segment duration)
 	var maxDur float64
 	for _, seg := range segments {
 		if seg.duration > maxDur {
@@ -771,31 +771,116 @@ func GenerateHLSPlaylist(paths []string, uris []string, start time.Duration) (st
 		targetDuration = 1
 	}
 
-	// Build the m3u8 playlist
+	// Build the m3u8 playlist with indexed segment URLs
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
 	b.WriteString("#EXT-X-VERSION:7\n")
 	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n", targetDuration)
 	b.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
 
-	var lastInitURI string
+	var refs []HLSSegmentRef
+	lastFileIdx := -1
 	for i, seg := range segments {
-		init := segmentInits[i]
-
-		// Emit a new EXT-X-MAP when the source file changes
-		if init.uri != lastInitURI {
-			fmt.Fprintf(&b, "#EXT-X-MAP:URI=\"%s\",BYTERANGE=\"%d@%d\"\n",
-				init.uri, init.byteLen, init.byteStart)
-			lastInitURI = init.uri
+		init := segInits[i]
+		if init.fileIdx != lastFileIdx {
+			// Init segment: serve the ftyp+moov as a byte-range (no multi-traf issue)
+			fmt.Fprintf(&b, "#EXT-X-MAP:URI=\"%s/hls/init.mp4\",BYTERANGE=\"%d@%d\"\n",
+				baseURIs[init.fileIdx], init.byteLen, init.byteStart)
+			lastFileIdx = init.fileIdx
 		}
 
 		fmt.Fprintf(&b, "#EXTINF:%.6f,\n", seg.duration)
-		fmt.Fprintf(&b, "#EXT-X-BYTERANGE:%d@%d\n", seg.byteLength, seg.byteStart)
-		fmt.Fprintf(&b, "%s\n", seg.uri)
+		fmt.Fprintf(&b, "%s/hls/%d\n", baseURIs[seg.fileIdx], len(refs))
+		refs = append(refs, seg.ref)
 	}
 
 	b.WriteString("#EXT-X-ENDLIST\n")
-	return b.String(), nil
+
+	return &HLSPlaylistResult{
+		Playlist: b.String(),
+		Segments: refs,
+	}, nil
+}
+
+// ServeHLSSegment reads a byte range from an fMP4 file containing one or more
+// moof+mdat pairs, unmarshals them, and re-marshals as clean fMP4 that MSE/hls.js
+// can consume. This is needed because per-GOP recordings use multi-track moofs
+// (video+audio trafs in a single moof) which browsers reject.
+func ServeHLSSegment(w io.Writer, filePath string, byteStart, byteEnd int64) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	size := byteEnd - byteStart
+	if _, err := f.Seek(byteStart, io.SeekStart); err != nil {
+		return fmt.Errorf("seek: %w", err)
+	}
+
+	buf := make([]byte, size)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+
+	// Unmarshal the raw moof+mdat pairs into structured Parts
+	var parts fmp4.Parts
+	if err := parts.Unmarshal(buf); err != nil {
+		return fmt.Errorf("unmarshal fmp4: %w", err)
+	}
+
+	// Re-marshal: the fmp4 library writes clean moof+mdat pairs that
+	// browsers can consume via MSE.
+	ws := &writeSeeker{buf: &bytes.Buffer{}}
+	if err := parts.Marshal(ws); err != nil {
+		return fmt.Errorf("marshal fmp4: %w", err)
+	}
+
+	_, err = w.Write(ws.buf.Bytes())
+	return err
+}
+
+// writeSeeker wraps a bytes.Buffer to implement io.WriteSeeker for fmp4.Marshal.
+type writeSeeker struct {
+	buf *bytes.Buffer
+	pos int
+}
+
+func (ws *writeSeeker) Write(p []byte) (int, error) {
+	// If writing past current position, extend the buffer
+	if ws.pos < ws.buf.Len() {
+		// Overwrite existing bytes
+		copy(ws.buf.Bytes()[ws.pos:], p)
+		ws.pos += len(p)
+		if ws.pos > ws.buf.Len() {
+			ws.buf.Truncate(ws.pos)
+		}
+		return len(p), nil
+	}
+	n, err := ws.buf.Write(p)
+	ws.pos += n
+	return n, err
+}
+
+func (ws *writeSeeker) Seek(offset int64, whence int) (int64, error) {
+	var newPos int
+	switch whence {
+	case io.SeekStart:
+		newPos = int(offset)
+	case io.SeekCurrent:
+		newPos = ws.pos + int(offset)
+	case io.SeekEnd:
+		newPos = ws.buf.Len() + int(offset)
+	}
+	if newPos < 0 {
+		return 0, fmt.Errorf("negative seek position")
+	}
+	// Extend buffer if seeking past end
+	if newPos > ws.buf.Len() {
+		ws.buf.Write(make([]byte, newPos-ws.buf.Len()))
+	}
+	ws.pos = newPos
+	return int64(newPos), nil
 }
 
 // findVideoTrack identifies the video track ID from fragments and timescales.

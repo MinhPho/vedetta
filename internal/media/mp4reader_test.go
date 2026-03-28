@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,7 +265,7 @@ func TestGenerateHLSPlaylist(t *testing.T) {
 	// 10 fragments at 3000 ticks each (90kHz timescale) = ~333ms total
 	writeSyntheticFMP4(t, path, 10, 3000)
 
-	playlist, err := GenerateHLSPlaylist(
+	result, err := GenerateHLSPlaylist(
 		[]string{path},
 		[]string{"/recordings/test.mp4"},
 		0,
@@ -272,6 +273,8 @@ func TestGenerateHLSPlaylist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateHLSPlaylist: %v", err)
 	}
+
+	playlist := result.Playlist
 
 	// Verify required HLS tags are present
 	requiredTags := []string{
@@ -281,7 +284,6 @@ func TestGenerateHLSPlaylist(t *testing.T) {
 		"#EXT-X-PLAYLIST-TYPE:VOD",
 		"#EXT-X-MAP:",
 		"#EXTINF:",
-		"#EXT-X-BYTERANGE:",
 		"#EXT-X-ENDLIST",
 	}
 	for _, tag := range requiredTags {
@@ -290,9 +292,9 @@ func TestGenerateHLSPlaylist(t *testing.T) {
 		}
 	}
 
-	// Verify the segment URI appears
-	if !strings.Contains(playlist, "/recordings/test.mp4") {
-		t.Error("playlist missing segment URI")
+	// Verify segment refs are populated
+	if len(result.Segments) == 0 {
+		t.Error("no segment refs produced")
 	}
 
 	t.Logf("Generated playlist:\n%s", playlist)
@@ -304,7 +306,7 @@ func TestGenerateHLSPlaylistReal(t *testing.T) {
 		t.Skip("skipping: real test file not available at", realPath)
 	}
 
-	playlist, err := GenerateHLSPlaylist(
+	result, err := GenerateHLSPlaylist(
 		[]string{realPath},
 		[]string{"/recordings/real.mp4"},
 		0,
@@ -314,13 +316,13 @@ func TestGenerateHLSPlaylistReal(t *testing.T) {
 	}
 
 	// A 10-minute recording should produce multiple HLS segments
-	segmentCount := strings.Count(playlist, "#EXTINF:")
+	segmentCount := strings.Count(result.Playlist, "#EXTINF:")
 	if segmentCount < 2 {
 		t.Errorf("expected multiple HLS segments for a long recording, got %d", segmentCount)
 	}
 
 	t.Logf("Generated %d segments from real file", segmentCount)
-	t.Logf("Playlist:\n%s", playlist)
+	t.Logf("Playlist:\n%s", result.Playlist)
 }
 
 func TestIndexFileDetectsSync(t *testing.T) {
@@ -350,4 +352,41 @@ func TestIndexFileDetectsSync(t *testing.T) {
 			t.Errorf("fragment %d: expected isSync=true (IDR frame), got false", i)
 		}
 	}
+}
+
+func TestServeHLSSegment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.mp4")
+	writeSyntheticFMP4(t, path, 10, 3000)
+
+	result, err := GenerateHLSPlaylist([]string{path}, []string{"/test"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Segments) == 0 {
+		t.Fatal("no segments")
+	}
+
+	// Serve the first segment
+	ref := result.Segments[0]
+	var buf bytes.Buffer
+	err = ServeHLSSegment(&buf, ref.FilePath, ref.ByteStart, ref.ByteEnd)
+	if err != nil {
+		t.Fatalf("ServeHLSSegment: %v", err)
+	}
+
+	if buf.Len() == 0 {
+		t.Fatal("empty output")
+	}
+
+	// Verify the output starts with a moof box
+	if buf.Len() < 8 {
+		t.Fatal("output too small")
+	}
+	boxType := string(buf.Bytes()[4:8])
+	if boxType != "moof" {
+		t.Errorf("expected moof box, got %q", boxType)
+	}
+
+	t.Logf("Re-segmented %d bytes from range [%d, %d)", buf.Len(), ref.ByteStart, ref.ByteEnd)
 }

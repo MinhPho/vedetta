@@ -63,6 +63,7 @@ type Server struct {
 	ObjectMatchThreshold float64
 	mqttClient           MQTTPublisher
 	mqttEnabled          bool
+	hlsSegmentCache      sync.Map // map[string][]media.HLSSegmentRef — keyed by "camera:segID"
 	snapshotPath         string
 	faceCropDir    string
 	ptzClients     map[string]*camera.PTZClient
@@ -215,6 +216,8 @@ func (s *Server) registerRoutes() {
 	// Old progressive MP4 playback endpoint removed — replaced by HLS m3u8
 	s.mux.HandleFunc("GET /api/cameras/{name}/playback.m3u8", s.handlePlaybackM3U8)
 	s.mux.HandleFunc("GET /api/cameras/{name}/segments/{id}", s.handleSegment)
+	s.mux.HandleFunc("GET /api/cameras/{name}/segments/{id}/hls/init.mp4", s.handleSegmentInit)
+	s.mux.HandleFunc("GET /api/cameras/{name}/segments/{id}/hls/{segNum}", s.handleSegmentHLS)
 	s.mux.HandleFunc("GET /api/cameras/{name}/thumbnail", s.handleThumbnail)
 	s.mux.HandleFunc("GET /api/recordings/segments/{camera}", s.handleListSegments)
 	s.mux.HandleFunc("GET /api/recordings/export/{camera}", s.handleRecordingExport)
@@ -1341,16 +1344,22 @@ func (s *Server) handlePlaybackM3U8(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	playlist, err := media.GenerateHLSPlaylist(paths, uris, offset)
+	result, err := media.GenerateHLSPlaylist(paths, uris, offset)
 	if err != nil {
 		slog.Error("HLS playlist generation failed", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "playlist generation failed"})
 		return
 	}
 
+	// Cache the segment refs so handleSegmentHLS can look them up
+	for _, seg := range segments {
+		cacheKey := fmt.Sprintf("%s:%d", name, seg.ID)
+		s.hlsSegmentCache.Store(cacheKey, result.Segments)
+	}
+
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-cache")
-	if _, err := w.Write([]byte(playlist)); err != nil {
+	if _, err := w.Write([]byte(result.Playlist)); err != nil {
 		slog.Error("HLS playlist write failed", "error", err)
 	}
 }
@@ -1376,6 +1385,76 @@ func (s *Server) handleSegment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeFile(w, r, seg.Path)
+}
+
+// handleSegmentInit serves the fMP4 init segment (ftyp+moov) for HLS playback.
+func (s *Server) handleSegmentInit(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	idStr := r.PathValue("id")
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid segment ID"})
+		return
+	}
+
+	seg, err := s.db.GetSegmentByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if seg == nil || seg.Camera != name {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "segment not found"})
+		return
+	}
+
+	// The init segment is the ftyp+moov at the start of the file.
+	// http.ServeFile with Range header handles this via the BYTERANGE in the playlist.
+	http.ServeFile(w, r, seg.Path)
+}
+
+// handleSegmentHLS serves a re-segmented fMP4 chunk for HLS playback.
+// It reads the raw moof+mdat bytes from disk, unmarshals them, and re-marshals
+// as clean fMP4 that MSE/hls.js can consume.
+func (s *Server) handleSegmentHLS(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	idStr := r.PathValue("id")
+	segNumStr := r.PathValue("segNum")
+
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid segment ID"})
+		return
+	}
+
+	segNum, err := strconv.Atoi(segNumStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid segment number"})
+		return
+	}
+
+	// Look up cached segment refs
+	cacheKey := fmt.Sprintf("%s:%d", name, id)
+	refsVal, ok := s.hlsSegmentCache.Load(cacheKey)
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "playlist not found, request m3u8 first"})
+		return
+	}
+	refs := refsVal.([]media.HLSSegmentRef)
+
+	if segNum < 0 || segNum >= len(refs) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "segment number out of range"})
+		return
+	}
+
+	ref := refs[segNum]
+
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+
+	if err := media.ServeHLSSegment(w, ref.FilePath, ref.ByteStart, ref.ByteEnd); err != nil {
+		slog.Error("HLS segment serve failed", "error", err, "file", ref.FilePath, "segment", segNum)
+	}
 }
 
 func (s *Server) handleThumbnail(w http.ResponseWriter, r *http.Request) {
