@@ -829,20 +829,26 @@ func ServeHLSSegment(w io.Writer, filePath string, byteStart, byteEnd int64) err
 		return fmt.Errorf("unmarshal fmp4: %w", err)
 	}
 
-	// Split multi-track Parts into separate single-track Parts.
-	// Browsers reject multi-traf moofs (video+audio in one moof) via MSE.
-	// Each track gets its own moof+mdat pair.
+	// Clean up parts for MSE compatibility:
+	// 1. Split multi-track Parts into single-track Parts (browsers reject multi-traf moofs)
+	// 2. Strip in-band SPS/PPS NALs from video samples (some cameras embed them in keyframes,
+	//    which conflicts with the init segment's avcC and causes Safari bufferAppendError)
 	var singleTrackParts fmp4.Parts
 	for _, p := range parts {
-		if len(p.Tracks) <= 1 {
-			singleTrackParts = append(singleTrackParts, p)
-		} else {
-			for _, tr := range p.Tracks {
+		tracks := p.Tracks
+		if len(tracks) > 1 {
+			for _, tr := range tracks {
+				stripInBandParamSets(tr)
 				singleTrackParts = append(singleTrackParts, &fmp4.Part{
 					SequenceNumber: p.SequenceNumber,
 					Tracks:         []*fmp4.PartTrack{tr},
 				})
 			}
+		} else {
+			for _, tr := range tracks {
+				stripInBandParamSets(tr)
+			}
+			singleTrackParts = append(singleTrackParts, p)
 		}
 	}
 
@@ -853,6 +859,40 @@ func ServeHLSSegment(w io.Writer, filePath string, byteStart, byteEnd int64) err
 
 	_, err = w.Write(ws.buf.Bytes())
 	return err
+}
+
+// stripInBandParamSets removes SPS (NAL type 7) and PPS (NAL type 8) NAL units
+// from video sample payloads. Some cameras embed these in-band before keyframes,
+// which conflicts with the init segment's avcC and causes Safari's MSE to reject
+// the data with bufferAppendError.
+func stripInBandParamSets(tr *fmp4.PartTrack) {
+	for _, s := range tr.Samples {
+		if len(s.Payload) < 5 {
+			continue
+		}
+		// Check first NAL type — if it's SPS or PPS, strip parameter set NALs
+		firstNALType := s.Payload[4] & 0x1f
+		if firstNALType != 7 && firstNALType != 8 {
+			continue // not a parameter set, skip
+		}
+		// Rebuild payload without SPS/PPS NALs
+		var cleaned []byte
+		pos := 0
+		for pos+4 < len(s.Payload) {
+			nalLen := int(binary.BigEndian.Uint32(s.Payload[pos : pos+4]))
+			if pos+4+nalLen > len(s.Payload) {
+				break
+			}
+			nalType := s.Payload[pos+4] & 0x1f
+			if nalType != 7 && nalType != 8 { // keep everything except SPS/PPS
+				cleaned = append(cleaned, s.Payload[pos:pos+4+nalLen]...)
+			}
+			pos += 4 + nalLen
+		}
+		if len(cleaned) > 0 {
+			s.Payload = cleaned
+		}
+	}
 }
 
 // writeSeeker wraps a bytes.Buffer to implement io.WriteSeeker for fmp4.Marshal.
