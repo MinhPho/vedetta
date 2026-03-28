@@ -9,23 +9,39 @@ package detect
 #include <stdlib.h>
 #include <string.h>
 #include <tensorflow/lite/c/c_api.h>
-
-// EdgeTPU delegate — linked conditionally via libedgetpu.
-// We dlopen it at runtime so builds work even without libedgetpu installed,
-// but we also support static linking via the edgetpu build tag.
 #include <tensorflow/lite/c/c_api_types.h>
 
-// Forward declarations for EdgeTPU delegate functions.
-// These are resolved at link time when -ledgetpu is available.
-typedef struct TfLiteDelegate TfLiteDelegate;
+// EdgeTPU delegate — linked conditionally via VEDETTA_EDGETPU define.
+// The edgetpu C API (edgetpu_c.h) provides:
+//   edgetpu_create_delegate(type, name, options, num_options)
+//   edgetpu_free_delegate(delegate)
+//   edgetpu_list_devices(num_devices)
+//   edgetpu_free_devices(devices)
 
-// edgetpu_create wraps the EdgeTPU delegate creation.
-// Returns NULL if EdgeTPU is not available.
+#ifdef VEDETTA_EDGETPU
+
+// Device types from edgetpu_c.h.
+enum vedetta_edgetpu_device_type {
+	VEDETTA_APEX_PCI = 0,
+	VEDETTA_APEX_USB = 1,
+};
+
+// Forward declarations matching the edgetpu C API exactly.
+extern TfLiteDelegate* edgetpu_create_delegate(
+	enum vedetta_edgetpu_device_type type,
+	const char* name,
+	const void* options,
+	size_t num_options);
+extern void edgetpu_free_delegate(TfLiteDelegate* delegate);
+extern const char* edgetpu_version(void);
+
+#endif // VEDETTA_EDGETPU
+
+// vedetta_edgetpu_create wraps EdgeTPU delegate creation.
+// Returns NULL if EdgeTPU is not available or not compiled in.
 static TfLiteDelegate* vedetta_edgetpu_create(int* ok) {
 #ifdef VEDETTA_EDGETPU
-	extern TfLiteDelegate* edgetpu_create_delegate_for_device(
-		const char* device, const char* options);
-	TfLiteDelegate* d = edgetpu_create_delegate_for_device(NULL, NULL);
+	TfLiteDelegate* d = edgetpu_create_delegate(VEDETTA_APEX_USB, NULL, NULL, 0);
 	if (d != NULL) { *ok = 1; }
 	return d;
 #else
@@ -36,8 +52,15 @@ static TfLiteDelegate* vedetta_edgetpu_create(int* ok) {
 
 static void vedetta_edgetpu_destroy(TfLiteDelegate* d) {
 #ifdef VEDETTA_EDGETPU
-	extern void edgetpu_free_delegate(TfLiteDelegate*);
 	if (d != NULL) { edgetpu_free_delegate(d); }
+#endif
+}
+
+static const char* vedetta_edgetpu_version(void) {
+#ifdef VEDETTA_EDGETPU
+	return edgetpu_version();
+#else
+	return "not compiled";
 #endif
 }
 */
@@ -112,14 +135,17 @@ func NewTFLiteBackend(modelPath string, useEdgeTPU bool) (*TFLiteBackend, error)
 
 	// Try to load EdgeTPU delegate if requested.
 	if useEdgeTPU {
+		ver := C.GoString(C.vedetta_edgetpu_version())
+		slog.Info("tflite: EdgeTPU runtime", "version", ver)
+
 		var ok C.int
 		b.delegate = C.vedetta_edgetpu_create(&ok)
 		if ok == 1 && b.delegate != nil {
 			C.TfLiteInterpreterOptionsAddDelegate(b.options, b.delegate)
 			b.hasEdgeTPU = true
-			slog.Info("tflite: EdgeTPU delegate loaded")
+			slog.Info("tflite: EdgeTPU delegate loaded for USB Coral device")
 		} else {
-			slog.Warn("tflite: EdgeTPU requested but not available, using CPU")
+			slog.Warn("tflite: EdgeTPU requested but no USB device found, using CPU")
 		}
 	}
 
