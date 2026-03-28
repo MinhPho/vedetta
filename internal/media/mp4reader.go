@@ -676,7 +676,8 @@ func GenerateHLSPlaylist(paths []string, baseURIs []string, start time.Duration)
 		initBoxes, fragments, trackTimeScales, err := indexFile(f)
 		f.Close()
 		if err != nil {
-			return nil, fmt.Errorf("index %s: %w", path, err)
+			// Skip unreadable segments (in-progress writes, corrupted files)
+			continue
 		}
 
 		var initSize int64
