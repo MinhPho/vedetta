@@ -1,12 +1,44 @@
-# Dockerfile.edgetpu — Vedetta with TFLite + EdgeTPU support
+# Dockerfile.edgetpu - Vedetta with TFLite + EdgeTPU support
 #
 # Build: docker build -f Dockerfile.edgetpu -t vedetta:edgetpu .
 # Run:   docker run --device /dev/bus/usb -v ./config.yml:/config/config.yml vedetta:edgetpu
 
-# Build stage — requires TFLite C library and EdgeTPU runtime headers
-FROM golang:1.24-bookworm AS builder
+# ---------- Stage 1: Build TFLite C shared library from source ----------
+FROM debian:bookworm-slim AS tflite-builder
 
-# Install TFLite C library and EdgeTPU runtime for linking.
+ARG TFLITE_VERSION=2.14.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    curl \
+    ca-certificates \
+    git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Clone the TFLite source (shallow), build the C API shared library,
+# manually install the .so (cmake --install does not copy it), copy all
+# headers preserving the include-path tree, then clean up.
+RUN git clone --depth 1 --branch "v${TFLITE_VERSION}" \
+        https://github.com/tensorflow/tensorflow.git /tmp/tensorflow && \
+    mkdir -p /tmp/tensorflow/build && \
+    cd /tmp/tensorflow/build && \
+    cmake ../tensorflow/lite/c \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DTFLITE_ENABLE_XNNPACK=ON && \
+    cmake --build . -j"$(nproc)" && \
+    cp /tmp/tensorflow/build/libtensorflowlite_c.so /usr/local/lib/ && \
+    ldconfig && \
+    mkdir -p /usr/local/include/tensorflow/lite && \
+    cd /tmp/tensorflow && \
+    find tensorflow/lite -name '*.h' -exec sh -c \
+        'mkdir -p /usr/local/include/$(dirname "$1") && cp "$1" /usr/local/include/"$1"' _ {} \; && \
+    rm -rf /tmp/tensorflow
+
+# ---------- Stage 2: Build Vedetta Go binary ----------
+FROM golang:1.26-bookworm AS builder
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     curl \
@@ -16,30 +48,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
         gpg --dearmor -o /etc/apt/trusted.gpg.d/coral.gpg && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libedgetpu-dev \
-        libtensorflowlite-c-dev && \
+    apt-get install -y --no-install-recommends libedgetpu-dev && \
     rm -rf /var/lib/apt/lists/*
+
+COPY --from=tflite-builder /usr/local/lib/libtensorflowlite_c* /usr/local/lib/
+COPY --from=tflite-builder /usr/local/include/tensorflow/ /usr/local/include/tensorflow/
+RUN ldconfig
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
-# Build with TFLite + EdgeTPU tags. CGO is required for TFLite C bindings.
-# VEDETTA_EDGETPU enables the EdgeTPU delegate linkage in backend_tflite.go.
 RUN CGO_ENABLED=1 \
     CGO_CFLAGS="-DVEDETTA_EDGETPU" \
+    CGO_LDFLAGS="-ledgetpu" \
     go build -tags "tflite" -ldflags="-s -w" -o /vedetta ./cmd/vedetta
 
-# Runtime stage
+# ---------- Stage 3: Runtime ----------
 FROM debian:bookworm-slim
 
 LABEL org.opencontainers.image.source=https://github.com/rvben/vedetta
 LABEL org.opencontainers.image.description="Vedetta NVR with EdgeTPU support"
 LABEL org.opencontainers.image.licenses=MIT
 
-# Install EdgeTPU runtime (standard clock — use libedgetpu1-max for max clock).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     curl \
@@ -49,12 +81,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
         gpg --dearmor -o /etc/apt/trusted.gpg.d/coral.gpg && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libedgetpu1-std \
-        libtensorflowlite-c0 && \
+    apt-get install -y --no-install-recommends libedgetpu1-std && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get purge -y gnupg curl && \
     apt-get autoremove -y
+
+COPY --from=tflite-builder /usr/local/lib/libtensorflowlite_c* /usr/local/lib/
+RUN ldconfig
 
 RUN groupadd -r vedetta && useradd -r -g vedetta -d /data -s /sbin/nologin vedetta
 
@@ -63,7 +96,6 @@ RUN mkdir -p /data/recordings /data/snapshots /config && \
 
 COPY --from=builder /vedetta /usr/local/bin/vedetta
 
-# EdgeTPU USB access requires the vedetta user to be in the plugdev group.
 RUN usermod -aG plugdev vedetta
 
 USER vedetta
