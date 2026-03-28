@@ -2,6 +2,7 @@ package rtsp
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"sync"
 	"time"
@@ -166,6 +167,9 @@ func (s *Source) connectOnce(ctx context.Context) error {
 		Scheme:   u.Scheme,
 		Host:     u.Host,
 		Protocol: &proto,
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // UniFi Protect uses self-signed certs
+		},
 	}
 
 	if err := client.Start(); err != nil {
