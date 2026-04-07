@@ -36,6 +36,7 @@ const (
 const (
 	AuthKindSession = "session"
 	AuthKindToken   = "token"
+	AuthKindProxy   = "proxy"
 )
 
 var (
@@ -65,6 +66,7 @@ type Checker struct {
 	db             *storage.DB
 	exposure       string
 	trustedProxies []netip.Prefix
+	proxyHeader    string
 
 	mu            sync.Mutex
 	loginFailures map[string]*failureRecord
@@ -91,6 +93,7 @@ func New(authCfg config.AuthConfig, apiCfg config.APIConfig, db *storage.DB) *Ch
 		tokenCreates:   make(map[string]*failureRecord),
 		done:           make(chan struct{}),
 		trustedProxies: parseTrustedProxies(apiCfg.TrustedProxies),
+		proxyHeader:    authCfg.Proxy.Header,
 	}
 
 	for _, user := range authCfg.Users {
@@ -105,7 +108,7 @@ func New(authCfg config.AuthConfig, apiCfg config.APIConfig, db *storage.DB) *Ch
 // NewFromDB creates a Checker that reads users from the database rather than
 // from static config. It loads users immediately and supports reloading via
 // reloadUsers.
-func NewFromDB(apiCfg config.APIConfig, db *storage.DB) *Checker {
+func NewFromDB(authCfg config.AuthConfig, apiCfg config.APIConfig, db *storage.DB) *Checker {
 	dummyHash, err := bcrypt.GenerateFromPassword([]byte("vedetta-not-a-real-password"), bcrypt.MinCost)
 	if err != nil {
 		panic(err)
@@ -120,6 +123,7 @@ func NewFromDB(apiCfg config.APIConfig, db *storage.DB) *Checker {
 		tokenCreates:   make(map[string]*failureRecord),
 		done:           make(chan struct{}),
 		trustedProxies: parseTrustedProxies(apiCfg.TrustedProxies),
+		proxyHeader:    authCfg.Proxy.Header,
 	}
 
 	c.reloadUsers()
@@ -287,10 +291,31 @@ func (c *Checker) Authenticate(r *http.Request) (*Principal, error) {
 	if c == nil {
 		return nil, nil
 	}
+	if p := c.authenticateProxyHeader(r); p != nil {
+		return p, nil
+	}
 	if p, err := c.authenticateBearerToken(r); p != nil || err != nil {
 		return p, err
 	}
 	return c.authenticateSession(r)
+}
+
+func (c *Checker) authenticateProxyHeader(r *http.Request) *Principal {
+	if c.proxyHeader == "" {
+		return nil
+	}
+	if !c.isTrustedProxy(remoteAddrIP(r.RemoteAddr)) {
+		return nil
+	}
+	username := strings.TrimSpace(r.Header.Get(c.proxyHeader))
+	if username == "" {
+		return nil
+	}
+	return &Principal{
+		Username: username,
+		Kind:     AuthKindProxy,
+		Scopes:   []string{"*"},
+	}
 }
 
 func (c *Checker) authenticateSession(r *http.Request) (*Principal, error) {
@@ -630,7 +655,7 @@ func (p *Principal) HasAnyScope(scopes ...string) bool {
 	if p == nil {
 		return false
 	}
-	if p.Kind == AuthKindSession {
+	if p.Kind == AuthKindSession || p.Kind == AuthKindProxy {
 		return true
 	}
 	for _, want := range scopes {
@@ -647,7 +672,7 @@ func (p *Principal) Allows(method, path string) bool {
 	if p == nil {
 		return false
 	}
-	if p.Kind == AuthKindSession {
+	if p.Kind == AuthKindSession || p.Kind == AuthKindProxy {
 		return true
 	}
 	if !strings.HasPrefix(path, "/api/") && path != "/metrics" {

@@ -121,7 +121,7 @@ func main() {
 			}
 		}
 
-		authChecker := auth.NewFromDB(cfg.API, db)
+		authChecker := auth.NewFromDB(cfg.Auth, cfg.API, db)
 		defer authChecker.Close()
 
 		sub := initSubsystems(ctx, cancel, cfg, db)
@@ -185,7 +185,7 @@ func main() {
 	// Reconcile event media availability with the filesystem without deleting metadata.
 	go reconcileEventMediaAvailability(db)
 
-	authChecker := auth.NewFromDB(cfg.API, db)
+	authChecker := auth.NewFromDB(cfg.Auth, cfg.API, db)
 	defer authChecker.Close()
 
 	// Start API server early so the UI is available during initialization

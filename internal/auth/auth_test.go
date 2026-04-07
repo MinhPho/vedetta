@@ -177,7 +177,7 @@ func TestChecker_DBAuth(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
 	db.SaveAuthUser("admin", string(hash))
 
-	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	checker := NewFromDB(config.AuthConfig{}, config.APIConfig{Exposure: "lan"}, db)
 	defer checker.Close()
 
 	// Valid login
@@ -213,7 +213,7 @@ func TestChangePassword(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("oldpassword"), bcrypt.DefaultCost)
 	db.SaveAuthUser("admin", string(hash))
 
-	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	checker := NewFromDB(config.AuthConfig{}, config.APIConfig{Exposure: "lan"}, db)
 	defer checker.Close()
 
 	// Change password succeeds with correct current password
@@ -248,7 +248,7 @@ func TestChangePassword_WrongCurrent(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
 	db.SaveAuthUser("admin", string(hash))
 
-	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	checker := NewFromDB(config.AuthConfig{}, config.APIConfig{Exposure: "lan"}, db)
 	defer checker.Close()
 
 	err = checker.ChangePassword("admin", "wrongpassword", "newpassword123")
@@ -271,7 +271,7 @@ func TestLoginRememberMe(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
 	db.SaveAuthUser("admin", string(hash))
 
-	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	checker := NewFromDB(config.AuthConfig{}, config.APIConfig{Exposure: "lan"}, db)
 	defer checker.Close()
 
 	// Login with remember=true: 30-day expiry
@@ -314,7 +314,7 @@ func TestRememberSessionIdleTTL(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
 	db.SaveAuthUser("admin", string(hash))
 
-	checker := NewFromDB(config.APIConfig{Exposure: "lan"}, db)
+	checker := NewFromDB(config.AuthConfig{}, config.APIConfig{Exposure: "lan"}, db)
 	defer checker.Close()
 
 	// Create a remember session
