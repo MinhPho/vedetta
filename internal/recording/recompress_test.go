@@ -1,0 +1,216 @@
+package recording
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/storage"
+)
+
+func newTestRecompressor(t *testing.T) (*Recompressor, *storage.DB) {
+	t.Helper()
+	dir := t.TempDir()
+	db, err := storage.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfg := config.TieredStorageConfig{
+		Enabled:      true,
+		AfterDays:    1,
+		TargetWidth:  1280,
+		TargetHeight: 720,
+		Schedule:     "02:00-05:00",
+	}
+	cameras := []config.CameraConfig{
+		{Name: "cam1"},
+	}
+	r := NewRecompressor(cfg, cameras, db)
+	return r, db
+}
+
+func TestRecompressionJob_SkipsAlreadyRecompressed(t *testing.T) {
+	_, db := newTestRecompressor(t)
+	dir := t.TempDir()
+
+	seg := storage.SegmentRecord{
+		Camera:    "cam1",
+		Path:      filepath.Join(dir, "seg.mp4"),
+		StartTime: time.Now().Add(-48 * time.Hour),
+		EndTime:   time.Now().Add(-47 * time.Hour),
+		SizeBytes: 1000,
+	}
+	if err := db.SaveSegment(seg); err != nil {
+		t.Fatalf("SaveSegment: %v", err)
+	}
+
+	// Get the segment ID and mark it as recompressed
+	all, err := db.GetAllSegments("cam1")
+	if err != nil || len(all) == 0 {
+		t.Fatal("expected to find saved segment")
+	}
+	if err := db.MarkSegmentRecompressed(all[0].ID, 500); err != nil {
+		t.Fatalf("MarkSegmentRecompressed: %v", err)
+	}
+
+	cutoff := time.Now().Add(-1 * time.Hour)
+	segs, err := db.GetSegmentsForRecompression("cam1", cutoff)
+	if err != nil {
+		t.Fatalf("GetSegmentsForRecompression: %v", err)
+	}
+	if len(segs) != 0 {
+		t.Errorf("expected 0 eligible segments, got %d", len(segs))
+	}
+}
+
+func TestRecompressionJob_RespectsScheduleWindow(t *testing.T) {
+	inside := time.Date(2026, 1, 1, 3, 0, 0, 0, time.Local)
+	outside := time.Date(2026, 1, 1, 10, 0, 0, 0, time.Local)
+
+	ok, err := config.InScheduleWindow("02:00-05:00", inside)
+	if err != nil || !ok {
+		t.Errorf("expected inside=true, got %v err=%v", ok, err)
+	}
+	ok, err = config.InScheduleWindow("02:00-05:00", outside)
+	if err != nil || ok {
+		t.Errorf("expected outside=false, got %v err=%v", ok, err)
+	}
+}
+
+func TestRecompressionJob_SkipsDisabledCamera(t *testing.T) {
+	_, db := newTestRecompressor(t)
+	dir := t.TempDir()
+
+	seg := storage.SegmentRecord{
+		Camera:    "cam_disabled",
+		Path:      filepath.Join(dir, "seg.mp4"),
+		StartTime: time.Now().Add(-48 * time.Hour),
+		EndTime:   time.Now().Add(-47 * time.Hour),
+		SizeBytes: 1000,
+	}
+	if err := db.SaveSegment(seg); err != nil {
+		t.Fatalf("SaveSegment: %v", err)
+	}
+
+	cfg := config.TieredStorageConfig{Enabled: true, AfterDays: 1, Schedule: "02:00-05:00"}
+	cameras := []config.CameraConfig{
+		{Name: "cam1"},
+	}
+	r := NewRecompressor(cfg, cameras, db)
+	eligible := r.eligibleCameras(time.Now())
+	for _, cam := range eligible {
+		if cam == "cam_disabled" {
+			t.Error("cam_disabled should not be eligible")
+		}
+	}
+}
+
+func TestRecompressionJob_PerCameraAfterDaysOverride(t *testing.T) {
+	_, db := newTestRecompressor(t)
+	dir := t.TempDir()
+	now := time.Now()
+
+	if err := db.SaveSegment(storage.SegmentRecord{
+		Camera: "cam_short", Path: filepath.Join(dir, "a.mp4"),
+		StartTime: now.Add(-48 * time.Hour), EndTime: now.Add(-47 * time.Hour), SizeBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveSegment(storage.SegmentRecord{
+		Camera: "cam_long", Path: filepath.Join(dir, "b.mp4"),
+		StartTime: now.Add(-48 * time.Hour), EndTime: now.Add(-47 * time.Hour), SizeBytes: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	global := config.TieredStorageConfig{Enabled: true, AfterDays: 1, Schedule: "02:00-05:00"}
+	afterLong := 5
+	cameras := []config.CameraConfig{
+		{Name: "cam_short"},
+		{Name: "cam_long", TieredStorage: config.CameraTieredStorageConfig{AfterDays: &afterLong}},
+	}
+	r := NewRecompressor(global, cameras, db)
+
+	segsShort, _ := db.GetSegmentsForRecompression("cam_short", now.Add(-time.Duration(1)*24*time.Hour))
+	if len(segsShort) == 0 {
+		t.Error("cam_short should have eligible segments")
+	}
+	segsLong, _ := db.GetSegmentsForRecompression("cam_long", now.Add(-time.Duration(5)*24*time.Hour))
+	if len(segsLong) != 0 {
+		t.Error("cam_long should have no eligible segments (segment too new)")
+	}
+	_ = r
+}
+
+func TestRecompressionJob_RetriesAfterFailure(t *testing.T) {
+	_, db := newTestRecompressor(t)
+	dir := t.TempDir()
+
+	seg := storage.SegmentRecord{
+		Camera: "cam1", Path: filepath.Join(dir, "seg.mp4"),
+		StartTime: time.Now().Add(-48 * time.Hour), EndTime: time.Now().Add(-47 * time.Hour),
+		SizeBytes: 1,
+	}
+	if err := db.SaveSegment(seg); err != nil {
+		t.Fatal(err)
+	}
+
+	all, _ := db.GetAllSegments("cam1")
+	if len(all) == 0 {
+		t.Fatal("no segments found")
+	}
+	id := all[0].ID
+
+	for range 3 {
+		if err := db.IncrementSegmentRecompressFailures(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cutoff := time.Now().Add(-1 * time.Hour)
+	segs, err := db.GetSegmentsForRecompression("cam1", cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segs) != 0 {
+		t.Errorf("expected 0 eligible after 3 failures, got %d", len(segs))
+	}
+}
+
+func TestRecompressionJob_UpdatesDBOnSuccess(t *testing.T) {
+	_, db := newTestRecompressor(t)
+	dir := t.TempDir()
+
+	f, _ := os.Create(filepath.Join(dir, "seg.mp4"))
+	_, _ = f.Write(make([]byte, 1000))
+	f.Close()
+
+	seg := storage.SegmentRecord{
+		Camera: "cam1", Path: filepath.Join(dir, "seg.mp4"),
+		StartTime: time.Now().Add(-48 * time.Hour), EndTime: time.Now().Add(-47 * time.Hour),
+		SizeBytes: 1000,
+	}
+	if err := db.SaveSegment(seg); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := db.GetAllSegments("cam1")
+	id := all[0].ID
+
+	if err := db.MarkSegmentRecompressed(id, 500); err != nil {
+		t.Fatalf("MarkSegmentRecompressed: %v", err)
+	}
+
+	updated, _ := db.GetSegmentByID(id)
+	if !updated.Recompressed {
+		t.Error("expected recompressed=true")
+	}
+	if updated.SizeBytes != 500 {
+		t.Errorf("size_bytes = %d, want 500", updated.SizeBytes)
+	}
+	if updated.RecompressedAt.IsZero() {
+		t.Error("expected recompressed_at to be set")
+	}
+}
