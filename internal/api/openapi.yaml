@@ -124,6 +124,17 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /api/tokens:
+    get:
+      operationId: listTokens
+      summary: List API tokens for the authenticated user
+      tags: [auth]
+      responses:
+        "200":
+          description: Token list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenListResponse"
     post:
       operationId: createToken
       summary: Create a new API token
@@ -1987,6 +1998,39 @@ components:
         status:
           type: string
           enum: [revoked]
+
+    TokenListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenListItem"
+        total:
+          type: integer
+
+    TokenListItem:
+      type: object
+      required: [id, name, token_prefix, scopes, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        token_prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
 
     Error:
       type: object

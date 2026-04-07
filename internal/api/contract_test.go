@@ -335,6 +335,93 @@ func TestContract_DeleteToken(t *testing.T) {
 	cv.validate(req, rec)
 }
 
+func TestContract_ListTokens(t *testing.T) {
+	_, handler, checker := newTestServerWithAuth(t)
+	cv := newContractValidator(t)
+
+	session, err := checker.Login("admin", "secret", "10.0.0.1", "test", false)
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	// Create a token so the list is non-empty
+	_, _, err = checker.CreateToken("admin", "my-token", []string{"read:cameras"}, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+
+	loginRec := httptest.NewRecorder()
+	checker.SetSessionCookies(loginRec, httptest.NewRequest(http.MethodPost, "http://vedetta.local/api/auth/login", nil), session)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tokens", nil)
+	for _, cookie := range loginRec.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	// Verify envelope structure
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["items"]; !ok {
+		t.Error("response missing 'items' field")
+	}
+	if _, ok := resp["total"]; !ok {
+		t.Error("response missing 'total' field")
+	}
+	items, ok := resp["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected 1 token, got %v", resp["items"])
+	}
+	token := items[0].(map[string]any)
+	if token["name"] != "my-token" {
+		t.Errorf("name = %v, want my-token", token["name"])
+	}
+	if _, ok := token["token_prefix"]; !ok {
+		t.Error("token missing 'token_prefix' field")
+	}
+}
+
+func TestContract_ListTokens_Empty(t *testing.T) {
+	_, handler, checker := newTestServerWithAuth(t)
+	cv := newContractValidator(t)
+
+	session, err := checker.Login("admin", "secret", "10.0.0.1", "test", false)
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	loginRec := httptest.NewRecorder()
+	checker.SetSessionCookies(loginRec, httptest.NewRequest(http.MethodPost, "http://vedetta.local/api/auth/login", nil), session)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/tokens", nil)
+	for _, cookie := range loginRec.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["total"] != float64(0) {
+		t.Errorf("expected total=0, got %v", resp["total"])
+	}
+}
+
 func TestContract_ListCameras(t *testing.T) {
 	srv, _ := newTestServer(t)
 	cv := newContractValidator(t)

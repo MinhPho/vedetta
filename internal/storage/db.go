@@ -1524,6 +1524,37 @@ func (d *DB) RevokeAPIToken(id int64, username string) error {
 	return err
 }
 
+// ListAPITokensByUser returns all non-revoked tokens for a given user.
+// Token hashes are excluded from the result.
+func (d *DB) ListAPITokensByUser(username string) ([]APIToken, error) {
+	rows, err := d.db.Query(`
+		SELECT id, username, name, token_prefix, scopes, created_at, last_used_at
+		FROM api_tokens WHERE username = ? AND revoked_at IS NULL
+		ORDER BY created_at DESC`, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tokens []APIToken
+	for rows.Next() {
+		var token APIToken
+		var scopesJSON string
+		var lastUsedAt sql.NullTime
+		if err := rows.Scan(&token.ID, &token.Username, &token.Name, &token.TokenPrefix, &scopesJSON, &token.CreatedAt, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		if scopesJSON != "" {
+			_ = json.Unmarshal([]byte(scopesJSON), &token.Scopes)
+		}
+		if lastUsedAt.Valid {
+			token.LastUsedAt = lastUsedAt.Time
+		}
+		tokens = append(tokens, token)
+	}
+	return tokens, rows.Err()
+}
+
 // --- Auth User operations ---
 
 // AuthUser represents a user stored in the database for authentication.

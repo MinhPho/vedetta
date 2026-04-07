@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rvben/vedetta/internal/auth"
 )
@@ -233,6 +234,45 @@ func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	if principal == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	tokens, err := s.db.ListAPITokensByUser(principal.Username)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	type tokenItem struct {
+		ID          int64    `json:"id"`
+		Name        string   `json:"name"`
+		TokenPrefix string   `json:"token_prefix"`
+		Scopes      []string `json:"scopes"`
+		CreatedAt   string   `json:"created_at"`
+		LastUsedAt  string   `json:"last_used_at,omitempty"`
+	}
+	items := make([]tokenItem, 0, len(tokens))
+	for _, t := range tokens {
+		item := tokenItem{
+			ID:          t.ID,
+			Name:        t.Name,
+			TokenPrefix: t.TokenPrefix,
+			Scopes:      t.Scopes,
+			CreatedAt:   t.CreatedAt.Format(time.RFC3339),
+		}
+		if !t.LastUsedAt.IsZero() {
+			item.LastUsedAt = t.LastUsedAt.Format(time.RFC3339)
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
+		"total": len(items),
+	})
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
