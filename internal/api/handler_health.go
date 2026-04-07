@@ -1,0 +1,252 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/rvben/vedetta/internal/recording"
+)
+
+func (s *Server) handleOpenAPISpec(w http.ResponseWriter, _ *http.Request) {
+	spec, err := GetSwagger()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load spec"})
+		return
+	}
+	// Clear servers so clients use relative URLs
+	spec.Servers = nil
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(spec)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	status := "ok"
+
+	// Database check — read-only, should be fast even under load
+	dbStatus := "ok"
+	if err := s.db.Ping(); err != nil {
+		dbStatus = "error"
+		status = "degraded"
+	}
+
+	// Camera check — in-memory, never blocks
+	statuses := s.cameraStatuses()
+	onlineCount := 0
+	for _, st := range statuses {
+		if st.Online {
+			onlineCount++
+		}
+	}
+
+	// Storage check — from background-refreshed cache, never blocks
+	storageStats := s.recorder.StorageStats()
+
+	if storageStats.DiskLow {
+		status = "degraded"
+	}
+
+	mqttStatus := "disabled"
+	if s.mqttClient != nil {
+		mqttStatus = "connected"
+	} else if s.mqttEnabled {
+		mqttStatus = "disconnected"
+		status = "degraded"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": status,
+		"checks": map[string]any{
+			"database": dbStatus,
+			"mqtt":     mqttStatus,
+			"cameras": map[string]any{
+				"total":  len(statuses),
+				"online": onlineCount,
+			},
+			"storage": map[string]any{
+				"used_bytes":       storageStats.TotalBytes,
+				"used":             formatBytes(storageStats.TotalBytes),
+				"disk_available":   formatBytes(int64(storageStats.DiskAvailable)),
+				"disk_low":         storageStats.DiskLow,
+				"recording_paused": storageStats.RecordingPaused,
+				"recompression": map[string]any{
+					"enabled":               storageStats.Recompression.Enabled,
+					"segments_recompressed": storageStats.Recompression.SegmentsRecompressed,
+					"bytes_reclaimed":       storageStats.Recompression.BytesReclaimed,
+					"last_run":              storageStats.Recompression.LastRun,
+				},
+			},
+		},
+		"version": "0.1.0",
+		"uptime":  formatDuration(time.Since(startTime)),
+	})
+}
+
+func (s *Server) handleHealthLive(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"uptime": formatDuration(time.Since(startTime)),
+	})
+}
+
+func (s *Server) handleHealthReady(w http.ResponseWriter, _ *http.Request) {
+	statusCode := http.StatusOK
+	status := "ready"
+
+	checks := map[string]any{
+		"initialized": s.ready.Load(),
+	}
+
+	if !s.ready.Load() {
+		status = "starting"
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	if err := s.db.Ping(); err != nil {
+		status = "degraded"
+		statusCode = http.StatusServiceUnavailable
+		checks["database"] = err.Error()
+	} else {
+		checks["database"] = "ok"
+	}
+
+	cameraStatuses := s.cameraStatuses()
+	degraded := 0
+	for _, st := range cameraStatuses {
+		if st.Degraded {
+			degraded++
+		}
+	}
+	checks["cameras"] = map[string]any{
+		"total":    len(cameraStatuses),
+		"degraded": degraded,
+	}
+	if degraded > 0 {
+		status = "degraded"
+		statusCode = http.StatusServiceUnavailable
+	}
+
+	if s.recorder != nil {
+		storageStats := s.recorder.StorageStats()
+		checks["storage"] = map[string]any{
+			"disk_low":         storageStats.DiskLow,
+			"recording_paused": storageStats.RecordingPaused,
+		}
+		if storageStats.DiskLow {
+			status = "degraded"
+			statusCode = http.StatusServiceUnavailable
+		}
+	}
+
+	writeJSON(w, statusCode, map[string]any{
+		"status": status,
+		"checks": checks,
+	})
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+
+	cameraStatuses := s.cameraStatuses()
+	online := 0
+	degraded := 0
+	for _, st := range cameraStatuses {
+		if st.Online {
+			online++
+		}
+		if st.Degraded {
+			degraded++
+		}
+	}
+
+	var storageStats recording.StorageStats
+	if s.recorder != nil {
+		storageStats = s.recorder.StorageStats()
+	}
+	eventCount, _ := s.db.CountEvents()
+	segmentCount, _ := s.db.CountSegments()
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "vedetta_up 1\n")
+	fmt.Fprintf(&b, "vedetta_ready %d\n", boolMetric(s.ready.Load()))
+	fmt.Fprintf(&b, "vedetta_cameras_total %d\n", len(cameraStatuses))
+	fmt.Fprintf(&b, "vedetta_cameras_online %d\n", online)
+	fmt.Fprintf(&b, "vedetta_cameras_degraded %d\n", degraded)
+	fmt.Fprintf(&b, "vedetta_events_total %d\n", eventCount)
+	fmt.Fprintf(&b, "vedetta_segments_total %d\n", segmentCount)
+	fmt.Fprintf(&b, "vedetta_storage_bytes %d\n", storageStats.TotalBytes)
+	fmt.Fprintf(&b, "vedetta_disk_available_bytes %d\n", storageStats.DiskAvailable)
+	fmt.Fprintf(&b, "vedetta_recording_paused %d\n", boolMetric(storageStats.RecordingPaused))
+	fmt.Fprintf(&b, "vedetta_disk_low %d\n", boolMetric(storageStats.DiskLow))
+	for _, st := range cameraStatuses {
+		fmt.Fprintf(&b, "vedetta_camera_online{camera=%q} %d\n", promLabel(st.Name), boolMetric(st.Online))
+		fmt.Fprintf(&b, "vedetta_camera_degraded{camera=%q} %d\n", promLabel(st.Name), boolMetric(st.Degraded))
+	}
+
+	_, _ = w.Write([]byte(b.String()))
+}
+
+func boolMetric(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func promLabel(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+	return replacer.Replace(value)
+}
+
+func (s *Server) handleSystemAPI(w http.ResponseWriter, _ *http.Request) {
+	statuses := s.cameraStatuses()
+	onlineCount := 0
+	for _, st := range statuses {
+		if st.Online {
+			onlineCount++
+		}
+	}
+
+	stats := s.recorder.StorageStats()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":       "0.1.0",
+		"uptime":        time.Since(startTime).String(),
+		"decoder":       "native Go",
+		"cameras":       len(statuses),
+		"online":        onlineCount,
+		"storage_bytes": stats.TotalBytes,
+		"storage":       formatBytes(stats.TotalBytes),
+	})
+}
+
+func (s *Server) handleRecompressTrigger(w http.ResponseWriter, r *http.Request) {
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.recorder.TriggerRecompression(ctx); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// formatDuration returns a human-readable duration string.
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%dm", h, m)
+}

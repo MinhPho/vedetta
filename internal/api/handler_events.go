@@ -1,0 +1,620 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/draw"
+	"image/jpeg"
+	"log/slog"
+	"math"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"time"
+
+	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/detect"
+	"github.com/rvben/vedetta/internal/snapshot"
+	"github.com/rvben/vedetta/internal/storage"
+)
+
+func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	cameraFilter := r.URL.Query().Get("camera")
+	labelFilter := r.URL.Query().Get("label")
+	zoneFilter := r.URL.Query().Get("zone")
+	objectFilter := r.URL.Query().Get("object")
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	var sinceTime time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		if parsed, err := time.Parse(time.RFC3339, s); err == nil {
+			sinceTime = parsed
+		}
+	}
+
+	events, err := s.db.QueryEventsFiltered(cameraFilter, labelFilter, zoneFilter, objectFilter, limit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Apply since filter in memory (DB query doesn't support it directly)
+	if !sinceTime.IsZero() {
+		filtered := events[:0]
+		for _, e := range events {
+			if e.Timestamp.After(sinceTime) {
+				filtered = append(filtered, e)
+			}
+		}
+		events = filtered
+	}
+
+	if events == nil {
+		events = []camera.Event{}
+	}
+
+	total, _ := s.db.CountEventsFiltered(cameraFilter, labelFilter, zoneFilter, objectFilter)
+	hasMore := offset+len(events) < total
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":    events,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": hasMore,
+	})
+}
+
+func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	event, err := s.db.GetEventByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if event == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, event)
+}
+
+func (s *Server) handleEventSnapshot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	event, err := s.db.GetEventByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if event == nil || event.SnapshotPath == "" || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "snapshot not found"})
+		return
+	}
+
+	// Serve raw file for downloads or if ?raw=1
+	if r.URL.Query().Get("download") != "" || r.URL.Query().Get("raw") != "" {
+		filename := fmt.Sprintf("%s_%s.jpg", event.ID, event.Label)
+		if r.URL.Query().Get("download") != "" {
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		}
+		http.ServeFile(w, r, event.SnapshotPath)
+		return
+	}
+
+	// Draw bounding box on-the-fly
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		http.ServeFile(w, r, event.SnapshotPath)
+		return
+	}
+
+	label := event.Label
+	if event.SubLabel != "" {
+		label = event.SubLabel
+	}
+	det := detect.Detection{
+		Label: label,
+		Score: event.Score,
+		Box:   event.Box,
+	}
+	snapshot.DrawDetectionsInPlace(img, []detect.Detection{det})
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	jpeg.Encode(w, img, &jpeg.Options{Quality: 85})
+}
+
+func (s *Server) handleEventClip(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	event, err := s.db.GetEventByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if event == nil || event.ClipPath == "" || !event.ClipAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "clip not found"})
+		return
+	}
+	filename := fmt.Sprintf("%s_%s.mp4", event.ID, event.Label)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	http.ServeFile(w, r, event.ClipPath)
+}
+
+func (s *Server) handleEventDetectionCrop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	event, err := s.db.GetEventByID(id)
+	if err != nil || event == nil || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "snapshot not found"})
+		return
+	}
+
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load snapshot"})
+		return
+	}
+
+	// Crop to the event's bounding box with padding
+	bounds := img.Bounds()
+	box := event.Box
+	pad := 20
+	x1 := max(box[0]-pad, bounds.Min.X)
+	y1 := max(box[1]-pad, bounds.Min.Y)
+	x2 := min(box[2]+pad, bounds.Max.X)
+	y2 := min(box[3]+pad, bounds.Max.Y)
+
+	if x2 <= x1 || y2 <= y1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invalid bounding box"})
+		return
+	}
+
+	crop := img.SubImage(image.Rect(x1, y1, x2, y2))
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	jpeg.Encode(w, crop, &jpeg.Options{Quality: 90})
+}
+
+func (s *Server) handleReextractClip(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	event, err := s.db.GetEventByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if event == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event not found"})
+		return
+	}
+
+	// Remove old clip if it exists
+	if event.ClipPath != "" {
+		os.Remove(event.ClipPath)
+		_ = s.db.UpdateEventClipAvailability(event.ID, false)
+	}
+
+	if err := s.recorder.SaveClip(r.Context(), *event); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "event": id})
+}
+
+func (s *Server) handleEventCounts(w http.ResponseWriter, _ *http.Request) {
+	total, _ := s.db.CountEvents()
+	byLabel, _ := s.db.CountEventsByLabel()
+	byCamera, _ := s.db.CountEventsByCamera()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total":     total,
+		"by_label":  byLabel,
+		"by_camera": byCamera,
+	})
+}
+
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := make(chan []byte, 32)
+	s.sseMu.Lock()
+	s.sseClients[ch] = struct{}{}
+	s.sseMu.Unlock()
+
+	defer func() {
+		s.sseMu.Lock()
+		delete(s.sseClients, ch)
+		s.sseMu.Unlock()
+	}()
+
+	// Send initial keepalive
+	fmt.Fprintf(w, ": keepalive\n\n")
+	flusher.Flush()
+
+	ctx := r.Context()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-ch:
+			w.Write(msg)
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) broadcastSSE(eventType string, data any) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	msg := fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, payload)
+	msgBytes := []byte(msg)
+
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+
+	for ch := range s.sseClients {
+		select {
+		case ch <- msgBytes:
+		default:
+			// Drop message if client buffer is full
+		}
+	}
+}
+
+func (s *Server) handleIdentifyEvent(w http.ResponseWriter, r *http.Request) {
+	if s.objectEmbedder == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "object re-identification not available"})
+		return
+	}
+
+	eventID := r.PathValue("id")
+	event, err := s.db.GetEventByID(eventID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if event == nil || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event snapshot not found"})
+		return
+	}
+
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load snapshot"})
+		return
+	}
+
+	embedding, err := s.objectEmbedder.Embed(img, event.Box)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "embedding failed: " + err.Error()})
+		return
+	}
+
+	knownObjects, err := s.db.ListKnownObjectsByLabel(event.Label)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var matches []storage.ObjectSighting
+	for _, obj := range knownObjects {
+		centroid := detect.BytesToFloat32(obj.Centroid)
+		if len(centroid) == 0 {
+			continue
+		}
+		sim := detect.CosineSimilarity(embedding, centroid)
+		if sim >= s.ObjectMatchThreshold {
+			sighting := storage.ObjectSighting{
+				EventID:    eventID,
+				Camera:     event.CameraName,
+				ObjectID:   obj.ID,
+				ObjectName: obj.Name,
+				Similarity: sim,
+				Timestamp:  event.Timestamp,
+			}
+			if _, err := s.db.SaveObjectSighting(sighting); err == nil {
+				matches = append(matches, sighting)
+			}
+		}
+	}
+
+	if matches == nil {
+		matches = []storage.ObjectSighting{}
+	}
+	writeJSON(w, http.StatusOK, matches)
+}
+
+func (s *Server) handleTrackPerson(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("id")
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+
+	event, err := s.db.GetEventByID(eventID)
+	if err != nil || event == nil || !event.SnapshotAvailable {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event snapshot not found"})
+		return
+	}
+
+	img, err := loadSnapshotImage(event.SnapshotPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load snapshot"})
+		return
+	}
+
+	// Try face detection first
+	var faceEmbedding []float32
+	var faceCropPath string
+	if s.faceRecognizer != nil {
+		results := s.faceRecognizer.DetectAndEmbed(img, event.Box, s.faceCropDir)
+		if len(results) > 0 {
+			faceEmbedding = results[0].Embedding
+			faceCropPath = results[0].CropPath
+		}
+	}
+
+	// Create person record with face centroid if available
+	var centroid []byte
+	if len(faceEmbedding) > 0 {
+		centroid = detect.Float32ToBytes(faceEmbedding)
+	}
+	personID, err := s.db.SavePersonWithEvent(req.Name, false, centroid, eventID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	method := "none"
+
+	if len(faceEmbedding) > 0 {
+		// Save face record
+		face := storage.Face{
+			EventID:    eventID,
+			Camera:     event.CameraName,
+			PersonID:   &personID,
+			Embedding:  centroid,
+			CropPath:   faceCropPath,
+			Confidence: 1.0,
+			Timestamp:  event.Timestamp,
+		}
+		sim := 1.0
+		face.Similarity = &sim
+		s.db.SaveFace(face)
+		method = "face"
+	} else if s.objectEmbedder != nil {
+		// Fall back to body re-ID via OSNet
+		bodyEmb, embErr := s.objectEmbedder.Embed(img, event.Box)
+		if embErr == nil && len(bodyEmb) > 0 {
+			// Create a known_object for body matching
+			obj := storage.KnownObject{
+				Name:     req.Name,
+				Label:    "person",
+				Centroid: detect.Float32ToBytes(bodyEmb),
+			}
+			objID, objErr := s.db.SaveKnownObject(obj)
+			if objErr == nil {
+				cropDir := filepath.Join(s.snapshotPath, "objects")
+				cropPath := s.objectEmbedder.SaveCrop(img, event.Box, cropDir, objID)
+				if cropPath != "" {
+					_ = s.db.UpdateKnownObjectCrop(objID, cropPath)
+				}
+				s.db.SaveObjectReference(storage.ObjectReference{
+					ObjectID:  objID,
+					EventID:   eventID,
+					Embedding: detect.Float32ToBytes(bodyEmb),
+					CropPath:  cropPath,
+				})
+				// Also save a sighting for this event
+				s.db.SaveObjectSighting(storage.ObjectSighting{
+					EventID:    eventID,
+					Camera:     event.CameraName,
+					ObjectID:   objID,
+					Similarity: 1.0,
+					Timestamp:  event.Timestamp,
+				})
+				method = "body"
+			}
+		}
+	}
+
+	// Set sub_label on the event
+	_ = s.db.UpdateEventSubLabel(eventID, req.Name)
+
+	slog.Info("person tracked from event", "person_id", personID, "name", req.Name,
+		"event", eventID, "method", method)
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"person_id": personID,
+		"name":      req.Name,
+		"method":    method,
+	})
+}
+
+func (s *Server) handleAssignPersonToEvent(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("id")
+
+	var req struct {
+		PersonID int64 `json:"person_id"`
+		Ignore   bool  `json:"ignore"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if req.Ignore {
+		_ = s.db.UpdateEventSubLabel(eventID, "_ignored")
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
+
+	if req.PersonID == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "person_id is required"})
+		return
+	}
+
+	person, err := s.db.GetPerson(req.PersonID)
+	if err != nil || person == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "person not found"})
+		return
+	}
+
+	event, err := s.db.GetEventByID(eventID)
+	if err != nil || event == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "event not found"})
+		return
+	}
+
+	// Try face detection if snapshot available
+	if event.SnapshotAvailable && event.SnapshotPath != "" && s.faceRecognizer != nil {
+		if img, err := loadSnapshotImage(event.SnapshotPath); err == nil {
+			results := s.faceRecognizer.DetectAndEmbed(img, event.Box, s.faceCropDir)
+			if len(results) > 0 {
+				face := storage.Face{
+					EventID:    eventID,
+					Camera:     event.CameraName,
+					PersonID:   &req.PersonID,
+					Embedding:  detect.Float32ToBytes(results[0].Embedding),
+					CropPath:   results[0].CropPath,
+					Confidence: float64(results[0].Confidence),
+					Timestamp:  event.Timestamp,
+				}
+				sim := 1.0
+				face.Similarity = &sim
+				s.db.SaveFace(face)
+				s.updatePersonCentroid(req.PersonID, results[0].Embedding)
+			}
+		}
+	}
+
+	_ = s.db.UpdateEventSubLabel(eventID, person.Name)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "assigned",
+		"person_id": req.PersonID,
+		"name":      person.Name,
+	})
+}
+
+// loadSnapshotImage loads a JPEG snapshot and returns it as *image.RGBA.
+func loadSnapshotImage(path string) (*image.RGBA, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	img, err := jpeg.Decode(f)
+	if err != nil {
+		return nil, err
+	}
+
+	rgba, ok := img.(*image.RGBA)
+	if !ok {
+		bounds := img.Bounds()
+		rgba = image.NewRGBA(bounds)
+		draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+	}
+	return rgba, nil
+}
+
+// matchFaceToPerson finds the best matching person for a face embedding.
+func (s *Server) matchFaceToPerson(embedding []float32) (int64, float64) {
+	if s.faceRecognizer == nil {
+		return 0, 0
+	}
+	people, err := s.db.ListPeople()
+	if err != nil {
+		return 0, 0
+	}
+
+	var bestID int64
+	var bestSim float64
+	threshold := s.faceRecognizer.MatchThreshold()
+
+	for _, p := range people {
+		if p.Ignore || len(p.Centroid) == 0 {
+			continue
+		}
+		centroid := detect.BytesToFloat32(p.Centroid)
+		sim := detect.CosineSimilarity(embedding, centroid)
+		if sim > bestSim {
+			bestSim = sim
+			bestID = p.ID
+		}
+	}
+
+	if bestSim >= threshold {
+		return bestID, bestSim
+	}
+	return 0, 0
+}
+
+// updatePersonCentroid updates a person's centroid with a running average.
+func (s *Server) updatePersonCentroid(personID int64, newEmbedding []float32) {
+	p, err := s.db.GetPerson(personID)
+	if err != nil || p == nil {
+		return
+	}
+
+	if len(p.Centroid) == 0 {
+		_ = s.db.UpdatePersonCentroid(personID, detect.Float32ToBytes(newEmbedding))
+		return
+	}
+
+	old := detect.BytesToFloat32(p.Centroid)
+	if len(old) != len(newEmbedding) {
+		_ = s.db.UpdatePersonCentroid(personID, detect.Float32ToBytes(newEmbedding))
+		return
+	}
+
+	alpha := float32(0.3)
+	merged := make([]float32, len(old))
+	var norm float64
+	for i := range merged {
+		merged[i] = (1-alpha)*old[i] + alpha*newEmbedding[i]
+		norm += float64(merged[i]) * float64(merged[i])
+	}
+	if norm > 1e-10 {
+		invNorm := float32(1.0 / math.Sqrt(norm))
+		for i := range merged {
+			merged[i] *= invNorm
+		}
+	}
+
+	_ = s.db.UpdatePersonCentroid(personID, detect.Float32ToBytes(merged))
+}
