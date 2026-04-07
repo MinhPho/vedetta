@@ -2259,6 +2259,10 @@ function openAccountModal() {
     if (data && data.username) {
       el('account-username').textContent = data.username;
     }
+    var cpSection = el('change-password-section');
+    if (cpSection) {
+      cpSection.style.display = (data && data.kind === 'proxy') ? 'none' : '';
+    }
   });
 
   // Reset form
