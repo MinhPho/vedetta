@@ -640,7 +640,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 				"disk_low":         storageStats.DiskLow,
 				"recording_paused": storageStats.RecordingPaused,
 				"recompression": map[string]any{
-					"enabled": storageStats.Recompression.Enabled,
+					"enabled":               storageStats.Recompression.Enabled,
+					"segments_recompressed": storageStats.Recompression.SegmentsRecompressed,
+					"bytes_reclaimed":       storageStats.Recompression.BytesReclaimed,
+					"last_run":              storageStats.Recompression.LastRun,
 				},
 			},
 		},

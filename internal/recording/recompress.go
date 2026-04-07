@@ -3,6 +3,7 @@ package recording
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/rvben/vedetta/internal/config"
@@ -15,11 +16,34 @@ type Recompressor struct {
 	cfg     config.TieredStorageConfig
 	cameras []config.CameraConfig
 	db      *storage.DB
+
+	mu                  sync.Mutex
+	lastRun             time.Time
+	segmentsRecompressed int64
+	bytesReclaimed      int64
 }
 
 // NewRecompressor creates a Recompressor with the given config and camera list.
 func NewRecompressor(cfg config.TieredStorageConfig, cameras []config.CameraConfig, db *storage.DB) *Recompressor {
 	return &Recompressor{cfg: cfg, cameras: cameras, db: db}
+}
+
+// RecompressorStats holds runtime counters for the recompression job.
+type RecompressorStats struct {
+	LastRun              time.Time
+	SegmentsRecompressed int64
+	BytesReclaimed       int64
+}
+
+// Stats returns a snapshot of the recompressor's runtime counters.
+func (r *Recompressor) Stats() RecompressorStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return RecompressorStats{
+		LastRun:              r.lastRun,
+		SegmentsRecompressed: r.segmentsRecompressed,
+		BytesReclaimed:       r.bytesReclaimed,
+	}
 }
 
 // Start runs the recompression job in a background goroutine until ctx is cancelled.
@@ -122,12 +146,19 @@ func (r *Recompressor) processOne() {
 		return
 	}
 
+	saved := result.OriginalSize - result.NewSize
+	r.mu.Lock()
+	r.lastRun = time.Now()
+	r.segmentsRecompressed++
+	r.bytesReclaimed += saved
+	r.mu.Unlock()
+
 	slog.Info("recompression: completed",
 		"camera", bestSeg.Camera,
 		"path", bestSeg.Path,
 		"original_mb", result.OriginalSize/(1024*1024),
 		"new_mb", result.NewSize/(1024*1024),
-		"saved_mb", (result.OriginalSize-result.NewSize)/(1024*1024),
+		"saved_mb", saved/(1024*1024),
 		"duration", time.Since(start).Round(time.Second),
 	)
 }

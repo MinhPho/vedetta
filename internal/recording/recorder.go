@@ -29,7 +29,10 @@ type StorageStats struct {
 
 // RecompressionStats summarises the tiered storage recompression feature.
 type RecompressionStats struct {
-	Enabled bool `json:"enabled"`
+	Enabled              bool      `json:"enabled"`
+	LastRun              time.Time `json:"last_run,omitempty"`
+	SegmentsRecompressed int64     `json:"segments_recompressed"`
+	BytesReclaimed       int64     `json:"bytes_reclaimed"`
 }
 
 // Recorder manages saving video clips for detected events.
@@ -211,8 +214,12 @@ func (r *Recorder) RefreshStats() {
 	stats.DiskAvailable = r.segments.DiskAvailable()
 	stats.DiskLow = stats.DiskAvailable < media.MinDiskSpace
 	stats.RecordingPaused = r.segments.AnyPaused()
+	rStats := r.recompressor.Stats()
 	stats.Recompression = RecompressionStats{
-		Enabled: r.config.TieredStorage.Enabled,
+		Enabled:              r.config.TieredStorage.Enabled,
+		LastRun:              rStats.LastRun,
+		SegmentsRecompressed: rStats.SegmentsRecompressed,
+		BytesReclaimed:       rStats.BytesReclaimed,
 	}
 
 	r.statsMu.Lock()
