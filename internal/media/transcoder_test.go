@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/fmp4"
+	"github.com/bluenviron/mediacommon/v2/pkg/formats/mp4/codecs"
 )
 
 func TestScaleYCbCr_PreservesAspectRatio(t *testing.T) {
@@ -135,14 +138,11 @@ func TestTranscodeSegment_SkipsIfAlreadySmall(t *testing.T) {
 func TestTranscodeSegment_OriginalUntouchedOnFailure(t *testing.T) {
 	dir := t.TempDir()
 
-	origStat, _ := os.Stat(dir) // just to confirm dir exists
-
 	// Pass a non-existent path to trigger failure at open
 	_, err := TranscodeSegment(filepath.Join(dir, "nonexistent.mp4"), 1280, 720)
 	if err == nil {
 		t.Fatal("expected error for non-existent file")
 	}
-	_ = origStat
 
 	// No .tmp file should exist
 	if _, statErr := os.Stat(filepath.Join(dir, "nonexistent.mp4.tmp")); !os.IsNotExist(statErr) {
@@ -325,7 +325,7 @@ func TestTranscodeSegment_OutputParseable(t *testing.T) {
 	}
 }
 
-func TestTranscodeSegment_AudioCopiedVerbatim(t *testing.T) {
+func TestTranscodeSegment_AudioTrackPreserved(t *testing.T) {
 	if !OpenH264Available() {
 		t.Skip("OpenH264 not available")
 	}
@@ -344,27 +344,51 @@ func TestTranscodeSegment_AudioCopiedVerbatim(t *testing.T) {
 		t.Skipf("clip %dx%d too small to halve", srcW, srcH)
 	}
 
+	// Count tracks in the source init
+	var srcAudioTracks int
+	{
+		f, err := os.Open(clipPath)
+		if err != nil {
+			t.Fatalf("open clip: %v", err)
+		}
+		var srcInit fmp4.Init
+		if err := srcInit.Unmarshal(f); err == nil {
+			for _, tr := range srcInit.Tracks {
+				if _, isH264 := tr.Codec.(*codecs.H264); !isH264 {
+					srcAudioTracks++
+				}
+			}
+		}
+		f.Close()
+	}
+
 	src := copyClipToTemp(t, clipPath)
 
 	result, err := TranscodeSegment(src, targetW, targetH)
 	if err != nil {
-		t.Fatalf("TranscodeSegment on file: %v", err)
+		t.Fatalf("TranscodeSegment: %v", err)
 	}
 	if result.Skipped {
 		t.Fatal("expected transcoding, not skip")
 	}
 
-	// Verify the output is a valid fMP4 with at least one fragment
+	// Verify output init has the same number of audio tracks as source
 	f, err := os.Open(src)
 	if err != nil {
 		t.Fatalf("open output: %v", err)
 	}
 	defer f.Close()
-	_, frags, _, err := indexFile(f)
-	if err != nil {
-		t.Fatalf("indexFile: %v", err)
+	var outInit fmp4.Init
+	if err := outInit.Unmarshal(f); err != nil {
+		t.Fatalf("unmarshal output init: %v", err)
 	}
-	if len(frags) == 0 {
-		t.Error("output has no fragments")
+	var outAudioTracks int
+	for _, tr := range outInit.Tracks {
+		if _, isH264 := tr.Codec.(*codecs.H264); !isH264 {
+			outAudioTracks++
+		}
+	}
+	if outAudioTracks != srcAudioTracks {
+		t.Errorf("output has %d audio tracks, want %d (same as source)", outAudioTracks, srcAudioTracks)
 	}
 }
