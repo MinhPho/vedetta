@@ -1,4 +1,4 @@
-.PHONY: build build-capi build-deploy run test bench lint clean fmt check docker-build docker-push deploy release-patch release-minor release-major
+.PHONY: build build-capi build-deploy run test bench lint clean fmt check generate docker-build docker-push deploy release-patch release-minor release-major
 
 BINARY := vedetta
 BUILD_DIR := ./build
@@ -45,6 +45,9 @@ clean:
 
 fmt:
 	gofmt -w .
+
+generate:
+	cd internal/api && oapi-codegen --config oapi-codegen.yaml openapi.yaml
 
 check: lint test
 
