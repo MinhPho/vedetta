@@ -2,6 +2,7 @@ package media
 
 import (
 	"image"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,5 +147,224 @@ func TestTranscodeSegment_OriginalUntouchedOnFailure(t *testing.T) {
 	// No .tmp file should exist
 	if _, statErr := os.Stat(filepath.Join(dir, "nonexistent.mp4.tmp")); !os.IsNotExist(statErr) {
 		t.Error(".tmp file left behind after failure")
+	}
+}
+
+// findTranscodeableClip searches the recording directories for a clip file that
+// has enough fragments for transcoding tests. Returns the path, or "" if none found.
+// The returned file has more than 4 fragments and is large enough to transcode.
+func findTranscodeableClip(t *testing.T) string {
+	t.Helper()
+	dirs := []string{
+		"../../recordings",
+	}
+	for _, base := range dirs {
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, cam := range entries {
+			if !cam.IsDir() {
+				continue
+			}
+			clipsDir := filepath.Join(base, cam.Name(), "clips")
+			days, err := os.ReadDir(clipsDir)
+			if err != nil {
+				continue
+			}
+			for _, day := range days {
+				if !day.IsDir() {
+					continue
+				}
+				clips, err := os.ReadDir(filepath.Join(clipsDir, day.Name()))
+				if err != nil {
+					continue
+				}
+				for _, clip := range clips {
+					if clip.IsDir() {
+						continue
+					}
+					path := filepath.Join(clipsDir, day.Name(), clip.Name())
+					f, err := os.Open(path)
+					if err != nil {
+						continue
+					}
+					_, frags, _, err := indexFile(f)
+					f.Close()
+					if err == nil && len(frags) >= 4 {
+						return path
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// copyClipToTemp copies a recording clip to a temp dir and returns the new path.
+func copyClipToTemp(t *testing.T, src string) string {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "clip.mp4")
+	in, err := os.Open(src)
+	if err != nil {
+		t.Fatalf("open clip: %v", err)
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		t.Fatalf("copy clip: %v", err)
+	}
+	return dst
+}
+
+func TestTranscodeSegment_ReducesResolution(t *testing.T) {
+	if !OpenH264Available() {
+		t.Skip("OpenH264 not available")
+	}
+	clipPath := findTranscodeableClip(t)
+	if clipPath == "" {
+		t.Skip("no real recording clips available for transcoding test")
+	}
+
+	// Determine source resolution so we can pick a target that triggers transcoding
+	srcW, srcH, err := readSourceResolution(clipPath)
+	if err != nil {
+		t.Fatalf("readSourceResolution: %v", err)
+	}
+
+	// Target half the resolution in each dimension (always > 25% area reduction)
+	targetW := (srcW / 2) &^ 1
+	targetH := (srcH / 2) &^ 1
+	if targetW < 2 || targetH < 2 {
+		t.Skipf("clip %dx%d too small to halve", srcW, srcH)
+	}
+
+	src := copyClipToTemp(t, clipPath)
+
+	origStat, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("stat src: %v", err)
+	}
+
+	result, err := TranscodeSegment(src, targetW, targetH)
+	if err != nil {
+		t.Fatalf("TranscodeSegment: %v", err)
+	}
+	if result.Skipped {
+		t.Fatalf("expected segment to be transcoded, not skipped (src %dx%d, target %dx%d)", srcW, srcH, targetW, targetH)
+	}
+
+	// Output replaces the original file in-place; verify it's smaller
+	newStat, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if newStat.Size() >= origStat.Size() {
+		t.Errorf("output size %d >= original %d, expected reduction", newStat.Size(), origStat.Size())
+	}
+
+	// Output resolution must be at most targetW × targetH
+	outW, outH, err := readSourceResolution(src)
+	if err != nil {
+		t.Fatalf("readSourceResolution on output: %v", err)
+	}
+	if outW > targetW || outH > targetH {
+		t.Errorf("output resolution %dx%d exceeds target %dx%d", outW, outH, targetW, targetH)
+	}
+}
+
+func TestTranscodeSegment_OutputParseable(t *testing.T) {
+	if !OpenH264Available() {
+		t.Skip("OpenH264 not available")
+	}
+	clipPath := findTranscodeableClip(t)
+	if clipPath == "" {
+		t.Skip("no real recording clips available for transcoding test")
+	}
+
+	srcW, srcH, err := readSourceResolution(clipPath)
+	if err != nil {
+		t.Fatalf("readSourceResolution: %v", err)
+	}
+	targetW := (srcW / 2) &^ 1
+	targetH := (srcH / 2) &^ 1
+	if targetW < 2 || targetH < 2 {
+		t.Skipf("clip %dx%d too small to halve", srcW, srcH)
+	}
+
+	src := copyClipToTemp(t, clipPath)
+
+	result, err := TranscodeSegment(src, targetW, targetH)
+	if err != nil {
+		t.Fatalf("TranscodeSegment: %v", err)
+	}
+	if result.Skipped {
+		t.Fatal("expected segment to be transcoded, not skipped")
+	}
+
+	// Output must be indexable with non-empty init boxes and fragments
+	f, err := os.Open(src)
+	if err != nil {
+		t.Fatalf("open output: %v", err)
+	}
+	defer f.Close()
+
+	initBoxes, frags, _, err := indexFile(f)
+	if err != nil {
+		t.Fatalf("indexFile on output: %v", err)
+	}
+	if len(initBoxes) == 0 {
+		t.Error("no init boxes in output")
+	}
+	if len(frags) == 0 {
+		t.Error("no fragments in output")
+	}
+}
+
+func TestTranscodeSegment_AudioCopiedVerbatim(t *testing.T) {
+	if !OpenH264Available() {
+		t.Skip("OpenH264 not available")
+	}
+	clipPath := findTranscodeableClip(t)
+	if clipPath == "" {
+		t.Skip("no real recording clips available for transcoding test")
+	}
+
+	srcW, srcH, err := readSourceResolution(clipPath)
+	if err != nil {
+		t.Fatalf("readSourceResolution: %v", err)
+	}
+	targetW := (srcW / 2) &^ 1
+	targetH := (srcH / 2) &^ 1
+	if targetW < 2 || targetH < 2 {
+		t.Skipf("clip %dx%d too small to halve", srcW, srcH)
+	}
+
+	src := copyClipToTemp(t, clipPath)
+
+	result, err := TranscodeSegment(src, targetW, targetH)
+	if err != nil {
+		t.Fatalf("TranscodeSegment on file: %v", err)
+	}
+	if result.Skipped {
+		t.Fatal("expected transcoding, not skip")
+	}
+
+	// Verify the output is a valid fMP4 with at least one fragment
+	f, err := os.Open(src)
+	if err != nil {
+		t.Fatalf("open output: %v", err)
+	}
+	defer f.Close()
+	_, frags, _, err := indexFile(f)
+	if err != nil {
+		t.Fatalf("indexFile: %v", err)
+	}
+	if len(frags) == 0 {
+		t.Error("output has no fragments")
 	}
 }

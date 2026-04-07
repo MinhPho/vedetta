@@ -228,13 +228,37 @@ func transcodeFile(src, dst string, outW, outH int) error {
 		return fmt.Errorf("no H264 video track in source")
 	}
 
-	// Seek back to start and index all fragments
+	// Seek back to start and index moof+mdat locations
 	if _, err := in.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	_, fragments, trackTimeScales, err := indexFile(in)
+	_, indexedFrags, trackTimeScales, err := indexFile(in)
 	if err != nil {
 		return fmt.Errorf("index: %w", err)
+	}
+
+	// Build a deduplicated list of moof+mdat block locations. indexFile emits
+	// one fragment entry per traf but multi-track moofs share a single mdat.
+	// We collect unique moof offsets so each moof+mdat block is parsed once.
+	type moofBlock struct {
+		moofOffset int64
+		moofSize   int64
+		mdatOffset int64
+		mdatSize   int64
+	}
+	seen := make(map[int64]bool)
+	var blocks []moofBlock
+	for _, f := range indexedFrags {
+		if f.mdatSize == 0 || seen[f.moofOffset] {
+			continue
+		}
+		seen[f.moofOffset] = true
+		blocks = append(blocks, moofBlock{
+			moofOffset: f.moofOffset,
+			moofSize:   f.moofSize,
+			mdatOffset: f.mdatOffset,
+			mdatSize:   f.mdatSize,
+		})
 	}
 
 	// Create H264 decoder
@@ -290,29 +314,74 @@ func transcodeFile(src, dst string, outW, outH int) error {
 	var outSPS, outPPS []byte
 	var seqNum uint32 = 1
 
-	videoFrags := make([]fragment, 0)
-	audioFrags := make([]fragment, 0)
-	for _, frag := range fragments {
-		if int(frag.trackID) == videoTrackID {
-			videoFrags = append(videoFrags, frag)
-		} else if int(frag.trackID) == audioTrackID {
-			audioFrags = append(audioFrags, frag)
-		}
-	}
-
-	audioIdx := 0
-	for gopIdx, vfrag := range videoFrags {
-		rawMdat := make([]byte, vfrag.mdatSize-8)
-		if _, err := in.Seek(vfrag.mdatOffset+8, io.SeekStart); err != nil {
+	for gopIdx, blk := range blocks {
+		// Read the full moof+mdat block and unmarshal it as an fmp4.Part so that
+		// per-track sample payloads are properly separated regardless of whether
+		// the moof uses single-track or multi-track (video+audio) trafs.
+		blockSize := (blk.mdatOffset - blk.moofOffset) + blk.mdatSize
+		if _, err := in.Seek(blk.moofOffset, io.SeekStart); err != nil {
 			return err
 		}
-		if _, err := io.ReadFull(in, rawMdat); err != nil {
-			return fmt.Errorf("read video mdat: %w", err)
+		blockBuf := make([]byte, blockSize)
+		if _, err := io.ReadFull(in, blockBuf); err != nil {
+			return fmt.Errorf("read block %d: %w", gopIdx, err)
 		}
 
-		annexB, err := avccToAnnexB(rawMdat)
+		var parts fmp4.Parts
+		if err := parts.Unmarshal(blockBuf); err != nil {
+			return fmt.Errorf("unmarshal block %d: %w", gopIdx, err)
+		}
+
+		// Collect video and audio samples from this block
+		var videoAVCC []byte
+		var videoBase uint64
+		var videoDuration uint32
+		var newAudioSamples []*fmp4.Sample
+		var audioBase uint64
+
+		for _, part := range parts {
+			for _, tr := range part.Tracks {
+				if tr.ID == videoTrackID {
+					videoBase = tr.BaseTime
+					for _, s := range tr.Samples {
+						videoDuration += s.Duration
+						videoAVCC = append(videoAVCC, s.Payload...)
+					}
+				} else if tr.ID == audioTrackID {
+					audioBase = tr.BaseTime
+					for _, s := range tr.Samples {
+						newAudioSamples = append(newAudioSamples, &fmp4.Sample{
+							Duration:        s.Duration,
+							Payload:         append([]byte(nil), s.Payload...),
+							IsNonSyncSample: s.IsNonSyncSample,
+						})
+					}
+				}
+			}
+		}
+
+		if len(videoAVCC) == 0 {
+			continue
+		}
+
+		// Convert AVCC samples to Annex B for the decoder
+		annexB, err := avccToAnnexB(videoAVCC)
 		if err != nil {
-			return fmt.Errorf("avcc to annexb: %w", err)
+			continue
+		}
+
+		// Prepend SPS and PPS from the init segment so the decoder can
+		// initialise its parameter sets before decoding the slice. Without
+		// this, out-of-band parameter sets (stored only in the avcC box) are
+		// never seen by the decoder and every IDR frame fails to decode.
+		if !sliceContainsSPSOrPPS(annexB) {
+			var spsPPS []byte
+			startCode := []byte{0, 0, 0, 1}
+			spsPPS = append(spsPPS, startCode...)
+			spsPPS = append(spsPPS, srcH264Codec.SPS...)
+			spsPPS = append(spsPPS, startCode...)
+			spsPPS = append(spsPPS, srcH264Codec.PPS...)
+			annexB = append(spsPPS, annexB...)
 		}
 
 		var newVideoSamples []*fmp4.Sample
@@ -365,7 +434,7 @@ func transcodeFile(src, dst string, outW, outH int) error {
 				if err == nil && len(avccPayloadOut) > 0 {
 					isNonSync := encInfo.EFrameType != openh264.VideoFrameTypeIDR
 					newVideoSamples = append(newVideoSamples, &fmp4.Sample{
-						Duration:        vfrag.duration,
+						Duration:        videoDuration,
 						Payload:         avccPayloadOut,
 						IsNonSyncSample: isNonSync,
 					})
@@ -374,34 +443,11 @@ func transcodeFile(src, dst string, outW, outH int) error {
 		}
 		pinner.Unpin()
 
-		var newAudioSamples []*fmp4.Sample
-		var audioBase uint64
-		for audioIdx < len(audioFrags) {
-			afrag := audioFrags[audioIdx]
-			audioBase = afrag.decodeTime
-			rawAudio := make([]byte, afrag.mdatSize-8)
-			if _, seekErr := in.Seek(afrag.mdatOffset+8, io.SeekStart); seekErr != nil {
-				break
-			}
-			if _, readErr := io.ReadFull(in, rawAudio); readErr != nil {
-				break
-			}
-			newAudioSamples = append(newAudioSamples, &fmp4.Sample{
-				Duration:        afrag.duration,
-				Payload:         append([]byte(nil), rawAudio...),
-				IsNonSyncSample: false,
-			})
-			audioIdx++
-			if afrag.decodeTime+uint64(afrag.duration) >= vfrag.decodeTime+uint64(vfrag.duration) {
-				break
-			}
-		}
-
 		if len(newVideoSamples) > 0 {
 			gops = append(gops, encodedGOP{
 				videoSamples: newVideoSamples,
 				audioSamples: newAudioSamples,
-				videoBase:    vfrag.decodeTime,
+				videoBase:    videoBase,
 				audioBase:    audioBase,
 				seqNum:       seqNum,
 			})
@@ -467,6 +513,21 @@ func targetBitrate(w, h int) int32 {
 	default:
 		return 300_000
 	}
+}
+
+// sliceContainsSPSOrPPS reports whether any NAL unit in the Annex B stream is
+// an SPS (type 7) or PPS (type 8).
+func sliceContainsSPSOrPPS(annexB []byte) bool {
+	for _, nal := range splitAnnexB(annexB) {
+		if len(nal) == 0 {
+			continue
+		}
+		t := nal[0] & 0x1f
+		if t == 7 || t == 8 {
+			return true
+		}
+	}
+	return false
 }
 
 func avccToAnnexB(avcc []byte) ([]byte, error) {
