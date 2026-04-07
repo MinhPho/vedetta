@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -430,6 +431,99 @@ func TestContract_ListZones(t *testing.T) {
 	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/cameras/test_cam/zones", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
+func TestContract_ListEvents(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["items"]; !ok {
+		t.Error("response missing 'items' field")
+	}
+	if _, ok := resp["total"]; !ok {
+		t.Error("response missing 'total' field")
+	}
+	if _, ok := resp["has_more"]; !ok {
+		t.Error("response missing 'has_more' field")
+	}
+}
+
+func TestContract_ListEvents_WithData(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedEvent(t, db, "contract-evt-1", "cam1", "person", 0.9, now)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
+func TestContract_GetEvent(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedEvent(t, db, "contract-evt-2", "cam1", "person", 0.85, now)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events/contract-evt-2", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
+func TestContract_GetEvent_NotFound(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events/nonexistent", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
+func TestContract_GetEventCounts(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedEvent(t, db, "contract-cnt-1", "cam1", "person", 0.9, now)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events/counts", nil)
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
 

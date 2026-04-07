@@ -1105,13 +1105,44 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var sinceTime time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		if parsed, err := time.Parse(time.RFC3339, s); err == nil {
+			sinceTime = parsed
+		}
+	}
+
 	events, err := s.db.QueryEventsFiltered(cameraFilter, labelFilter, zoneFilter, objectFilter, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+	// Apply since filter in memory (DB query doesn't support it directly)
+	if !sinceTime.IsZero() {
+		filtered := events[:0]
+		for _, e := range events {
+			if e.Timestamp.After(sinceTime) {
+				filtered = append(filtered, e)
+			}
+		}
+		events = filtered
+	}
+
+	if events == nil {
+		events = []camera.Event{}
+	}
+
+	total, _ := s.db.CountEventsFiltered(cameraFilter, labelFilter, zoneFilter, objectFilter)
+	hasMore := offset+len(events) < total
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":    events,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": hasMore,
+	})
 }
 
 func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {

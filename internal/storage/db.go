@@ -416,6 +416,33 @@ func (d *DB) QueryEventsFiltered(cameraName, label, zoneName, objectName string,
 	return scanEvents(rows)
 }
 
+// CountEventsFiltered returns the total count of events matching the given filters.
+func (d *DB) CountEventsFiltered(cameraName, label, zoneName, objectName string) (int, error) {
+	query := "SELECT COUNT(*) FROM events WHERE 1=1"
+	args := []any{}
+
+	if cameraName != "" {
+		query += " AND camera = ?"
+		args = append(args, cameraName)
+	}
+	if label != "" {
+		query += " AND label = ?"
+		args = append(args, label)
+	}
+	if zoneName != "" {
+		query += " AND zone_name = ?"
+		args = append(args, zoneName)
+	}
+	if objectName != "" {
+		query += " AND (object_name = ? OR sub_label = ?)"
+		args = append(args, objectName, objectName)
+	}
+
+	var count int
+	err := d.db.QueryRow(query, args...).Scan(&count)
+	return count, err
+}
+
 // CountEventsByLabel returns the count of events grouped by label.
 func (d *DB) CountEventsByLabel() (map[string]int, error) {
 	rows, err := d.db.Query("SELECT label, COUNT(*) FROM events GROUP BY label")

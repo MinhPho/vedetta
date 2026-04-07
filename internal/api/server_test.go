@@ -254,8 +254,8 @@ func TestHandleListEvents_NoEvents(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if _, ok := body["events"]; !ok {
-		t.Error("response missing 'events' key")
+	if _, ok := body["items"]; !ok {
+		t.Error("response missing 'items' key")
 	}
 }
 
@@ -273,13 +273,13 @@ func TestHandleListEvents_WithData(t *testing.T) {
 		srv.mux.ServeHTTP(w, req)
 
 		var body struct {
-			Events []camera.Event `json:"events"`
+			Items []camera.Event `json:"items"`
 		}
 		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if len(body.Events) != 3 {
-			t.Errorf("got %d events, want 3", len(body.Events))
+		if len(body.Items) != 3 {
+			t.Errorf("got %d events, want 3", len(body.Items))
 		}
 	})
 
@@ -289,15 +289,15 @@ func TestHandleListEvents_WithData(t *testing.T) {
 		srv.mux.ServeHTTP(w, req)
 
 		var body struct {
-			Events []camera.Event `json:"events"`
+			Items []camera.Event `json:"items"`
 		}
 		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if len(body.Events) != 2 {
-			t.Errorf("got %d events, want 2", len(body.Events))
+		if len(body.Items) != 2 {
+			t.Errorf("got %d events, want 2", len(body.Items))
 		}
-		for _, e := range body.Events {
+		for _, e := range body.Items {
 			if e.CameraName != "front_door" {
 				t.Errorf("event camera = %q, want %q", e.CameraName, "front_door")
 			}
@@ -310,13 +310,13 @@ func TestHandleListEvents_WithData(t *testing.T) {
 		srv.mux.ServeHTTP(w, req)
 
 		var body struct {
-			Events []camera.Event `json:"events"`
+			Items []camera.Event `json:"items"`
 		}
 		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if len(body.Events) != 1 {
-			t.Errorf("got %d events, want 1", len(body.Events))
+		if len(body.Items) != 1 {
+			t.Errorf("got %d events, want 1", len(body.Items))
 		}
 	})
 
@@ -326,13 +326,13 @@ func TestHandleListEvents_WithData(t *testing.T) {
 		srv.mux.ServeHTTP(w, req)
 
 		var body struct {
-			Events []camera.Event `json:"events"`
+			Items []camera.Event `json:"items"`
 		}
 		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if len(body.Events) != 2 {
-			t.Errorf("got %d events, want 2", len(body.Events))
+		if len(body.Items) != 2 {
+			t.Errorf("got %d events, want 2", len(body.Items))
 		}
 	})
 }
@@ -787,13 +787,13 @@ func TestHandleListEvents_InvalidLimit(t *testing.T) {
 	}
 
 	var body struct {
-		Events []camera.Event `json:"events"`
+		Items []camera.Event `json:"items"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Events) != 1 {
-		t.Errorf("got %d events, want 1", len(body.Events))
+	if len(body.Items) != 1 {
+		t.Errorf("got %d events, want 1", len(body.Items))
 	}
 }
 
@@ -852,16 +852,16 @@ func TestHandleListEvents_CombinedFilters(t *testing.T) {
 	srv.mux.ServeHTTP(w, req)
 
 	var body struct {
-		Events []camera.Event `json:"events"`
+		Items []camera.Event `json:"items"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Events) != 1 {
-		t.Errorf("got %d events, want 1", len(body.Events))
+	if len(body.Items) != 1 {
+		t.Errorf("got %d events, want 1", len(body.Items))
 	}
-	if len(body.Events) > 0 && body.Events[0].ID != "cf-1" {
-		t.Errorf("event ID = %q, want %q", body.Events[0].ID, "cf-1")
+	if len(body.Items) > 0 && body.Items[0].ID != "cf-1" {
+		t.Errorf("event ID = %q, want %q", body.Items[0].ID, "cf-1")
 	}
 }
 
@@ -878,22 +878,22 @@ func TestHandleListEvents_OrderedByTimestampDesc(t *testing.T) {
 	srv.mux.ServeHTTP(w, req)
 
 	var body struct {
-		Events []camera.Event `json:"events"`
+		Items []camera.Event `json:"items"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Events) != 3 {
-		t.Fatalf("got %d events, want 3", len(body.Events))
+	if len(body.Items) != 3 {
+		t.Fatalf("got %d events, want 3", len(body.Items))
 	}
-	if body.Events[0].ID != "ord-new" {
-		t.Errorf("first event = %q, want %q (most recent)", body.Events[0].ID, "ord-new")
+	if body.Items[0].ID != "ord-new" {
+		t.Errorf("first event = %q, want %q (most recent)", body.Items[0].ID, "ord-new")
 	}
-	if body.Events[1].ID != "ord-mid" {
-		t.Errorf("second event = %q, want %q", body.Events[1].ID, "ord-mid")
+	if body.Items[1].ID != "ord-mid" {
+		t.Errorf("second event = %q, want %q", body.Items[1].ID, "ord-mid")
 	}
-	if body.Events[2].ID != "ord-old" {
-		t.Errorf("third event = %q, want %q (oldest)", body.Events[2].ID, "ord-old")
+	if body.Items[2].ID != "ord-old" {
+		t.Errorf("third event = %q, want %q (oldest)", body.Items[2].ID, "ord-old")
 	}
 }
 
@@ -1121,20 +1121,20 @@ func TestHandleListEvents_WithOffset(t *testing.T) {
 		}
 
 		var body struct {
-			Events []camera.Event `json:"events"`
+			Items []camera.Event `json:"items"`
 		}
 		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if len(body.Events) != 2 {
-			t.Fatalf("got %d events, want 2", len(body.Events))
+		if len(body.Items) != 2 {
+			t.Fatalf("got %d events, want 2", len(body.Items))
 		}
 		// Events are ordered by timestamp DESC, so skipping the first (newest) gives us off-2 and off-3
-		if body.Events[0].ID != "off-2" {
-			t.Errorf("first event = %q, want %q", body.Events[0].ID, "off-2")
+		if body.Items[0].ID != "off-2" {
+			t.Errorf("first event = %q, want %q", body.Items[0].ID, "off-2")
 		}
-		if body.Events[1].ID != "off-3" {
-			t.Errorf("second event = %q, want %q", body.Events[1].ID, "off-3")
+		if body.Items[1].ID != "off-3" {
+			t.Errorf("second event = %q, want %q", body.Items[1].ID, "off-3")
 		}
 	})
 
@@ -1148,16 +1148,16 @@ func TestHandleListEvents_WithOffset(t *testing.T) {
 		}
 
 		var body struct {
-			Events []camera.Event `json:"events"`
+			Items []camera.Event `json:"items"`
 		}
 		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if len(body.Events) != 1 {
-			t.Fatalf("got %d events, want 1", len(body.Events))
+		if len(body.Items) != 1 {
+			t.Fatalf("got %d events, want 1", len(body.Items))
 		}
-		if body.Events[0].ID != "off-1" {
-			t.Errorf("event = %q, want %q (most recent)", body.Events[0].ID, "off-1")
+		if body.Items[0].ID != "off-1" {
+			t.Errorf("event = %q, want %q (most recent)", body.Items[0].ID, "off-1")
 		}
 	})
 }

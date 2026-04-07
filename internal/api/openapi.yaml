@@ -18,6 +18,8 @@ tags:
     description: Camera management, snapshots, PTZ, zones, and doorbell
   - name: discovery
     description: API discovery and documentation
+  - name: events
+    description: Detection events, snapshots, clips, and identification
   - name: health
     description: Health checks, system info, and metrics
 
@@ -592,6 +594,322 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/events:
+    get:
+      operationId: listEvents
+      summary: List detection events
+      tags: [events]
+      parameters:
+        - name: camera
+          in: query
+          schema:
+            type: string
+        - name: label
+          in: query
+          schema:
+            type: string
+        - name: zone
+          in: query
+          schema:
+            type: string
+        - name: object
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          description: Only return events after this timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Event list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventListEnvelope"
+
+  /api/events/counts:
+    get:
+      operationId: getEventCounts
+      summary: Get event counts by label and camera
+      tags: [events]
+      responses:
+        "200":
+          description: Event counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventCounts"
+
+  /api/events/stream:
+    get:
+      operationId: getEventStream
+      summary: Server-sent event stream
+      description: Long-lived SSE connection. Events are JSON-encoded with types including "event", "event_end", "presence", "doorbell", and "keepalive".
+      tags: [events]
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/events/{id}:
+    get:
+      operationId: getEvent
+      summary: Get a single event
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Event detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "404":
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{id}/snapshot:
+    get:
+      operationId: getEventSnapshot
+      summary: Get event snapshot image with bounding box overlay
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: download
+          in: query
+          description: Set to trigger Content-Disposition attachment header
+          schema:
+            type: string
+        - name: raw
+          in: query
+          description: Set to serve raw image without bounding box overlay
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JPEG snapshot
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Snapshot not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{id}/clip:
+    get:
+      operationId: getEventClip
+      summary: Download event video clip
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: MP4 video clip
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Clip not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: reextractClip
+      summary: Re-extract event clip from recording segments
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Clip re-extraction started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReextractClipResponse"
+        "404":
+          description: Event not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{id}/detection-crop:
+    get:
+      operationId: getEventDetectionCrop
+      summary: Get cropped detection region from event snapshot
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JPEG cropped image
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Snapshot not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{id}/identify:
+    post:
+      operationId: identifyEvent
+      summary: Identify object in event using re-identification embeddings
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching object sightings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ObjectSighting"
+        "404":
+          description: Event snapshot not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Object re-identification not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{id}/track-person:
+    post:
+      operationId: trackPerson
+      summary: Create a person record from an event detection
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackPersonRequest"
+      responses:
+        "201":
+          description: Person tracked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackPersonResponse"
+        "400":
+          description: Name is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Event snapshot not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/events/{id}/assign-person:
+    post:
+      operationId: assignPersonToEvent
+      summary: Assign a known person to an event or ignore it
+      tags: [events]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignPersonRequest"
+      responses:
+        "200":
+          description: Person assigned or event ignored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignPersonResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Person or event not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1013,6 +1331,151 @@ components:
           type: boolean
         recording_paused:
           type: boolean
+
+    Event:
+      type: object
+      required: [id, camera, label, score, box, timestamp, snapshot_available, clip_available]
+      properties:
+        id:
+          type: string
+        camera:
+          type: string
+        label:
+          type: string
+        score:
+          type: number
+          format: float
+        box:
+          type: array
+          items:
+            type: integer
+          minItems: 4
+          maxItems: 4
+        timestamp:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        snapshot_path:
+          type: string
+        snapshot_available:
+          type: boolean
+        clip_path:
+          type: string
+        clip_available:
+          type: boolean
+        zone_name:
+          type: string
+        object_name:
+          type: string
+        sub_label:
+          type: string
+
+    EventListEnvelope:
+      type: object
+      required: [items, total, limit, offset, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Event"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+
+    EventCounts:
+      type: object
+      required: [total, by_label, by_camera]
+      properties:
+        total:
+          type: integer
+        by_label:
+          type: object
+          additionalProperties:
+            type: integer
+        by_camera:
+          type: object
+          additionalProperties:
+            type: integer
+
+    ReextractClipResponse:
+      type: object
+      required: [status, event]
+      properties:
+        status:
+          type: string
+        event:
+          type: string
+
+    ObjectSighting:
+      type: object
+      required: [id, event_id, camera, object_id, similarity, timestamp]
+      properties:
+        id:
+          type: integer
+          format: int64
+        event_id:
+          type: string
+        camera:
+          type: string
+        object_id:
+          type: integer
+          format: int64
+        object_name:
+          type: string
+        similarity:
+          type: number
+          format: double
+        timestamp:
+          type: string
+          format: date-time
+
+    TrackPersonRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+
+    TrackPersonResponse:
+      type: object
+      required: [person_id, name, method]
+      properties:
+        person_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        method:
+          type: string
+          enum: [face, body, none]
+
+    AssignPersonRequest:
+      type: object
+      properties:
+        person_id:
+          type: integer
+          format: int64
+        ignore:
+          type: boolean
+
+    AssignPersonResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        person_id:
+          type: integer
+          format: int64
+        name:
+          type: string
 
     SystemResponse:
       type: object

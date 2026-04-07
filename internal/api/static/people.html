@@ -447,7 +447,7 @@
 
     function loadUnidentified() {
       fetch('/api/events?label=person&limit=30').then(function(r) { return r.json(); }).then(function(data) {
-        var events = data.events || data || [];
+        var events = data.items || data.events || data || [];
         var section = document.getElementById('unidentified-section');
         var grid = document.getElementById('unidentified-grid');
         var unidentified = events.filter(function(ev) {

@@ -233,6 +233,40 @@ func (e TokenRevokedResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for TrackPersonResponseMethod.
+const (
+	Body TrackPersonResponseMethod = "body"
+	Face TrackPersonResponseMethod = "face"
+	None TrackPersonResponseMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the TrackPersonResponseMethod enum.
+func (e TrackPersonResponseMethod) Valid() bool {
+	switch e {
+	case Body:
+		return true
+	case Face:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
+// AssignPersonRequest defines model for AssignPersonRequest.
+type AssignPersonRequest struct {
+	Ignore   *bool  `json:"ignore,omitempty"`
+	PersonId *int64 `json:"person_id,omitempty"`
+}
+
+// AssignPersonResponse defines model for AssignPersonResponse.
+type AssignPersonResponse struct {
+	Name     *string `json:"name,omitempty"`
+	PersonId *int64  `json:"person_id,omitempty"`
+	Status   string  `json:"status"`
+}
+
 // AuthMeResponse defines model for AuthMeResponse.
 type AuthMeResponse struct {
 	CsrfToken *string    `json:"csrf_token,omitempty"`
@@ -326,6 +360,40 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// Event defines model for Event.
+type Event struct {
+	Box               []int      `json:"box"`
+	Camera            string     `json:"camera"`
+	ClipAvailable     bool       `json:"clip_available"`
+	ClipPath          *string    `json:"clip_path,omitempty"`
+	EndTime           *time.Time `json:"end_time,omitempty"`
+	Id                string     `json:"id"`
+	Label             string     `json:"label"`
+	ObjectName        *string    `json:"object_name,omitempty"`
+	Score             float32    `json:"score"`
+	SnapshotAvailable bool       `json:"snapshot_available"`
+	SnapshotPath      *string    `json:"snapshot_path,omitempty"`
+	SubLabel          *string    `json:"sub_label,omitempty"`
+	Timestamp         time.Time  `json:"timestamp"`
+	ZoneName          *string    `json:"zone_name,omitempty"`
+}
+
+// EventCounts defines model for EventCounts.
+type EventCounts struct {
+	ByCamera map[string]int `json:"by_camera"`
+	ByLabel  map[string]int `json:"by_label"`
+	Total    int            `json:"total"`
+}
+
+// EventListEnvelope defines model for EventListEnvelope.
+type EventListEnvelope struct {
+	HasMore bool    `json:"has_more"`
+	Items   []Event `json:"items"`
+	Limit   int     `json:"limit"`
+	Offset  int     `json:"offset"`
+	Total   int     `json:"total"`
+}
+
 // HealthChecks defines model for HealthChecks.
 type HealthChecks struct {
 	Cameras  CameraHealthCheck    `json:"cameras"`
@@ -392,6 +460,17 @@ type LogoutResponse struct {
 // LogoutResponseStatus defines model for LogoutResponse.Status.
 type LogoutResponseStatus string
 
+// ObjectSighting defines model for ObjectSighting.
+type ObjectSighting struct {
+	Camera     string    `json:"camera"`
+	EventId    string    `json:"event_id"`
+	Id         int64     `json:"id"`
+	ObjectId   int64     `json:"object_id"`
+	ObjectName *string   `json:"object_name,omitempty"`
+	Similarity float64   `json:"similarity"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
 // PTZRequest defines model for PTZRequest.
 type PTZRequest struct {
 	Action    PTZRequestAction     `json:"action"`
@@ -430,6 +509,12 @@ type RecompressionStats struct {
 	Enabled              bool       `json:"enabled"`
 	LastRun              *time.Time `json:"last_run,omitempty"`
 	SegmentsRecompressed int        `json:"segments_recompressed"`
+}
+
+// ReextractClipResponse defines model for ReextractClipResponse.
+type ReextractClipResponse struct {
+	Event  string `json:"event"`
+	Status string `json:"status"`
 }
 
 // StatusDeleted defines model for StatusDeleted.
@@ -477,6 +562,21 @@ type TokenRevokedResponse struct {
 // TokenRevokedResponseStatus defines model for TokenRevokedResponse.Status.
 type TokenRevokedResponseStatus string
 
+// TrackPersonRequest defines model for TrackPersonRequest.
+type TrackPersonRequest struct {
+	Name string `json:"name"`
+}
+
+// TrackPersonResponse defines model for TrackPersonResponse.
+type TrackPersonResponse struct {
+	Method   TrackPersonResponseMethod `json:"method"`
+	Name     string                    `json:"name"`
+	PersonId int64                     `json:"person_id"`
+}
+
+// TrackPersonResponseMethod defines model for TrackPersonResponse.Method.
+type TrackPersonResponseMethod string
+
 // Zone defines model for Zone.
 type Zone struct {
 	Camera          string      `json:"camera"`
@@ -503,6 +603,28 @@ type GetCameraThumbnailParams struct {
 	T time.Time `form:"t" json:"t"`
 }
 
+// ListEventsParams defines parameters for ListEvents.
+type ListEventsParams struct {
+	Camera *string `form:"camera,omitempty" json:"camera,omitempty"`
+	Label  *string `form:"label,omitempty" json:"label,omitempty"`
+	Zone   *string `form:"zone,omitempty" json:"zone,omitempty"`
+	Object *string `form:"object,omitempty" json:"object,omitempty"`
+
+	// Since Only return events after this timestamp
+	Since  *time.Time `form:"since,omitempty" json:"since,omitempty"`
+	Limit  *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int       `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetEventSnapshotParams defines parameters for GetEventSnapshot.
+type GetEventSnapshotParams struct {
+	// Download Set to trigger Content-Disposition attachment header
+	Download *string `form:"download,omitempty" json:"download,omitempty"`
+
+	// Raw Set to serve raw image without bounding box overlay
+	Raw *string `form:"raw,omitempty" json:"raw,omitempty"`
+}
+
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = ChangePasswordRequest
 
@@ -517,6 +639,12 @@ type CreateZoneJSONRequestBody = CreateZoneRequest
 
 // UpdateZoneJSONRequestBody defines body for UpdateZone for application/json ContentType.
 type UpdateZoneJSONRequestBody = CreateZoneRequest
+
+// AssignPersonToEventJSONRequestBody defines body for AssignPersonToEvent for application/json ContentType.
+type AssignPersonToEventJSONRequestBody = AssignPersonRequest
+
+// TrackPersonJSONRequestBody defines body for TrackPerson for application/json ContentType.
+type TrackPersonJSONRequestBody = TrackPersonRequest
 
 // CreateTokenJSONRequestBody defines body for CreateToken for application/json ContentType.
 type CreateTokenJSONRequestBody = CreateTokenRequest
@@ -568,6 +696,39 @@ type ServerInterface interface {
 	// Get presence state for a zone
 	// (GET /api/cameras/{name}/zones/{zone}/presence)
 	GetZonePresence(w http.ResponseWriter, r *http.Request, name string, zone string)
+	// List detection events
+	// (GET /api/events)
+	ListEvents(w http.ResponseWriter, r *http.Request, params ListEventsParams)
+	// Get event counts by label and camera
+	// (GET /api/events/counts)
+	GetEventCounts(w http.ResponseWriter, r *http.Request)
+	// Server-sent event stream
+	// (GET /api/events/stream)
+	GetEventStream(w http.ResponseWriter, r *http.Request)
+	// Get a single event
+	// (GET /api/events/{id})
+	GetEvent(w http.ResponseWriter, r *http.Request, id string)
+	// Assign a known person to an event or ignore it
+	// (POST /api/events/{id}/assign-person)
+	AssignPersonToEvent(w http.ResponseWriter, r *http.Request, id string)
+	// Download event video clip
+	// (GET /api/events/{id}/clip)
+	GetEventClip(w http.ResponseWriter, r *http.Request, id string)
+	// Re-extract event clip from recording segments
+	// (POST /api/events/{id}/clip)
+	ReextractClip(w http.ResponseWriter, r *http.Request, id string)
+	// Get cropped detection region from event snapshot
+	// (GET /api/events/{id}/detection-crop)
+	GetEventDetectionCrop(w http.ResponseWriter, r *http.Request, id string)
+	// Identify object in event using re-identification embeddings
+	// (POST /api/events/{id}/identify)
+	IdentifyEvent(w http.ResponseWriter, r *http.Request, id string)
+	// Get event snapshot image with bounding box overlay
+	// (GET /api/events/{id}/snapshot)
+	GetEventSnapshot(w http.ResponseWriter, r *http.Request, id string, params GetEventSnapshotParams)
+	// Create a person record from an event detection
+	// (POST /api/events/{id}/track-person)
+	TrackPerson(w http.ResponseWriter, r *http.Request, id string)
 	// Full health check
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -1083,6 +1244,416 @@ func (siw *ServerInterfaceWrapper) GetZonePresence(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// ListEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListEventsParams
+
+	// ------------- Optional query parameter "camera" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "camera", r.URL.Query(), &params.Camera, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "camera", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "label" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "label", r.URL.Query(), &params.Label, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "zone" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "zone", r.URL.Query(), &params.Zone, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zone", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "object" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "object", r.URL.Query(), &params.Object, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "object", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEventCounts operation middleware
+func (siw *ServerInterfaceWrapper) GetEventCounts(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEventCounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEventStream operation middleware
+func (siw *ServerInterfaceWrapper) GetEventStream(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEventStream(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEvent operation middleware
+func (siw *ServerInterfaceWrapper) GetEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEvent(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AssignPersonToEvent operation middleware
+func (siw *ServerInterfaceWrapper) AssignPersonToEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AssignPersonToEvent(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEventClip operation middleware
+func (siw *ServerInterfaceWrapper) GetEventClip(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEventClip(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReextractClip operation middleware
+func (siw *ServerInterfaceWrapper) ReextractClip(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReextractClip(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEventDetectionCrop operation middleware
+func (siw *ServerInterfaceWrapper) GetEventDetectionCrop(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEventDetectionCrop(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IdentifyEvent operation middleware
+func (siw *ServerInterfaceWrapper) IdentifyEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IdentifyEvent(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEventSnapshot operation middleware
+func (siw *ServerInterfaceWrapper) GetEventSnapshot(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetEventSnapshotParams
+
+	// ------------- Optional query parameter "download" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "download", r.URL.Query(), &params.Download, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "download", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "raw" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "raw", r.URL.Query(), &params.Raw, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "raw", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEventSnapshot(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TrackPerson operation middleware
+func (siw *ServerInterfaceWrapper) TrackPerson(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TrackPerson(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
@@ -1403,6 +1974,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/api/cameras/{name}/zones/{zone}", wrapper.DeleteZone)
 	m.HandleFunc("PUT "+options.BaseURL+"/api/cameras/{name}/zones/{zone}", wrapper.UpdateZone)
 	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/zones/{zone}/presence", wrapper.GetZonePresence)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events", wrapper.ListEvents)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events/counts", wrapper.GetEventCounts)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events/stream", wrapper.GetEventStream)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events/{id}", wrapper.GetEvent)
+	m.HandleFunc("POST "+options.BaseURL+"/api/events/{id}/assign-person", wrapper.AssignPersonToEvent)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events/{id}/clip", wrapper.GetEventClip)
+	m.HandleFunc("POST "+options.BaseURL+"/api/events/{id}/clip", wrapper.ReextractClip)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events/{id}/detection-crop", wrapper.GetEventDetectionCrop)
+	m.HandleFunc("POST "+options.BaseURL+"/api/events/{id}/identify", wrapper.IdentifyEvent)
+	m.HandleFunc("GET "+options.BaseURL+"/api/events/{id}/snapshot", wrapper.GetEventSnapshot)
+	m.HandleFunc("POST "+options.BaseURL+"/api/events/{id}/track-person", wrapper.TrackPerson)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health", wrapper.GetHealth)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health/live", wrapper.GetHealthLive)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health/ready", wrapper.GetHealthReady)
@@ -1866,6 +2448,333 @@ func (response GetZonePresence404JSONResponse) VisitGetZonePresenceResponse(w ht
 	return json.NewEncoder(w).Encode(response)
 }
 
+type ListEventsRequestObject struct {
+	Params ListEventsParams
+}
+
+type ListEventsResponseObject interface {
+	VisitListEventsResponse(w http.ResponseWriter) error
+}
+
+type ListEvents200JSONResponse EventListEnvelope
+
+func (response ListEvents200JSONResponse) VisitListEventsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventCountsRequestObject struct {
+}
+
+type GetEventCountsResponseObject interface {
+	VisitGetEventCountsResponse(w http.ResponseWriter) error
+}
+
+type GetEventCounts200JSONResponse EventCounts
+
+func (response GetEventCounts200JSONResponse) VisitGetEventCountsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventStreamRequestObject struct {
+}
+
+type GetEventStreamResponseObject interface {
+	VisitGetEventStreamResponse(w http.ResponseWriter) error
+}
+
+type GetEventStream200TexteventStreamResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetEventStream200TexteventStreamResponse) VisitGetEventStreamResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetEventRequestObject struct {
+	Id string `json:"id"`
+}
+
+type GetEventResponseObject interface {
+	VisitGetEventResponse(w http.ResponseWriter) error
+}
+
+type GetEvent200JSONResponse Event
+
+func (response GetEvent200JSONResponse) VisitGetEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEvent404JSONResponse Error
+
+func (response GetEvent404JSONResponse) VisitGetEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AssignPersonToEventRequestObject struct {
+	Id   string `json:"id"`
+	Body *AssignPersonToEventJSONRequestBody
+}
+
+type AssignPersonToEventResponseObject interface {
+	VisitAssignPersonToEventResponse(w http.ResponseWriter) error
+}
+
+type AssignPersonToEvent200JSONResponse AssignPersonResponse
+
+func (response AssignPersonToEvent200JSONResponse) VisitAssignPersonToEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AssignPersonToEvent400JSONResponse Error
+
+func (response AssignPersonToEvent400JSONResponse) VisitAssignPersonToEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type AssignPersonToEvent404JSONResponse Error
+
+func (response AssignPersonToEvent404JSONResponse) VisitAssignPersonToEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventClipRequestObject struct {
+	Id string `json:"id"`
+}
+
+type GetEventClipResponseObject interface {
+	VisitGetEventClipResponse(w http.ResponseWriter) error
+}
+
+type GetEventClip200Videomp4Response struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetEventClip200Videomp4Response) VisitGetEventClipResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "video/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetEventClip404JSONResponse Error
+
+func (response GetEventClip404JSONResponse) VisitGetEventClipResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ReextractClipRequestObject struct {
+	Id string `json:"id"`
+}
+
+type ReextractClipResponseObject interface {
+	VisitReextractClipResponse(w http.ResponseWriter) error
+}
+
+type ReextractClip200JSONResponse ReextractClipResponse
+
+func (response ReextractClip200JSONResponse) VisitReextractClipResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ReextractClip404JSONResponse Error
+
+func (response ReextractClip404JSONResponse) VisitReextractClipResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventDetectionCropRequestObject struct {
+	Id string `json:"id"`
+}
+
+type GetEventDetectionCropResponseObject interface {
+	VisitGetEventDetectionCropResponse(w http.ResponseWriter) error
+}
+
+type GetEventDetectionCrop200ImagejpegResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetEventDetectionCrop200ImagejpegResponse) VisitGetEventDetectionCropResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "image/jpeg")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetEventDetectionCrop404JSONResponse Error
+
+func (response GetEventDetectionCrop404JSONResponse) VisitGetEventDetectionCropResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type IdentifyEventRequestObject struct {
+	Id string `json:"id"`
+}
+
+type IdentifyEventResponseObject interface {
+	VisitIdentifyEventResponse(w http.ResponseWriter) error
+}
+
+type IdentifyEvent200JSONResponse []ObjectSighting
+
+func (response IdentifyEvent200JSONResponse) VisitIdentifyEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type IdentifyEvent404JSONResponse Error
+
+func (response IdentifyEvent404JSONResponse) VisitIdentifyEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type IdentifyEvent503JSONResponse Error
+
+func (response IdentifyEvent503JSONResponse) VisitIdentifyEventResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetEventSnapshotRequestObject struct {
+	Id     string `json:"id"`
+	Params GetEventSnapshotParams
+}
+
+type GetEventSnapshotResponseObject interface {
+	VisitGetEventSnapshotResponse(w http.ResponseWriter) error
+}
+
+type GetEventSnapshot200ImagejpegResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetEventSnapshot200ImagejpegResponse) VisitGetEventSnapshotResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "image/jpeg")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetEventSnapshot404JSONResponse Error
+
+func (response GetEventSnapshot404JSONResponse) VisitGetEventSnapshotResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type TrackPersonRequestObject struct {
+	Id   string `json:"id"`
+	Body *TrackPersonJSONRequestBody
+}
+
+type TrackPersonResponseObject interface {
+	VisitTrackPersonResponse(w http.ResponseWriter) error
+}
+
+type TrackPerson201JSONResponse TrackPersonResponse
+
+func (response TrackPerson201JSONResponse) VisitTrackPersonResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type TrackPerson400JSONResponse Error
+
+func (response TrackPerson400JSONResponse) VisitTrackPersonResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type TrackPerson404JSONResponse Error
+
+func (response TrackPerson404JSONResponse) VisitTrackPersonResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetHealthRequestObject struct {
 }
 
@@ -2087,6 +2996,39 @@ type StrictServerInterface interface {
 	// Get presence state for a zone
 	// (GET /api/cameras/{name}/zones/{zone}/presence)
 	GetZonePresence(ctx context.Context, request GetZonePresenceRequestObject) (GetZonePresenceResponseObject, error)
+	// List detection events
+	// (GET /api/events)
+	ListEvents(ctx context.Context, request ListEventsRequestObject) (ListEventsResponseObject, error)
+	// Get event counts by label and camera
+	// (GET /api/events/counts)
+	GetEventCounts(ctx context.Context, request GetEventCountsRequestObject) (GetEventCountsResponseObject, error)
+	// Server-sent event stream
+	// (GET /api/events/stream)
+	GetEventStream(ctx context.Context, request GetEventStreamRequestObject) (GetEventStreamResponseObject, error)
+	// Get a single event
+	// (GET /api/events/{id})
+	GetEvent(ctx context.Context, request GetEventRequestObject) (GetEventResponseObject, error)
+	// Assign a known person to an event or ignore it
+	// (POST /api/events/{id}/assign-person)
+	AssignPersonToEvent(ctx context.Context, request AssignPersonToEventRequestObject) (AssignPersonToEventResponseObject, error)
+	// Download event video clip
+	// (GET /api/events/{id}/clip)
+	GetEventClip(ctx context.Context, request GetEventClipRequestObject) (GetEventClipResponseObject, error)
+	// Re-extract event clip from recording segments
+	// (POST /api/events/{id}/clip)
+	ReextractClip(ctx context.Context, request ReextractClipRequestObject) (ReextractClipResponseObject, error)
+	// Get cropped detection region from event snapshot
+	// (GET /api/events/{id}/detection-crop)
+	GetEventDetectionCrop(ctx context.Context, request GetEventDetectionCropRequestObject) (GetEventDetectionCropResponseObject, error)
+	// Identify object in event using re-identification embeddings
+	// (POST /api/events/{id}/identify)
+	IdentifyEvent(ctx context.Context, request IdentifyEventRequestObject) (IdentifyEventResponseObject, error)
+	// Get event snapshot image with bounding box overlay
+	// (GET /api/events/{id}/snapshot)
+	GetEventSnapshot(ctx context.Context, request GetEventSnapshotRequestObject) (GetEventSnapshotResponseObject, error)
+	// Create a person record from an event detection
+	// (POST /api/events/{id}/track-person)
+	TrackPerson(ctx context.Context, request TrackPersonRequestObject) (TrackPersonResponseObject, error)
 	// Full health check
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -2564,6 +3506,303 @@ func (sh *strictHandler) GetZonePresence(w http.ResponseWriter, r *http.Request,
 	}
 }
 
+// ListEvents operation middleware
+func (sh *strictHandler) ListEvents(w http.ResponseWriter, r *http.Request, params ListEventsParams) {
+	var request ListEventsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListEvents(ctx, request.(ListEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListEventsResponseObject); ok {
+		if err := validResponse.VisitListEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventCounts operation middleware
+func (sh *strictHandler) GetEventCounts(w http.ResponseWriter, r *http.Request) {
+	var request GetEventCountsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventCounts(ctx, request.(GetEventCountsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventCounts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEventCountsResponseObject); ok {
+		if err := validResponse.VisitGetEventCountsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventStream operation middleware
+func (sh *strictHandler) GetEventStream(w http.ResponseWriter, r *http.Request) {
+	var request GetEventStreamRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventStream(ctx, request.(GetEventStreamRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventStream")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEventStreamResponseObject); ok {
+		if err := validResponse.VisitGetEventStreamResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEvent operation middleware
+func (sh *strictHandler) GetEvent(w http.ResponseWriter, r *http.Request, id string) {
+	var request GetEventRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEvent(ctx, request.(GetEventRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEvent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEventResponseObject); ok {
+		if err := validResponse.VisitGetEventResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AssignPersonToEvent operation middleware
+func (sh *strictHandler) AssignPersonToEvent(w http.ResponseWriter, r *http.Request, id string) {
+	var request AssignPersonToEventRequestObject
+
+	request.Id = id
+
+	var body AssignPersonToEventJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AssignPersonToEvent(ctx, request.(AssignPersonToEventRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AssignPersonToEvent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AssignPersonToEventResponseObject); ok {
+		if err := validResponse.VisitAssignPersonToEventResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventClip operation middleware
+func (sh *strictHandler) GetEventClip(w http.ResponseWriter, r *http.Request, id string) {
+	var request GetEventClipRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventClip(ctx, request.(GetEventClipRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventClip")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEventClipResponseObject); ok {
+		if err := validResponse.VisitGetEventClipResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReextractClip operation middleware
+func (sh *strictHandler) ReextractClip(w http.ResponseWriter, r *http.Request, id string) {
+	var request ReextractClipRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReextractClip(ctx, request.(ReextractClipRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReextractClip")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReextractClipResponseObject); ok {
+		if err := validResponse.VisitReextractClipResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventDetectionCrop operation middleware
+func (sh *strictHandler) GetEventDetectionCrop(w http.ResponseWriter, r *http.Request, id string) {
+	var request GetEventDetectionCropRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventDetectionCrop(ctx, request.(GetEventDetectionCropRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventDetectionCrop")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEventDetectionCropResponseObject); ok {
+		if err := validResponse.VisitGetEventDetectionCropResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// IdentifyEvent operation middleware
+func (sh *strictHandler) IdentifyEvent(w http.ResponseWriter, r *http.Request, id string) {
+	var request IdentifyEventRequestObject
+
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.IdentifyEvent(ctx, request.(IdentifyEventRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "IdentifyEvent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(IdentifyEventResponseObject); ok {
+		if err := validResponse.VisitIdentifyEventResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEventSnapshot operation middleware
+func (sh *strictHandler) GetEventSnapshot(w http.ResponseWriter, r *http.Request, id string, params GetEventSnapshotParams) {
+	var request GetEventSnapshotRequestObject
+
+	request.Id = id
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEventSnapshot(ctx, request.(GetEventSnapshotRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEventSnapshot")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEventSnapshotResponseObject); ok {
+		if err := validResponse.VisitGetEventSnapshotResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// TrackPerson operation middleware
+func (sh *strictHandler) TrackPerson(w http.ResponseWriter, r *http.Request, id string) {
+	var request TrackPersonRequestObject
+
+	request.Id = id
+
+	var body TrackPersonJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TrackPerson(ctx, request.(TrackPersonRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TrackPerson")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TrackPersonResponseObject); ok {
+		if err := validResponse.VisitTrackPersonResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetHealth operation middleware
 func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	var request GetHealthRequestObject
@@ -2792,54 +4031,73 @@ func (sh *strictHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file
