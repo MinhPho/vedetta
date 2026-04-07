@@ -1,0 +1,304 @@
+openapi: "3.1.0"
+info:
+  title: Vedetta NVR API
+  version: "0.1.0"
+  description: API for managing cameras, events, recordings, and object detection in the Vedetta Network Video Recorder.
+
+servers:
+  - url: /
+
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+
+tags:
+  - name: discovery
+    description: API discovery and documentation
+  - name: health
+    description: Health checks, system info, and metrics
+
+paths:
+  /api/openapi.json:
+    get:
+      operationId: getOpenAPISpec
+      summary: OpenAPI specification
+      tags: [discovery]
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI spec as JSON
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Full health check
+      tags: [health]
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/health/live:
+    get:
+      operationId: getHealthLive
+      summary: Liveness probe
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthLiveResponse"
+
+  /api/health/ready:
+    get:
+      operationId: getHealthReady
+      summary: Readiness probe
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthReadyResponse"
+        "503":
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthReadyResponse"
+
+  /api/system:
+    get:
+      operationId: getSystem
+      summary: System information
+      tags: [health]
+      responses:
+        "200":
+          description: System info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemResponse"
+
+  /api/system/recompress/trigger:
+    post:
+      operationId: triggerRecompression
+      summary: Trigger manual recompression
+      tags: [health]
+      responses:
+        "202":
+          description: Recompression started
+        "409":
+          description: Recompression already in progress
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      summary: Prometheus metrics
+      tags: [health]
+      responses:
+        "200":
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    StatusOk:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+    ListEnvelope:
+      type: object
+      required: [items, total, limit, offset, has_more]
+      properties:
+        items:
+          type: array
+          items: {}
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+
+    HealthResponse:
+      type: object
+      required: [status, checks, version, uptime]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          $ref: "#/components/schemas/HealthChecks"
+        version:
+          type: string
+        uptime:
+          type: string
+
+    HealthChecks:
+      type: object
+      required: [database, mqtt, cameras, storage]
+      properties:
+        database:
+          type: string
+          enum: [ok, error]
+        mqtt:
+          type: string
+          enum: [connected, disconnected, disabled]
+        cameras:
+          $ref: "#/components/schemas/CameraHealthCheck"
+        storage:
+          $ref: "#/components/schemas/StorageHealthCheck"
+
+    CameraHealthCheck:
+      type: object
+      required: [total, online]
+      properties:
+        total:
+          type: integer
+        online:
+          type: integer
+
+    StorageHealthCheck:
+      type: object
+      required: [used_bytes, used, disk_available, disk_low, recording_paused, recompression]
+      properties:
+        used_bytes:
+          type: integer
+          format: int64
+        used:
+          type: string
+        disk_available:
+          type: string
+        disk_low:
+          type: boolean
+        recording_paused:
+          type: boolean
+        recompression:
+          $ref: "#/components/schemas/RecompressionStats"
+
+    RecompressionStats:
+      type: object
+      required: [enabled, segments_recompressed, bytes_reclaimed]
+      properties:
+        enabled:
+          type: boolean
+        segments_recompressed:
+          type: integer
+        bytes_reclaimed:
+          type: integer
+          format: int64
+        last_run:
+          type: string
+          format: date-time
+
+    HealthLiveResponse:
+      type: object
+      required: [status, uptime]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        uptime:
+          type: string
+
+    HealthReadyResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, starting, degraded]
+        checks:
+          $ref: "#/components/schemas/ReadyChecks"
+
+    ReadyChecks:
+      type: object
+      required: [initialized, database, cameras]
+      properties:
+        initialized:
+          type: boolean
+        database:
+          type: string
+        cameras:
+          $ref: "#/components/schemas/ReadyCameraCheck"
+        storage:
+          $ref: "#/components/schemas/ReadyStorageCheck"
+
+    ReadyCameraCheck:
+      type: object
+      required: [total, degraded]
+      properties:
+        total:
+          type: integer
+        degraded:
+          type: integer
+
+    ReadyStorageCheck:
+      type: object
+      properties:
+        disk_low:
+          type: boolean
+        recording_paused:
+          type: boolean
+
+    SystemResponse:
+      type: object
+      required: [version, uptime, decoder, cameras, online, storage_bytes, storage]
+      properties:
+        version:
+          type: string
+        uptime:
+          type: string
+        decoder:
+          type: string
+        cameras:
+          type: integer
+        online:
+          type: integer
+        storage_bytes:
+          type: integer
+          format: int64
+        storage:
+          type: string
