@@ -190,6 +190,7 @@ func main() {
 
 	// Start API server early so the UI is available during initialization
 	server := api.New(cfg.API, authChecker, db)
+	server.SetContext(ctx)
 	go func() {
 		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("API server failed", "error", err)

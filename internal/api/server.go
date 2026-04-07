@@ -80,6 +80,9 @@ type Server struct {
 	// SSE event bus for real-time browser notifications
 	sseMu      sync.Mutex
 	sseClients map[chan []byte]struct{}
+
+	// ctx is the application lifetime context (cancelled on shutdown).
+	ctx context.Context
 }
 
 func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Server {
@@ -294,6 +297,12 @@ func (s *Server) registerRoutes() {
 	} else {
 		s.mux.Handle("GET /", http.FileServer(http.FS(staticSub)))
 	}
+}
+
+// SetContext sets the application lifetime context used for background operations
+// triggered by API requests (e.g. manual recompression).
+func (s *Server) SetContext(ctx context.Context) {
+	s.ctx = ctx
 }
 
 func (s *Server) Start() error {
@@ -2544,7 +2553,11 @@ const systemPartialTemplate = `<div class="sys-card">
 </div>{{end}}`
 
 func (s *Server) handleRecompressTrigger(w http.ResponseWriter, r *http.Request) {
-	if err := s.recorder.TriggerRecompression(r.Context()); err != nil {
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.recorder.TriggerRecompression(ctx); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
