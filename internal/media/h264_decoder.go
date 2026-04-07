@@ -134,13 +134,13 @@ func NewH264Decoder() *H264Decoder {
 
 // Decode decodes H264 NAL units (with start codes) and returns YCbCr 4:2:0 image.
 // Returns nil if no frame was produced (need more data).
+//
+// Separate decoder instances are thread-safe — only create/destroy and
+// encoder operations need the global mutex.
 func (d *H264Decoder) Decode(nalData []byte) *image.YCbCr {
 	if d == nil || d.decoder == nil || len(nalData) == 0 {
 		return nil
 	}
-
-	openh264Mu.Lock()
-	defer openh264Mu.Unlock()
 
 	var dst [3][]byte
 	var bufInfo openh264.SBufferInfo
@@ -192,9 +192,6 @@ func (d *H264Decoder) Flush() *image.YCbCr {
 	if d == nil || d.decoder == nil {
 		return nil
 	}
-
-	openh264Mu.Lock()
-	defer openh264Mu.Unlock()
 
 	var dst [3][]byte
 	var bufInfo openh264.SBufferInfo
