@@ -349,6 +349,157 @@ func TestRememberSessionIdleTTL(t *testing.T) {
 	}
 }
 
+func newProxyChecker(t *testing.T, proxyHeader string, trustedProxies []string) *Checker {
+	t.Helper()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+
+	db, err := storage.New(":memory:")
+	if err != nil {
+		t.Fatalf("storage.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	c := New(config.AuthConfig{
+		Users: []config.AuthUser{{
+			Username:     "admin",
+			PasswordHash: string(hash),
+		}},
+		Proxy: config.ProxyAuthConfig{Header: proxyHeader},
+	}, config.APIConfig{
+		Exposure:       "lan",
+		TrustedProxies: trustedProxies,
+	}, db)
+	t.Cleanup(c.Close)
+	return c
+}
+
+func TestProxyAuth_TrustedIP(t *testing.T) {
+	c := newProxyChecker(t, "Remote-User", []string{"10.0.0.1/32"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("Remote-User", "alice")
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal == nil {
+		t.Fatal("expected principal, got nil")
+	}
+	if principal.Kind != AuthKindProxy {
+		t.Fatalf("expected proxy kind, got %q", principal.Kind)
+	}
+	if principal.Username != "alice" {
+		t.Fatalf("expected username alice, got %q", principal.Username)
+	}
+	if !principal.HasAnyScope("*") {
+		t.Fatal("proxy principal should have wildcard scope")
+	}
+}
+
+func TestProxyAuth_UntrustedIP(t *testing.T) {
+	c := newProxyChecker(t, "Remote-User", []string{"10.0.0.1/32"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.RemoteAddr = "192.168.1.99:1234"
+	req.Header.Set("Remote-User", "evil")
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal != nil {
+		t.Fatalf("untrusted IP should not produce a principal, got %+v", principal)
+	}
+}
+
+func TestProxyAuth_EmptyHeader(t *testing.T) {
+	c := newProxyChecker(t, "Remote-User", []string{"10.0.0.1/32"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("Remote-User", "")
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal != nil {
+		t.Fatalf("empty header should not produce a principal, got %+v", principal)
+	}
+}
+
+func TestProxyAuth_Disabled(t *testing.T) {
+	c := newProxyChecker(t, "", []string{"10.0.0.1/32"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("Remote-User", "alice")
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal != nil {
+		t.Fatalf("proxy auth should be disabled, got %+v", principal)
+	}
+}
+
+func TestProxyAuth_CSRFNotRequired(t *testing.T) {
+	c := newProxyChecker(t, "Remote-User", []string{"10.0.0.1/32"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("Remote-User", "alice")
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if !c.RequireCSRF(req, principal) {
+		t.Fatal("proxy-authenticated POST should not require CSRF")
+	}
+}
+
+func TestProxyAuth_FullAccess(t *testing.T) {
+	principal := &Principal{
+		Username: "alice",
+		Kind:     AuthKindProxy,
+		Scopes:   []string{"*"},
+	}
+
+	if !principal.Allows(http.MethodGet, "/api/events") {
+		t.Fatal("proxy principal should allow GET /api/events")
+	}
+	if !principal.Allows(http.MethodDelete, "/api/events") {
+		t.Fatal("proxy principal should allow DELETE /api/events")
+	}
+	if !principal.Allows(http.MethodGet, "/") {
+		t.Fatal("proxy principal should allow GET /")
+	}
+}
+
+func TestProxyAuth_CustomHeader(t *testing.T) {
+	c := newProxyChecker(t, "X-authentik-username", []string{"10.0.0.1/32"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("X-authentik-username", "bob")
+
+	principal, err := c.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	if principal == nil || principal.Username != "bob" {
+		t.Fatalf("expected bob, got %+v", principal)
+	}
+}
+
 func TestRequestIsSecureWithTrustedProxy(t *testing.T) {
 	c := newChecker(t, config.APIConfig{
 		Exposure:       "internet",
