@@ -22,6 +22,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
@@ -511,10 +512,52 @@ type RecompressionStats struct {
 	SegmentsRecompressed int        `json:"segments_recompressed"`
 }
 
+// RecordingCalendarResponse defines model for RecordingCalendarResponse.
+type RecordingCalendarResponse struct {
+	Days []int `json:"days"`
+}
+
+// RecordingSummaryCamera defines model for RecordingSummaryCamera.
+type RecordingSummaryCamera struct {
+	Name       string                          `json:"name"`
+	Segments   []RecordingSummaryCameraSegment `json:"segments"`
+	TotalBytes int64                           `json:"total_bytes"`
+}
+
+// RecordingSummaryCameraSegment defines model for RecordingSummaryCameraSegment.
+type RecordingSummaryCameraSegment struct {
+	EndTime   time.Time `json:"end_time"`
+	SizeBytes int64     `json:"size_bytes"`
+	StartTime time.Time `json:"start_time"`
+}
+
+// RecordingSummaryResponse defines model for RecordingSummaryResponse.
+type RecordingSummaryResponse struct {
+	Cameras    []RecordingSummaryCamera `json:"cameras"`
+	TotalBytes int64                    `json:"total_bytes"`
+}
+
 // ReextractClipResponse defines model for ReextractClipResponse.
 type ReextractClipResponse struct {
 	Event  string `json:"event"`
 	Status string `json:"status"`
+}
+
+// SegmentInfo defines model for SegmentInfo.
+type SegmentInfo struct {
+	EndTime   time.Time `json:"end_time"`
+	Id        int64     `json:"id"`
+	SizeBytes int64     `json:"size_bytes"`
+	StartTime time.Time `json:"start_time"`
+}
+
+// SegmentListEnvelope defines model for SegmentListEnvelope.
+type SegmentListEnvelope struct {
+	HasMore bool          `json:"has_more"`
+	Items   []SegmentInfo `json:"items"`
+	Limit   int           `json:"limit"`
+	Offset  int           `json:"offset"`
+	Total   int           `json:"total"`
 }
 
 // StatusDeleted defines model for StatusDeleted.
@@ -552,6 +595,34 @@ type SystemResponse struct {
 	StorageBytes int64  `json:"storage_bytes"`
 	Uptime       string `json:"uptime"`
 	Version      string `json:"version"`
+}
+
+// TimelineActivity defines model for TimelineActivity.
+type TimelineActivity struct {
+	S float32   `json:"s"`
+	T time.Time `json:"t"`
+}
+
+// TimelineEvent defines model for TimelineEvent.
+type TimelineEvent struct {
+	EndTime   *time.Time `json:"end_time,omitempty"`
+	Id        string     `json:"id"`
+	Label     string     `json:"label"`
+	Score     float32    `json:"score"`
+	Timestamp time.Time  `json:"timestamp"`
+}
+
+// TimelineResponse defines model for TimelineResponse.
+type TimelineResponse struct {
+	Activity []TimelineActivity `json:"activity"`
+	Events   []TimelineEvent    `json:"events"`
+	Segments []TimelineSegment  `json:"segments"`
+}
+
+// TimelineSegment defines model for TimelineSegment.
+type TimelineSegment struct {
+	EndTime   time.Time `json:"end_time"`
+	StartTime time.Time `json:"start_time"`
 }
 
 // TokenRevokedResponse defines model for TokenRevokedResponse.
@@ -598,9 +669,20 @@ type ZonePresence struct {
 	ZoneId      int        `json:"zone_id"`
 }
 
+// GetCameraPlaybackParams defines parameters for GetCameraPlayback.
+type GetCameraPlaybackParams struct {
+	Start    time.Time `form:"start" json:"start"`
+	Duration *int      `form:"duration,omitempty" json:"duration,omitempty"`
+}
+
 // GetCameraThumbnailParams defines parameters for GetCameraThumbnail.
 type GetCameraThumbnailParams struct {
 	T time.Time `form:"t" json:"t"`
+}
+
+// GetCameraTimelineParams defines parameters for GetCameraTimeline.
+type GetCameraTimelineParams struct {
+	Date *openapi_types.Date `form:"date,omitempty" json:"date,omitempty"`
 }
 
 // ListEventsParams defines parameters for ListEvents.
@@ -623,6 +705,30 @@ type GetEventSnapshotParams struct {
 
 	// Raw Set to serve raw image without bounding box overlay
 	Raw *string `form:"raw,omitempty" json:"raw,omitempty"`
+}
+
+// GetRecordingsCalendarParams defines parameters for GetRecordingsCalendar.
+type GetRecordingsCalendarParams struct {
+	Camera *string `form:"camera,omitempty" json:"camera,omitempty"`
+
+	// Month Month in YYYY-MM format
+	Month *string `form:"month,omitempty" json:"month,omitempty"`
+}
+
+// ExportRecordingParams defines parameters for ExportRecording.
+type ExportRecordingParams struct {
+	Start time.Time `form:"start" json:"start"`
+	End   time.Time `form:"end" json:"end"`
+}
+
+// ListSegmentsParams defines parameters for ListSegments.
+type ListSegmentsParams struct {
+	Date *openapi_types.Date `form:"date,omitempty" json:"date,omitempty"`
+}
+
+// GetRecordingsSummaryParams defines parameters for GetRecordingsSummary.
+type GetRecordingsSummaryParams struct {
+	Date *openapi_types.Date `form:"date,omitempty" json:"date,omitempty"`
 }
 
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
@@ -672,15 +778,30 @@ type ServerInterface interface {
 	// Trigger a doorbell press event
 	// (POST /api/cameras/{name}/doorbell)
 	PressDoorbell(w http.ResponseWriter, r *http.Request, name string)
+	// Generate HLS playlist for camera playback
+	// (GET /api/cameras/{name}/playback.m3u8)
+	GetCameraPlayback(w http.ResponseWriter, r *http.Request, name string, params GetCameraPlaybackParams)
 	// Send a PTZ command to a camera
 	// (POST /api/cameras/{name}/ptz)
 	SendPTZCommand(w http.ResponseWriter, r *http.Request, name string)
+	// Serve a full recording segment as MP4
+	// (GET /api/cameras/{name}/segments/{id})
+	GetSegment(w http.ResponseWriter, r *http.Request, name string, id int64)
+	// Serve the fMP4 init segment for HLS playback
+	// (GET /api/cameras/{name}/segments/{id}/hls/init.mp4)
+	GetSegmentInit(w http.ResponseWriter, r *http.Request, name string, id int64)
+	// Serve a re-segmented fMP4 chunk for HLS playback
+	// (GET /api/cameras/{name}/segments/{id}/hls/{segNum})
+	GetSegmentHLS(w http.ResponseWriter, r *http.Request, name string, id int64, segNum int)
 	// Get live camera snapshot
 	// (GET /api/cameras/{name}/snapshot)
 	GetCameraSnapshot(w http.ResponseWriter, r *http.Request, name string)
 	// Get recording thumbnail at a given time
 	// (GET /api/cameras/{name}/thumbnail)
 	GetCameraThumbnail(w http.ResponseWriter, r *http.Request, name string, params GetCameraThumbnailParams)
+	// Get timeline data for a camera on a given date
+	// (GET /api/cameras/{name}/timeline)
+	GetCameraTimeline(w http.ResponseWriter, r *http.Request, name string, params GetCameraTimelineParams)
 	// List zones for a camera
 	// (GET /api/cameras/{name}/zones)
 	ListZones(w http.ResponseWriter, r *http.Request, name string)
@@ -741,6 +862,18 @@ type ServerInterface interface {
 	// OpenAPI specification
 	// (GET /api/openapi.json)
 	GetOpenAPISpec(w http.ResponseWriter, r *http.Request)
+	// Get days with recordings for a given month
+	// (GET /api/recordings/calendar)
+	GetRecordingsCalendar(w http.ResponseWriter, r *http.Request, params GetRecordingsCalendarParams)
+	// Export recording as a single MP4 for a time range
+	// (GET /api/recordings/export/{camera})
+	ExportRecording(w http.ResponseWriter, r *http.Request, camera string, params ExportRecordingParams)
+	// List recording segments for a camera on a given date
+	// (GET /api/recordings/segments/{camera})
+	ListSegments(w http.ResponseWriter, r *http.Request, camera string, params ListSegmentsParams)
+	// Get recording summary for a date across all cameras
+	// (GET /api/recordings/summary)
+	GetRecordingsSummary(w http.ResponseWriter, r *http.Request, params GetRecordingsSummaryParams)
 	// System information
 	// (GET /api/system)
 	GetSystem(w http.ResponseWriter, r *http.Request)
@@ -935,6 +1068,65 @@ func (siw *ServerInterfaceWrapper) PressDoorbell(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetCameraPlayback operation middleware
+func (siw *ServerInterfaceWrapper) GetCameraPlayback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCameraPlaybackParams
+
+	// ------------- Required query parameter "start" -------------
+
+	if paramValue := r.URL.Query().Get("start"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "duration" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "duration", r.URL.Query(), &params.Duration, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "duration", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCameraPlayback(w, r, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SendPTZCommand operation middleware
 func (siw *ServerInterfaceWrapper) SendPTZCommand(w http.ResponseWriter, r *http.Request) {
 
@@ -959,6 +1151,141 @@ func (siw *ServerInterfaceWrapper) SendPTZCommand(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SendPTZCommand(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSegment operation middleware
+func (siw *ServerInterfaceWrapper) GetSegment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSegment(w, r, name, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSegmentInit operation middleware
+func (siw *ServerInterfaceWrapper) GetSegmentInit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSegmentInit(w, r, name, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSegmentHLS operation middleware
+func (siw *ServerInterfaceWrapper) GetSegmentHLS(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "segNum" -------------
+	var segNum int
+
+	err = runtime.BindStyledParameterWithOptions("simple", "segNum", r.PathValue("segNum"), &segNum, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "segNum", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSegmentHLS(w, r, name, id, segNum)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1043,6 +1370,50 @@ func (siw *ServerInterfaceWrapper) GetCameraThumbnail(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCameraThumbnail(w, r, name, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCameraTimeline operation middleware
+func (siw *ServerInterfaceWrapper) GetCameraTimeline(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCameraTimelineParams
+
+	// ------------- Optional query parameter "date" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "date", r.URL.Query(), &params.Date, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "date", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCameraTimeline(w, r, name, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1718,6 +2089,194 @@ func (siw *ServerInterfaceWrapper) GetOpenAPISpec(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetRecordingsCalendar operation middleware
+func (siw *ServerInterfaceWrapper) GetRecordingsCalendar(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRecordingsCalendarParams
+
+	// ------------- Optional query parameter "camera" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "camera", r.URL.Query(), &params.Camera, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "camera", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "month" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "month", r.URL.Query(), &params.Month, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "month", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecordingsCalendar(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportRecording operation middleware
+func (siw *ServerInterfaceWrapper) ExportRecording(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "camera" -------------
+	var camera string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "camera", r.PathValue("camera"), &camera, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "camera", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportRecordingParams
+
+	// ------------- Required query parameter "start" -------------
+
+	if paramValue := r.URL.Query().Get("start"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "end" -------------
+
+	if paramValue := r.URL.Query().Get("end"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		return
+	}
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportRecording(w, r, camera, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSegments operation middleware
+func (siw *ServerInterfaceWrapper) ListSegments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "camera" -------------
+	var camera string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "camera", r.PathValue("camera"), &camera, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "camera", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSegmentsParams
+
+	// ------------- Optional query parameter "date" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "date", r.URL.Query(), &params.Date, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "date", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSegments(w, r, camera, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecordingsSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetRecordingsSummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, CookieAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRecordingsSummaryParams
+
+	// ------------- Optional query parameter "date" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "date", r.URL.Query(), &params.Date, runtime.BindQueryParameterOptions{Type: "string", Format: "date"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "date", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecordingsSummary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSystem operation middleware
 func (siw *ServerInterfaceWrapper) GetSystem(w http.ResponseWriter, r *http.Request) {
 
@@ -1966,9 +2525,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/cameras", wrapper.ListCameras)
 	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}", wrapper.GetCamera)
 	m.HandleFunc("POST "+options.BaseURL+"/api/cameras/{name}/doorbell", wrapper.PressDoorbell)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/playback.m3u8", wrapper.GetCameraPlayback)
 	m.HandleFunc("POST "+options.BaseURL+"/api/cameras/{name}/ptz", wrapper.SendPTZCommand)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/segments/{id}", wrapper.GetSegment)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/segments/{id}/hls/init.mp4", wrapper.GetSegmentInit)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/segments/{id}/hls/{segNum}", wrapper.GetSegmentHLS)
 	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/snapshot", wrapper.GetCameraSnapshot)
 	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/thumbnail", wrapper.GetCameraThumbnail)
+	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/timeline", wrapper.GetCameraTimeline)
 	m.HandleFunc("GET "+options.BaseURL+"/api/cameras/{name}/zones", wrapper.ListZones)
 	m.HandleFunc("POST "+options.BaseURL+"/api/cameras/{name}/zones", wrapper.CreateZone)
 	m.HandleFunc("DELETE "+options.BaseURL+"/api/cameras/{name}/zones/{zone}", wrapper.DeleteZone)
@@ -1989,6 +2553,10 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/health/live", wrapper.GetHealthLive)
 	m.HandleFunc("GET "+options.BaseURL+"/api/health/ready", wrapper.GetHealthReady)
 	m.HandleFunc("GET "+options.BaseURL+"/api/openapi.json", wrapper.GetOpenAPISpec)
+	m.HandleFunc("GET "+options.BaseURL+"/api/recordings/calendar", wrapper.GetRecordingsCalendar)
+	m.HandleFunc("GET "+options.BaseURL+"/api/recordings/export/{camera}", wrapper.ExportRecording)
+	m.HandleFunc("GET "+options.BaseURL+"/api/recordings/segments/{camera}", wrapper.ListSegments)
+	m.HandleFunc("GET "+options.BaseURL+"/api/recordings/summary", wrapper.GetRecordingsSummary)
 	m.HandleFunc("GET "+options.BaseURL+"/api/system", wrapper.GetSystem)
 	m.HandleFunc("POST "+options.BaseURL+"/api/system/recompress/trigger", wrapper.TriggerRecompression)
 	m.HandleFunc("POST "+options.BaseURL+"/api/tokens", wrapper.CreateToken)
@@ -2177,6 +2745,52 @@ func (response PressDoorbell503JSONResponse) VisitPressDoorbellResponse(w http.R
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetCameraPlaybackRequestObject struct {
+	Name   string `json:"name"`
+	Params GetCameraPlaybackParams
+}
+
+type GetCameraPlaybackResponseObject interface {
+	VisitGetCameraPlaybackResponse(w http.ResponseWriter) error
+}
+
+type GetCameraPlayback200ApplicationvndAppleMpegurlResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetCameraPlayback200ApplicationvndAppleMpegurlResponse) VisitGetCameraPlaybackResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetCameraPlayback400JSONResponse Error
+
+func (response GetCameraPlayback400JSONResponse) VisitGetCameraPlaybackResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetCameraPlayback404JSONResponse Error
+
+func (response GetCameraPlayback404JSONResponse) VisitGetCameraPlaybackResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type SendPTZCommandRequestObject struct {
 	Name string `json:"name"`
 	Body *SendPTZCommandJSONRequestBody
@@ -2207,6 +2821,145 @@ func (response SendPTZCommand400JSONResponse) VisitSendPTZCommandResponse(w http
 type SendPTZCommand404JSONResponse Error
 
 func (response SendPTZCommand404JSONResponse) VisitSendPTZCommandResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSegmentRequestObject struct {
+	Name string `json:"name"`
+	Id   int64  `json:"id"`
+}
+
+type GetSegmentResponseObject interface {
+	VisitGetSegmentResponse(w http.ResponseWriter) error
+}
+
+type GetSegment200Videomp4Response struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetSegment200Videomp4Response) VisitGetSegmentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "video/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetSegment400JSONResponse Error
+
+func (response GetSegment400JSONResponse) VisitGetSegmentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSegment404JSONResponse Error
+
+func (response GetSegment404JSONResponse) VisitGetSegmentResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSegmentInitRequestObject struct {
+	Name string `json:"name"`
+	Id   int64  `json:"id"`
+}
+
+type GetSegmentInitResponseObject interface {
+	VisitGetSegmentInitResponse(w http.ResponseWriter) error
+}
+
+type GetSegmentInit200Videomp4Response struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetSegmentInit200Videomp4Response) VisitGetSegmentInitResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "video/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetSegmentInit400JSONResponse Error
+
+func (response GetSegmentInit400JSONResponse) VisitGetSegmentInitResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSegmentInit404JSONResponse Error
+
+func (response GetSegmentInit404JSONResponse) VisitGetSegmentInitResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSegmentHLSRequestObject struct {
+	Name   string `json:"name"`
+	Id     int64  `json:"id"`
+	SegNum int    `json:"segNum"`
+}
+
+type GetSegmentHLSResponseObject interface {
+	VisitGetSegmentHLSResponse(w http.ResponseWriter) error
+}
+
+type GetSegmentHLS200Videomp4Response struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetSegmentHLS200Videomp4Response) VisitGetSegmentHLSResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "video/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetSegmentHLS400JSONResponse Error
+
+func (response GetSegmentHLS400JSONResponse) VisitGetSegmentHLSResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetSegmentHLS404JSONResponse Error
+
+func (response GetSegmentHLS404JSONResponse) VisitGetSegmentHLSResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
 
@@ -2289,6 +3042,33 @@ func (response GetCameraThumbnail400JSONResponse) VisitGetCameraThumbnailRespons
 type GetCameraThumbnail404JSONResponse Error
 
 func (response GetCameraThumbnail404JSONResponse) VisitGetCameraThumbnailResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetCameraTimelineRequestObject struct {
+	Name   string `json:"name"`
+	Params GetCameraTimelineParams
+}
+
+type GetCameraTimelineResponseObject interface {
+	VisitGetCameraTimelineResponse(w http.ResponseWriter) error
+}
+
+type GetCameraTimeline200JSONResponse TimelineResponse
+
+func (response GetCameraTimeline200JSONResponse) VisitGetCameraTimelineResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetCameraTimeline404JSONResponse Error
+
+func (response GetCameraTimeline404JSONResponse) VisitGetCameraTimelineResponse(w http.ResponseWriter) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
 
@@ -2848,6 +3628,104 @@ func (response GetOpenAPISpec200JSONResponse) VisitGetOpenAPISpecResponse(w http
 	return json.NewEncoder(w).Encode(response)
 }
 
+type GetRecordingsCalendarRequestObject struct {
+	Params GetRecordingsCalendarParams
+}
+
+type GetRecordingsCalendarResponseObject interface {
+	VisitGetRecordingsCalendarResponse(w http.ResponseWriter) error
+}
+
+type GetRecordingsCalendar200JSONResponse RecordingCalendarResponse
+
+func (response GetRecordingsCalendar200JSONResponse) VisitGetRecordingsCalendarResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ExportRecordingRequestObject struct {
+	Camera string `json:"camera"`
+	Params ExportRecordingParams
+}
+
+type ExportRecordingResponseObject interface {
+	VisitExportRecordingResponse(w http.ResponseWriter) error
+}
+
+type ExportRecording200Videomp4Response struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response ExportRecording200Videomp4Response) VisitExportRecordingResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "video/mp4")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type ExportRecording400JSONResponse Error
+
+func (response ExportRecording400JSONResponse) VisitExportRecordingResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListSegmentsRequestObject struct {
+	Camera string `json:"camera"`
+	Params ListSegmentsParams
+}
+
+type ListSegmentsResponseObject interface {
+	VisitListSegmentsResponse(w http.ResponseWriter) error
+}
+
+type ListSegments200JSONResponse SegmentListEnvelope
+
+func (response ListSegments200JSONResponse) VisitListSegmentsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type ListSegments404JSONResponse Error
+
+func (response ListSegments404JSONResponse) VisitListSegmentsResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type GetRecordingsSummaryRequestObject struct {
+	Params GetRecordingsSummaryParams
+}
+
+type GetRecordingsSummaryResponseObject interface {
+	VisitGetRecordingsSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetRecordingsSummary200JSONResponse RecordingSummaryResponse
+
+func (response GetRecordingsSummary200JSONResponse) VisitGetRecordingsSummaryResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
 type GetSystemRequestObject struct {
 }
 
@@ -2972,15 +3850,30 @@ type StrictServerInterface interface {
 	// Trigger a doorbell press event
 	// (POST /api/cameras/{name}/doorbell)
 	PressDoorbell(ctx context.Context, request PressDoorbellRequestObject) (PressDoorbellResponseObject, error)
+	// Generate HLS playlist for camera playback
+	// (GET /api/cameras/{name}/playback.m3u8)
+	GetCameraPlayback(ctx context.Context, request GetCameraPlaybackRequestObject) (GetCameraPlaybackResponseObject, error)
 	// Send a PTZ command to a camera
 	// (POST /api/cameras/{name}/ptz)
 	SendPTZCommand(ctx context.Context, request SendPTZCommandRequestObject) (SendPTZCommandResponseObject, error)
+	// Serve a full recording segment as MP4
+	// (GET /api/cameras/{name}/segments/{id})
+	GetSegment(ctx context.Context, request GetSegmentRequestObject) (GetSegmentResponseObject, error)
+	// Serve the fMP4 init segment for HLS playback
+	// (GET /api/cameras/{name}/segments/{id}/hls/init.mp4)
+	GetSegmentInit(ctx context.Context, request GetSegmentInitRequestObject) (GetSegmentInitResponseObject, error)
+	// Serve a re-segmented fMP4 chunk for HLS playback
+	// (GET /api/cameras/{name}/segments/{id}/hls/{segNum})
+	GetSegmentHLS(ctx context.Context, request GetSegmentHLSRequestObject) (GetSegmentHLSResponseObject, error)
 	// Get live camera snapshot
 	// (GET /api/cameras/{name}/snapshot)
 	GetCameraSnapshot(ctx context.Context, request GetCameraSnapshotRequestObject) (GetCameraSnapshotResponseObject, error)
 	// Get recording thumbnail at a given time
 	// (GET /api/cameras/{name}/thumbnail)
 	GetCameraThumbnail(ctx context.Context, request GetCameraThumbnailRequestObject) (GetCameraThumbnailResponseObject, error)
+	// Get timeline data for a camera on a given date
+	// (GET /api/cameras/{name}/timeline)
+	GetCameraTimeline(ctx context.Context, request GetCameraTimelineRequestObject) (GetCameraTimelineResponseObject, error)
 	// List zones for a camera
 	// (GET /api/cameras/{name}/zones)
 	ListZones(ctx context.Context, request ListZonesRequestObject) (ListZonesResponseObject, error)
@@ -3041,6 +3934,18 @@ type StrictServerInterface interface {
 	// OpenAPI specification
 	// (GET /api/openapi.json)
 	GetOpenAPISpec(ctx context.Context, request GetOpenAPISpecRequestObject) (GetOpenAPISpecResponseObject, error)
+	// Get days with recordings for a given month
+	// (GET /api/recordings/calendar)
+	GetRecordingsCalendar(ctx context.Context, request GetRecordingsCalendarRequestObject) (GetRecordingsCalendarResponseObject, error)
+	// Export recording as a single MP4 for a time range
+	// (GET /api/recordings/export/{camera})
+	ExportRecording(ctx context.Context, request ExportRecordingRequestObject) (ExportRecordingResponseObject, error)
+	// List recording segments for a camera on a given date
+	// (GET /api/recordings/segments/{camera})
+	ListSegments(ctx context.Context, request ListSegmentsRequestObject) (ListSegmentsResponseObject, error)
+	// Get recording summary for a date across all cameras
+	// (GET /api/recordings/summary)
+	GetRecordingsSummary(ctx context.Context, request GetRecordingsSummaryRequestObject) (GetRecordingsSummaryResponseObject, error)
 	// System information
 	// (GET /api/system)
 	GetSystem(ctx context.Context, request GetSystemRequestObject) (GetSystemResponseObject, error)
@@ -3273,6 +4178,33 @@ func (sh *strictHandler) PressDoorbell(w http.ResponseWriter, r *http.Request, n
 	}
 }
 
+// GetCameraPlayback operation middleware
+func (sh *strictHandler) GetCameraPlayback(w http.ResponseWriter, r *http.Request, name string, params GetCameraPlaybackParams) {
+	var request GetCameraPlaybackRequestObject
+
+	request.Name = name
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCameraPlayback(ctx, request.(GetCameraPlaybackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCameraPlayback")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCameraPlaybackResponseObject); ok {
+		if err := validResponse.VisitGetCameraPlaybackResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // SendPTZCommand operation middleware
 func (sh *strictHandler) SendPTZCommand(w http.ResponseWriter, r *http.Request, name string) {
 	var request SendPTZCommandRequestObject
@@ -3299,6 +4231,88 @@ func (sh *strictHandler) SendPTZCommand(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SendPTZCommandResponseObject); ok {
 		if err := validResponse.VisitSendPTZCommandResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSegment operation middleware
+func (sh *strictHandler) GetSegment(w http.ResponseWriter, r *http.Request, name string, id int64) {
+	var request GetSegmentRequestObject
+
+	request.Name = name
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSegment(ctx, request.(GetSegmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSegment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSegmentResponseObject); ok {
+		if err := validResponse.VisitGetSegmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSegmentInit operation middleware
+func (sh *strictHandler) GetSegmentInit(w http.ResponseWriter, r *http.Request, name string, id int64) {
+	var request GetSegmentInitRequestObject
+
+	request.Name = name
+	request.Id = id
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSegmentInit(ctx, request.(GetSegmentInitRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSegmentInit")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSegmentInitResponseObject); ok {
+		if err := validResponse.VisitGetSegmentInitResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSegmentHLS operation middleware
+func (sh *strictHandler) GetSegmentHLS(w http.ResponseWriter, r *http.Request, name string, id int64, segNum int) {
+	var request GetSegmentHLSRequestObject
+
+	request.Name = name
+	request.Id = id
+	request.SegNum = segNum
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSegmentHLS(ctx, request.(GetSegmentHLSRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSegmentHLS")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSegmentHLSResponseObject); ok {
+		if err := validResponse.VisitGetSegmentHLSResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -3352,6 +4366,33 @@ func (sh *strictHandler) GetCameraThumbnail(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetCameraThumbnailResponseObject); ok {
 		if err := validResponse.VisitGetCameraThumbnailResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCameraTimeline operation middleware
+func (sh *strictHandler) GetCameraTimeline(w http.ResponseWriter, r *http.Request, name string, params GetCameraTimelineParams) {
+	var request GetCameraTimelineRequestObject
+
+	request.Name = name
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCameraTimeline(ctx, request.(GetCameraTimelineRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCameraTimeline")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCameraTimelineResponseObject); ok {
+		if err := validResponse.VisitGetCameraTimelineResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -3899,6 +4940,112 @@ func (sh *strictHandler) GetOpenAPISpec(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// GetRecordingsCalendar operation middleware
+func (sh *strictHandler) GetRecordingsCalendar(w http.ResponseWriter, r *http.Request, params GetRecordingsCalendarParams) {
+	var request GetRecordingsCalendarRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRecordingsCalendar(ctx, request.(GetRecordingsCalendarRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRecordingsCalendar")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRecordingsCalendarResponseObject); ok {
+		if err := validResponse.VisitGetRecordingsCalendarResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExportRecording operation middleware
+func (sh *strictHandler) ExportRecording(w http.ResponseWriter, r *http.Request, camera string, params ExportRecordingParams) {
+	var request ExportRecordingRequestObject
+
+	request.Camera = camera
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportRecording(ctx, request.(ExportRecordingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportRecording")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportRecordingResponseObject); ok {
+		if err := validResponse.VisitExportRecordingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSegments operation middleware
+func (sh *strictHandler) ListSegments(w http.ResponseWriter, r *http.Request, camera string, params ListSegmentsParams) {
+	var request ListSegmentsRequestObject
+
+	request.Camera = camera
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSegments(ctx, request.(ListSegmentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSegments")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSegmentsResponseObject); ok {
+		if err := validResponse.VisitListSegmentsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRecordingsSummary operation middleware
+func (sh *strictHandler) GetRecordingsSummary(w http.ResponseWriter, r *http.Request, params GetRecordingsSummaryParams) {
+	var request GetRecordingsSummaryRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRecordingsSummary(ctx, request.(GetRecordingsSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRecordingsSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRecordingsSummaryResponseObject); ok {
+		if err := validResponse.VisitGetRecordingsSummaryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetSystem operation middleware
 func (sh *strictHandler) GetSystem(w http.ResponseWriter, r *http.Request) {
 	var request GetSystemRequestObject
@@ -4031,73 +5178,87 @@ func (sh *strictHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

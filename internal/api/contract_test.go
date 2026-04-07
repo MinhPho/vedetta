@@ -532,3 +532,134 @@ func TestContract_GetEventCounts(t *testing.T) {
 	}
 	cv.validate(req, rec)
 }
+
+func TestContract_ListSegments(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedSegment(t, db, "test_cam", "/tmp/seg-c1.mp4", now.Add(-10*time.Minute), now, 1048576)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/recordings/segments/test_cam?date=%s", now.Format("2006-01-02")), nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["items"]; !ok {
+		t.Error("response missing 'items' field")
+	}
+	if _, ok := resp["total"]; !ok {
+		t.Error("response missing 'total' field")
+	}
+	if _, ok := resp["has_more"]; !ok {
+		t.Error("response missing 'has_more' field")
+	}
+	items := resp["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 segment, got %d", len(items))
+	}
+	seg := items[0].(map[string]any)
+	if _, ok := seg["id"]; !ok {
+		t.Error("segment missing 'id' field")
+	}
+}
+
+func TestContract_RecordingsCalendar(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	day := time.Date(2025, 3, 15, 10, 0, 0, 0, time.UTC)
+	seedSegment(t, db, "cam1", "/tmp/cal-c1.mp4", day, day.Add(time.Hour), 1024)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recordings/calendar?month=2025-03", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	days, ok := resp["days"].([]any)
+	if !ok {
+		t.Fatal("response missing 'days' array")
+	}
+	if len(days) != 1 {
+		t.Fatalf("expected 1 day, got %d", len(days))
+	}
+}
+
+func TestContract_RecordingsSummary(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	now := time.Date(2025, 3, 15, 10, 0, 0, 0, time.UTC)
+	seedSegment(t, db, "cam1", "/tmp/sum-c1.mp4", now, now.Add(10*time.Minute), 1024*1024)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/recordings/summary?date=2025-03-15", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["cameras"]; !ok {
+		t.Error("response missing 'cameras' field")
+	}
+	if _, ok := resp["total_bytes"]; !ok {
+		t.Error("response missing 'total_bytes' field")
+	}
+}
+
+func TestContract_CameraTimeline(t *testing.T) {
+	srv, db := newTestServer(t)
+	cv := newContractValidator(t)
+
+	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
+
+	now := time.Now().UTC().Truncate(time.Second)
+	seedSegment(t, db, "test_cam", "/tmp/tl-c1.mp4", now.Add(-10*time.Minute), now, 1048576)
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/cameras/test_cam/timeline?date=%s", now.Format("2006-01-02")), nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var resp map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["segments"]; !ok {
+		t.Error("response missing 'segments' field")
+	}
+	if _, ok := resp["events"]; !ok {
+		t.Error("response missing 'events' field")
+	}
+	if _, ok := resp["activity"]; !ok {
+		t.Error("response missing 'activity' field")
+	}
+}

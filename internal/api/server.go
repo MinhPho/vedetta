@@ -1662,6 +1662,7 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type segmentInfo struct {
+		ID        int64     `json:"id"`
 		StartTime time.Time `json:"start_time"`
 		EndTime   time.Time `json:"end_time"`
 		SizeBytes int64     `json:"size_bytes"`
@@ -1670,13 +1671,21 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 	result := make([]segmentInfo, 0, len(segments))
 	for _, seg := range segments {
 		result = append(result, segmentInfo{
+			ID:        seg.ID,
 			StartTime: seg.StartTime,
 			EndTime:   seg.EndTime,
 			SizeBytes: seg.SizeBytes,
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"segments": result})
+	total := len(result)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":    result,
+		"total":    total,
+		"limit":    total,
+		"offset":   0,
+		"has_more": false,
+	})
 }
 
 func (s *Server) handleRecordingExport(w http.ResponseWriter, r *http.Request) {

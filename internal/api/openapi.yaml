@@ -22,6 +22,8 @@ tags:
     description: Detection events, snapshots, clips, and identification
   - name: health
     description: Health checks, system info, and metrics
+  - name: recordings
+    description: Recording segments, playback, calendar, and export
 
 paths:
   /api/auth/login:
@@ -910,6 +912,307 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/recordings/segments/{camera}:
+    get:
+      operationId: listSegments
+      summary: List recording segments for a camera on a given date
+      tags: [recordings]
+      parameters:
+        - name: camera
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Segment list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SegmentListEnvelope"
+        "404":
+          description: Camera not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/recordings/calendar:
+    get:
+      operationId: getRecordingsCalendar
+      summary: Get days with recordings for a given month
+      tags: [recordings]
+      parameters:
+        - name: camera
+          in: query
+          schema:
+            type: string
+        - name: month
+          in: query
+          description: "Month in YYYY-MM format"
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Calendar days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingCalendarResponse"
+
+  /api/recordings/summary:
+    get:
+      operationId: getRecordingsSummary
+      summary: Get recording summary for a date across all cameras
+      tags: [recordings]
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Recording summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingSummaryResponse"
+
+  /api/recordings/export/{camera}:
+    get:
+      operationId: exportRecording
+      summary: Export recording as a single MP4 for a time range
+      tags: [recordings]
+      parameters:
+        - name: camera
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Exported MP4 video
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cameras/{name}/timeline:
+    get:
+      operationId: getCameraTimeline
+      summary: Get timeline data for a camera on a given date
+      tags: [recordings]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Timeline data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineResponse"
+        "404":
+          description: Camera not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cameras/{name}/playback.m3u8:
+    get:
+      operationId: getCameraPlayback
+      summary: Generate HLS playlist for camera playback
+      tags: [recordings]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: duration
+          in: query
+          schema:
+            type: integer
+            default: 600
+      responses:
+        "200":
+          description: HLS playlist
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+        "400":
+          description: Invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Camera or recordings not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cameras/{name}/segments/{id}:
+    get:
+      operationId: getSegment
+      summary: Serve a full recording segment as MP4
+      tags: [recordings]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: MP4 video segment
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid segment ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Segment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cameras/{name}/segments/{id}/hls/init.mp4:
+    get:
+      operationId: getSegmentInit
+      summary: Serve the fMP4 init segment for HLS playback
+      tags: [recordings]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: fMP4 init segment
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid segment ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Segment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cameras/{name}/segments/{id}/hls/{segNum}:
+    get:
+      operationId: getSegmentHLS
+      summary: Serve a re-segmented fMP4 chunk for HLS playback
+      tags: [recordings]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: segNum
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: fMP4 media segment
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid segment ID or segment number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Playlist or segment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1496,3 +1799,142 @@ components:
           format: int64
         storage:
           type: string
+
+    SegmentInfo:
+      type: object
+      required: [id, start_time, end_time, size_bytes]
+      properties:
+        id:
+          type: integer
+          format: int64
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        size_bytes:
+          type: integer
+          format: int64
+
+    SegmentListEnvelope:
+      type: object
+      required: [items, total, limit, offset, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SegmentInfo"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+
+    TimelineSegment:
+      type: object
+      required: [start_time, end_time]
+      properties:
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+
+    TimelineEvent:
+      type: object
+      required: [id, label, score, timestamp]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        score:
+          type: number
+          format: float
+        timestamp:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+
+    TimelineActivity:
+      type: object
+      required: [t, s]
+      properties:
+        t:
+          type: string
+          format: date-time
+        s:
+          type: number
+
+    TimelineResponse:
+      type: object
+      required: [segments, events, activity]
+      properties:
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineSegment"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineEvent"
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineActivity"
+
+    RecordingCalendarResponse:
+      type: object
+      required: [days]
+      properties:
+        days:
+          type: array
+          items:
+            type: integer
+
+    RecordingSummaryCameraSegment:
+      type: object
+      required: [start_time, end_time, size_bytes]
+      properties:
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        size_bytes:
+          type: integer
+          format: int64
+
+    RecordingSummaryCamera:
+      type: object
+      required: [name, segments, total_bytes]
+      properties:
+        name:
+          type: string
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingSummaryCameraSegment"
+        total_bytes:
+          type: integer
+          format: int64
+
+    RecordingSummaryResponse:
+      type: object
+      required: [cameras, total_bytes]
+      properties:
+        cameras:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingSummaryCamera"
+        total_bytes:
+          type: integer
+          format: int64
