@@ -311,6 +311,7 @@ func (c *Checker) authenticateProxyHeader(r *http.Request) *Principal {
 	if username == "" {
 		return nil
 	}
+	slog.Debug("proxy auth", "username", username, "header", c.proxyHeader)
 	return &Principal{
 		Username: username,
 		Kind:     AuthKindProxy,
