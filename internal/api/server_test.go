@@ -34,6 +34,7 @@ func newTestServer(t *testing.T) (*Server, *storage.DB) {
 
 	apiCfg := config.APIConfig{Host: "127.0.0.1", Port: 0}
 	srv := New(apiCfg, nil, db)
+	srv.SetVersion("test")
 	srv.SetSubsystems(mgr, rec, nil, nil, nil, "", "", nil, nil)
 	return srv, db
 }
@@ -207,8 +208,8 @@ func TestHandleHealth(t *testing.T) {
 	if _, ok := body["checks"]; !ok {
 		t.Error("response missing 'checks' key")
 	}
-	if body["version"] != "0.1.0" {
-		t.Errorf("version = %v, want %q", body["version"], "0.1.0")
+	if body["version"] != "test" {
+		t.Errorf("version = %v, want %q", body["version"], "test")
 	}
 
 	ct := w.Header().Get("Content-Type")
@@ -477,8 +478,8 @@ func TestHandleSystemAPI(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if body["version"] != "0.1.0" {
-		t.Errorf("version = %v, want %q", body["version"], "0.1.0")
+	if body["version"] != "test" {
+		t.Errorf("version = %v, want %q", body["version"], "test")
 	}
 	if body["decoder"] != "native Go" {
 		t.Errorf("decoder = %v, want %q", body["decoder"], "native Go")
@@ -698,7 +699,7 @@ func TestHandleSystemPartial(t *testing.T) {
 	if !contains(body, "System Info") {
 		t.Error("response missing 'System Info' header")
 	}
-	if !contains(body, "0.1.0") {
+	if !contains(body, "test") {
 		t.Error("response missing version")
 	}
 	if !contains(body, "Storage") {
