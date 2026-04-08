@@ -359,6 +359,133 @@ func GenerateCameraYAML(cam CameraConfig, comment string) (string, error) {
 	return buf.String(), nil
 }
 
+// findMappingValue finds the value node for a key in a mapping node.
+func findMappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(mapping.Content)-1; i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// writeDocToFile encodes a yaml.Node document and writes it to the given path,
+// preserving the file's existing permissions.
+func writeDocToFile(path string, doc *yaml.Node) error {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(doc); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("closing encoder: %w", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat config: %w", err)
+	}
+	return os.WriteFile(path, buf.Bytes(), info.Mode().Perm())
+}
+
+// UpdateCamera replaces the camera entry at the given index in the cameras
+// sequence with the provided CameraConfig.
+func UpdateCamera(path string, index int, cam CameraConfig) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return fmt.Errorf("unexpected YAML structure")
+	}
+	root := doc.Content[0]
+	camerasSeq := findMappingValue(root, "cameras")
+	if camerasSeq == nil || camerasSeq.Kind != yaml.SequenceNode {
+		return fmt.Errorf("cameras section not found")
+	}
+	if index < 0 || index >= len(camerasSeq.Content) {
+		return fmt.Errorf("camera index %d out of range (have %d cameras)", index, len(camerasSeq.Content))
+	}
+	var camNode yaml.Node
+	if err := camNode.Encode(cam); err != nil {
+		return fmt.Errorf("marshaling camera: %w", err)
+	}
+	camerasSeq.Content[index] = &camNode
+	return writeDocToFile(path, &doc)
+}
+
+// RemoveCamera removes the camera entry at the given index from the cameras
+// sequence, shifting subsequent entries down.
+func RemoveCamera(path string, index int) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return fmt.Errorf("unexpected YAML structure")
+	}
+	root := doc.Content[0]
+	camerasSeq := findMappingValue(root, "cameras")
+	if camerasSeq == nil || camerasSeq.Kind != yaml.SequenceNode {
+		return fmt.Errorf("cameras section not found")
+	}
+	if index < 0 || index >= len(camerasSeq.Content) {
+		return fmt.Errorf("camera index %d out of range (have %d cameras)", index, len(camerasSeq.Content))
+	}
+	camerasSeq.Content = append(camerasSeq.Content[:index], camerasSeq.Content[index+1:]...)
+	return writeDocToFile(path, &doc)
+}
+
+// UpdateAuthPassword updates the password_hash for the given username in the
+// auth.users section of the config file.
+func UpdateAuthPassword(path string, username, newHash string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return fmt.Errorf("unexpected YAML structure")
+	}
+	root := doc.Content[0]
+	authMap := findMappingValue(root, "auth")
+	if authMap == nil || authMap.Kind != yaml.MappingNode {
+		return fmt.Errorf("auth section not found")
+	}
+	usersSeq := findMappingValue(authMap, "users")
+	if usersSeq == nil || usersSeq.Kind != yaml.SequenceNode {
+		return fmt.Errorf("auth.users section not found")
+	}
+	for _, userNode := range usersSeq.Content {
+		if userNode.Kind != yaml.MappingNode {
+			continue
+		}
+		nameVal := findMappingValue(userNode, "username")
+		if nameVal != nil && nameVal.Value == username {
+			hashVal := findMappingValue(userNode, "password_hash")
+			if hashVal != nil {
+				hashVal.Value = newHash
+				return writeDocToFile(path, &doc)
+			}
+		}
+	}
+	return fmt.Errorf("user %q not found in config", username)
+}
+
 // marshalCameraNode creates a yaml.Node for a CameraConfig, adding a head
 // comment if provided.
 func marshalCameraNode(cam CameraConfig, comment string) (*yaml.Node, error) {

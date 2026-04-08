@@ -152,3 +152,87 @@ func TestUpdateDetect_ClearsLabels(t *testing.T) {
 		t.Errorf("ScoreThreshold: got %v, want 0.6", cfg.Detect.ScoreThreshold)
 	}
 }
+
+func TestUpdateCamera_RoundTrip(t *testing.T) {
+	path := writeTempConfig(t, testConfigBase)
+	enabled := true
+	cam := CameraConfig{
+		Name:    "front_door",
+		URL:     "rtsp://old-url",
+		Detect:  DetectStreamConfig{Width: 640, Height: 480, FPS: 5},
+		Record:  StreamConfig{Width: 1920, Height: 1080, FPS: 15},
+		Enabled: &enabled,
+	}
+	if err := AppendCamera(path, cam, ""); err != nil {
+		t.Fatalf("AppendCamera error: %v", err)
+	}
+	cam.URL = "rtsp://new-url"
+	cam.Name = "front_door_renamed"
+	if err := UpdateCamera(path, 0, cam); err != nil {
+		t.Fatalf("UpdateCamera error: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if len(cfg.Cameras) != 1 {
+		t.Fatalf("expected 1 camera, got %d", len(cfg.Cameras))
+	}
+	if cfg.Cameras[0].URL != "rtsp://new-url" {
+		t.Errorf("expected new URL, got %s", cfg.Cameras[0].URL)
+	}
+	if cfg.Cameras[0].Name != "front_door_renamed" {
+		t.Errorf("expected renamed, got %s", cfg.Cameras[0].Name)
+	}
+}
+
+func TestRemoveCamera(t *testing.T) {
+	path := writeTempConfig(t, testConfigBase)
+	enabled := true
+	for _, name := range []string{"cam1", "cam2", "cam3"} {
+		if err := AppendCamera(path, CameraConfig{Name: name, URL: "rtsp://" + name, Enabled: &enabled}, ""); err != nil {
+			t.Fatalf("AppendCamera %s error: %v", name, err)
+		}
+	}
+	if err := RemoveCamera(path, 1); err != nil {
+		t.Fatalf("RemoveCamera error: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if len(cfg.Cameras) != 2 {
+		t.Fatalf("expected 2 cameras, got %d", len(cfg.Cameras))
+	}
+	if cfg.Cameras[0].Name != "cam1" {
+		t.Errorf("expected cam1, got %s", cfg.Cameras[0].Name)
+	}
+	if cfg.Cameras[1].Name != "cam3" {
+		t.Errorf("expected cam3, got %s", cfg.Cameras[1].Name)
+	}
+}
+
+func TestRemoveCamera_InvalidIndex(t *testing.T) {
+	path := writeTempConfig(t, testConfigBase)
+	err := RemoveCamera(path, 0) // no cameras in base config
+	if err == nil {
+		t.Fatal("expected error for out-of-bounds index")
+	}
+}
+
+func TestUpdateAuthPassword(t *testing.T) {
+	path := writeTempConfig(t, testConfigBase)
+	if err := UpdateAuthPassword(path, "admin", "$2a$10$newhashvalue"); err != nil {
+		t.Fatalf("UpdateAuthPassword error: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if len(cfg.Auth.Users) != 1 {
+		t.Fatalf("expected 1 user, got %d", len(cfg.Auth.Users))
+	}
+	if cfg.Auth.Users[0].PasswordHash != "$2a$10$newhashvalue" {
+		t.Errorf("expected new hash, got %s", cfg.Auth.Users[0].PasswordHash)
+	}
+}
