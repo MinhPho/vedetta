@@ -55,6 +55,8 @@ type Server struct {
 	ObjectMatchThreshold float64
 	mqttClient           MQTTPublisher
 	mqttEnabled          bool
+	configPath           string
+	mqttConfig           config.MQTTConfig
 	hlsSegmentCache      sync.Map // map[string][]media.HLSSegmentRef — keyed by "camera:segID"
 	snapshotPath         string
 	faceCropDir          string
@@ -218,6 +220,15 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /partials/system-status", s.handleSystemStatusPartial)
 	s.mux.HandleFunc("GET /partials/system", s.handleSystemPartial)
 
+	// Settings API endpoints
+	s.mux.HandleFunc("GET /api/settings/mqtt", s.GetMQTTSettings)
+	s.mux.HandleFunc("PUT /api/settings/mqtt", s.UpdateMQTTSettings)
+	s.mux.HandleFunc("POST /api/settings/mqtt/test", s.TestMQTTConnection)
+	s.mux.HandleFunc("GET /api/settings/mqtt/discover", s.DiscoverMQTTBrokers)
+	s.mux.HandleFunc("GET /api/updates/status", s.GetUpdateStatus)
+	s.mux.HandleFunc("GET /api/updates/check", s.CheckForUpdates)
+	s.mux.HandleFunc("POST /api/updates/dismiss", s.DismissUpdate)
+
 	// Setup status endpoint (returns "running" in normal mode)
 	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "running"})
@@ -282,6 +293,14 @@ func (s *Server) SetMQTT(publisher MQTTPublisher) {
 
 func (s *Server) SetMQTTEnabled(enabled bool) {
 	s.mqttEnabled = enabled
+}
+
+func (s *Server) SetConfigPath(path string) {
+	s.configPath = path
+}
+
+func (s *Server) SetMQTTConfig(cfg config.MQTTConfig) {
+	s.mqttConfig = cfg
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {

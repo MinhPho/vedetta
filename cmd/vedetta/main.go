@@ -167,6 +167,8 @@ func main() {
 		}
 
 		server.SetVersion(Version)
+		server.SetConfigPath(*configPath)
+		server.SetMQTTConfig(cfg.MQTT)
 		if cfg.Updates.CheckEnabled {
 			checker := update.New(Version, cfg.Updates.CheckInterval, db)
 			checker.Start(ctx)
@@ -210,6 +212,8 @@ func main() {
 	// Start API server early so the UI is available during initialization
 	server := api.New(cfg.API, authChecker, db)
 	server.SetVersion(Version)
+	server.SetConfigPath(*configPath)
+	server.SetMQTTConfig(cfg.MQTT)
 	if cfg.Updates.CheckEnabled {
 		checker := update.New(Version, cfg.Updates.CheckInterval, db)
 		checker.Start(ctx)
