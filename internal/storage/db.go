@@ -221,6 +221,11 @@ func migrate(db *sql.DB) error {
 			score  REAL NOT NULL,
 			PRIMARY KEY (camera, bucket)
 		);
+
+		CREATE TABLE IF NOT EXISTS kv_store (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
 	`)
 	if err != nil {
 		return err
@@ -1941,6 +1946,32 @@ func (d *DB) CountObjectReferences(objectID int64) (int, error) {
 	var count int
 	err := d.db.QueryRow("SELECT COUNT(*) FROM object_references WHERE object_id = ?", objectID).Scan(&count)
 	return count, err
+}
+
+// GetSetting retrieves the value for a key from the kv_store.
+// Returns an empty string (no error) when the key does not exist.
+func (d *DB) GetSetting(key string) (string, error) {
+	var value string
+	err := d.db.QueryRow("SELECT value FROM kv_store WHERE key = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+// SetSetting stores or updates a key-value pair in the kv_store.
+func (d *DB) SetSetting(key, value string) error {
+	_, err := d.db.Exec(
+		"INSERT INTO kv_store (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, value,
+	)
+	return err
+}
+
+// DeleteSetting removes a key from the kv_store. Deleting a non-existent key is not an error.
+func (d *DB) DeleteSetting(key string) error {
+	_, err := d.db.Exec("DELETE FROM kv_store WHERE key = ?", key)
+	return err
 }
 
 func decodeZonePoints(z *camera.Zone, pointsJSON string) error {
