@@ -25,6 +25,7 @@ import (
 	"github.com/rvben/vedetta/internal/rtsp"
 	"github.com/rvben/vedetta/internal/storage"
 	"github.com/rvben/vedetta/internal/stream"
+	"github.com/rvben/vedetta/internal/update"
 )
 
 //go:embed static/*
@@ -40,6 +41,7 @@ type MQTTPublisher interface {
 
 type Server struct {
 	version              string
+	updateChecker        *update.Checker
 	config               config.APIConfig
 	auth                 *auth.Checker
 	db                   *storage.DB
@@ -267,6 +269,10 @@ func (s *Server) Start() error {
 
 func (s *Server) SetVersion(v string) {
 	s.version = v
+}
+
+func (s *Server) SetUpdateChecker(checker *update.Checker) {
+	s.updateChecker = checker
 }
 
 func (s *Server) SetMQTT(publisher MQTTPublisher) {

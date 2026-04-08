@@ -30,6 +30,7 @@ import (
 	"github.com/rvben/vedetta/internal/snapshot"
 	"github.com/rvben/vedetta/internal/storage"
 	"github.com/rvben/vedetta/internal/stream"
+	"github.com/rvben/vedetta/internal/update"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -165,6 +166,14 @@ func main() {
 			}
 		}
 
+		server.SetVersion(Version)
+		if cfg.Updates.CheckEnabled {
+			checker := update.New(Version, cfg.Updates.CheckInterval, db)
+			checker.Start(ctx)
+			defer checker.Stop()
+			server.SetUpdateChecker(checker)
+		}
+
 		slog.Info("vedetta started", "cameras", len(cfg.Cameras))
 
 		sig := make(chan os.Signal, 1)
@@ -201,6 +210,12 @@ func main() {
 	// Start API server early so the UI is available during initialization
 	server := api.New(cfg.API, authChecker, db)
 	server.SetVersion(Version)
+	if cfg.Updates.CheckEnabled {
+		checker := update.New(Version, cfg.Updates.CheckInterval, db)
+		checker.Start(ctx)
+		defer checker.Stop()
+		server.SetUpdateChecker(checker)
+	}
 	server.SetContext(ctx)
 	go func() {
 		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
