@@ -25,7 +25,7 @@
       <a href="/objects.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Objects</a>
       <a href="/system.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>System</a>
     </div>
-    <button class="btn btn-icon btn-ghost" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
+    <button class="btn btn-icon btn-ghost" data-action-click="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
       <svg id="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg id="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
     </button>
@@ -45,19 +45,19 @@
       <!-- Live View -->
       <div class="live-container">
         <div class="live-toolbar hidden" id="live-toolbar">
-          <button id="btn-webrtc" class="btn btn-sm btn-primary hidden" onclick="startMSE()" aria-label="Start live stream">
+          <button id="btn-webrtc" class="btn btn-sm btn-primary hidden" data-action-click="startMSE()" aria-label="Start live stream">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Live
           </button>
-          <button id="btn-mjpeg" class="btn btn-sm hidden" onclick="startMJPEG()" aria-label="Start MJPEG stream">
+          <button id="btn-mjpeg" class="btn btn-sm hidden" data-action-click="startMJPEG()" aria-label="Start MJPEG stream">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             MJPEG
           </button>
-          <button id="btn-stop" class="btn btn-sm hidden" onclick="stopStream()" aria-label="Stop stream">
+          <button id="btn-stop" class="btn btn-sm hidden" data-action-click="stopStream()" aria-label="Stop stream">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
             Stop
           </button>
-          <button id="btn-live" class="btn btn-sm btn-live hidden" onclick="returnToLive()" aria-label="Return to live view">
+          <button id="btn-live" class="btn btn-sm btn-live hidden" data-action-click="returnToLive()" aria-label="Return to live view">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
             Return to Live
           </button>
@@ -77,21 +77,21 @@
             <div class="vc-progress"><div class="vc-progress-bar" id="vc-progress-bar"></div></div>
             <div class="vc-bar">
               <div class="vc-left">
-                <button class="vc-btn" onclick="togglePause()" aria-label="Pause / Play" title="Pause / Play (Space)">
+                <button class="vc-btn" data-action-click="togglePause()" aria-label="Pause / Play" title="Pause / Play (Space)">
                   <svg id="vc-pause-icon" viewBox="0 0 24 24" fill="currentColor" width="20" height="20"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
                   <svg id="vc-play-icon" viewBox="0 0 24 24" fill="currentColor" width="20" height="20" style="display:none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 </button>
-                <button class="vc-btn" onclick="toggleMute()" aria-label="Toggle audio" title="Toggle audio (A)">
+                <button class="vc-btn" data-action-click="toggleMute()" aria-label="Toggle audio" title="Toggle audio (A)">
                   <svg id="mute-icon-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
                   <svg id="mute-icon-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
                 </button>
               </div>
               <div class="vc-right">
-                <button id="btn-go-live" class="vc-live-btn" onclick="seekToLive()" aria-label="Go to live" title="Go to live (L)"><span class="vc-live-dot"></span>LIVE</button>
-                <button class="vc-btn" onclick="togglePiP()" aria-label="Picture in picture" title="Picture-in-Picture (P)">
+                <button id="btn-go-live" class="vc-live-btn" data-action-click="seekToLive()" aria-label="Go to live" title="Go to live (L)"><span class="vc-live-dot"></span>LIVE</button>
+                <button class="vc-btn" data-action-click="togglePiP()" aria-label="Picture in picture" title="Picture-in-Picture (P)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="12" y="9" width="8" height="6" rx="1"/></svg>
                 </button>
-                <button onclick="toggleFullscreen()" aria-label="Fullscreen" title="Fullscreen (F)" class="vc-btn">
+                <button data-action-click="toggleFullscreen()" aria-label="Fullscreen" title="Fullscreen (F)" class="vc-btn">
                   <svg id="fs-icon-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
                   <svg id="fs-icon-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:none"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg>
                 </button>
@@ -132,14 +132,14 @@
       <!-- Timeline -->
       <div class="timeline-container" id="timeline-container">
         <div class="timeline-header">
-          <div class="timeline-date" id="timeline-date" onclick="openTimelineDatePicker()" title="Click to pick a date"></div>
-          <input type="date" id="timeline-date-input" class="timeline-date-input" onchange="onTimelineDatePick(this)" tabindex="-1">
+          <div class="timeline-date" id="timeline-date" data-action-click="openTimelineDatePicker()" title="Click to pick a date"></div>
+          <input type="date" id="timeline-date-input" class="timeline-date-input" data-action-change="onTimelineDatePick(this)" tabindex="-1">
           <div class="timeline-nav">
-            <button class="btn btn-icon btn-sm" onclick="timelineNav(-1)" aria-label="Previous day">
+            <button class="btn btn-icon btn-sm" data-action-click="timelineNav(-1)" aria-label="Previous day">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
-            <button class="btn btn-sm" onclick="timelineToday()">Today</button>
-            <button class="btn btn-icon btn-sm" onclick="timelineNav(1)" aria-label="Next day">
+            <button class="btn btn-sm" data-action-click="timelineToday()">Today</button>
+            <button class="btn btn-icon btn-sm" data-action-click="timelineNav(1)" aria-label="Next day">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
@@ -159,11 +159,11 @@
         <div class="zone-section-header">
           <h2 class="zone-section-title">Zones</h2>
           <div class="zone-section-actions">
-            <button id="btn-zone-add" class="btn btn-sm btn-primary" onclick="zoneStartDraw()">
+            <button id="btn-zone-add" class="btn btn-sm btn-primary" data-action-click="zoneStartDraw()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Zone
             </button>
-            <button id="btn-zone-cancel" class="btn btn-sm hidden" onclick="zoneCancelDraw()">Cancel</button>
+            <button id="btn-zone-cancel" class="btn btn-sm hidden" data-action-click="zoneCancelDraw()">Cancel</button>
           </div>
         </div>
 
@@ -194,9 +194,9 @@
             </label>
           </div>
           <div class="zone-form-actions">
-            <button class="btn btn-sm btn-primary" onclick="zoneSave()">Save</button>
-            <button class="btn btn-sm" onclick="zoneFormCancel()">Cancel</button>
-            <button id="btn-zone-delete" class="btn btn-sm btn-danger hidden" onclick="zoneDelete()">Delete</button>
+            <button class="btn btn-sm btn-primary" data-action-click="zoneSave()">Save</button>
+            <button class="btn btn-sm" data-action-click="zoneFormCancel()">Cancel</button>
+            <button id="btn-zone-delete" class="btn btn-sm btn-danger hidden" data-action-click="zoneDelete()">Delete</button>
           </div>
           <!-- Presence display for zones with track_presence -->
           <div id="zone-presence" class="zone-presence hidden"></div>
@@ -236,7 +236,7 @@
   <div class="shortcut-modal" id="shortcut-modal" role="dialog" aria-label="Keyboard shortcuts">
     <div class="shortcut-modal-header">
       <h2>Keyboard Shortcuts</h2>
-      <button class="btn btn-icon btn-ghost" onclick="closeShortcutModal()" aria-label="Close">
+      <button class="btn btn-icon btn-ghost" data-action-click="closeShortcutModal()" aria-label="Close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>

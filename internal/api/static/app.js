@@ -31,6 +31,10 @@ function el(id) {
   return document.getElementById(id);
 }
 
+function pathSegment(value) {
+  return encodeURIComponent(String(value));
+}
+
 function formatTimeAgo(dateStr) {
   const d = new Date(dateStr);
   const s = Math.floor((Date.now() - d) / 1000);
@@ -101,6 +105,298 @@ document.body.addEventListener('htmx:configRequest', function(evt) {
     var csrf = readCookie('vedetta_csrf');
     if (csrf) {
       evt.detail.headers['X-CSRF-Token'] = csrf;
+    }
+  }
+});
+
+var allowedDataActionFunctions = new Set([
+  'assignFace',
+  'assignToNewPerson',
+  'calendarNav',
+  'closeAccountModal',
+  'closeAssignModal',
+  'closeConfirmModal',
+  'closeIdModal',
+  'closeInputModal',
+  'closeMergeModal',
+  'closeShortcutModal',
+  'closeSnapshotModal',
+  'deleteObject',
+  'deletePerson',
+  'deleteReference',
+  'dismissAppearance',
+  'dismissSighting',
+  'filterIdentifyResults',
+  'idModalAssign',
+  'idModalCreate',
+  'idModalFilter',
+  'idModalIgnore',
+  'idModalNext',
+  'idModalPrev',
+  'idModalSkip',
+  'onTimelineDatePick',
+  'openAccountModal',
+  'openFaceModal',
+  'openTimelineDatePicker',
+  'playEventClip',
+  'playEventRecording',
+  'renameObject',
+  'renamePerson',
+  'returnToLive',
+  'runBackfill',
+  'seekToLive',
+  'selectUnidentified',
+  'setView',
+  'showAddManual',
+  'showFaceSnapshot',
+  'startDiscovery',
+  'startMJPEG',
+  'startMSE',
+  'stopStream',
+  'timelineNav',
+  'timelineToday',
+  'toggleChip',
+  'toggleFullscreen',
+  'toggleIgnore',
+  'toggleMute',
+  'togglePause',
+  'togglePersonFaces',
+  'togglePiP',
+  'toggleTheme',
+  'updateThreshold',
+  'zoneCancelDraw',
+  'zoneDelete',
+  'zoneFormCancel',
+  'zoneSave',
+  'zoneStartDraw'
+]);
+
+function splitTopLevel(input, separator) {
+  var parts = [];
+  var current = '';
+  var quote = '';
+  var depth = 0;
+  for (var i = 0; i < input.length; i++) {
+    var ch = input[i];
+    if (quote) {
+      current += ch;
+      if (ch === '\\' && i + 1 < input.length) {
+        current += input[++i];
+        continue;
+      }
+      if (ch === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (ch === '\'' || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+      current += ch;
+      continue;
+    }
+    if (ch === ')') {
+      if (depth > 0) depth--;
+      current += ch;
+      continue;
+    }
+    if (ch === separator && depth === 0) {
+      if (current.trim()) parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function unquoteActionValue(raw) {
+  var text = String(raw || '').trim();
+  if (text.length < 2) return text;
+  var quote = text[0];
+  if ((quote !== '\'' && quote !== '"') || text[text.length - 1] !== quote) {
+    return text;
+  }
+  var body = text.slice(1, -1);
+  return body
+    .replace(/\\\\/g, '\\')
+    .replace(/\\'/g, '\'')
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t');
+}
+
+function resolveActionValue(raw, element, event) {
+  raw = String(raw || '').trim();
+  if (!raw) return undefined;
+  if (raw === 'this') return element;
+  if (raw === 'this.value') return element && 'value' in element ? element.value : undefined;
+  if (raw === 'this.parentElement') return element ? element.parentElement : null;
+  if (raw === 'event') return event;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (raw === 'null') return null;
+  if (raw === 'undefined') return undefined;
+  if (/^-?\d+(?:\.\d+)?$/.test(raw)) return Number(raw);
+  if ((raw[0] === '\'' && raw[raw.length - 1] === '\'') || (raw[0] === '"' && raw[raw.length - 1] === '"')) {
+    return unquoteActionValue(raw);
+  }
+  var parseFloatMatch = raw.match(/^parseFloat\((.*)\)$/);
+  if (parseFloatMatch) {
+    return parseFloat(resolveActionValue(parseFloatMatch[1], element, event));
+  }
+  return raw;
+}
+
+function executeActionStatement(statement, element, event) {
+  if (!statement) return false;
+  if (statement === 'return false') {
+    return true;
+  }
+  if (statement === 'event.stopPropagation()') {
+    event.stopPropagation();
+    return false;
+  }
+  if (statement === 'this.select()') {
+    if (element && typeof element.select === 'function') {
+      element.select();
+    }
+    return false;
+  }
+
+  var locationMatch = statement.match(/^location\.href\s*=\s*(.+)$/);
+  if (locationMatch) {
+    location.href = String(resolveActionValue(locationMatch[1], element, event));
+    return false;
+  }
+
+  var windowOpenMatch = statement.match(/^window\.open\((.*)\)$/);
+  if (windowOpenMatch) {
+    var openArgs = splitTopLevel(windowOpenMatch[1], ',').map(function(arg) {
+      return resolveActionValue(arg, element, event);
+    });
+    window.open.apply(window, openArgs);
+    return false;
+  }
+
+  var textAssignMatch = statement.match(/^document\.getElementById\((.+)\)\.textContent\s*=\s*(.+)$/);
+  if (textAssignMatch) {
+    var targetId = resolveActionValue(textAssignMatch[1], element, event);
+    var target = document.getElementById(String(targetId));
+    if (target) {
+      target.textContent = String(resolveActionValue(textAssignMatch[2], element, event));
+    }
+    return false;
+  }
+
+  var fnMatch = statement.match(/^([A-Za-z_$][A-Za-z0-9_$]*)\((.*)\)$/);
+  if (!fnMatch) {
+    console.warn('Unsupported data action:', statement);
+    return false;
+  }
+
+  var fnName = fnMatch[1];
+  var fn = window[fnName];
+  if (!allowedDataActionFunctions.has(fnName) || typeof fn !== 'function') {
+    console.warn('Blocked data action:', fnName);
+    return false;
+  }
+
+  var args = splitTopLevel(fnMatch[2], ',').map(function(arg) {
+    return resolveActionValue(arg, element, event);
+  });
+  var result = fn.apply(window, args);
+  return result === false;
+}
+
+function executeDataAction(expression, element, event) {
+  var shouldPreventDefault = false;
+  splitTopLevel(expression, ';').forEach(function(statement) {
+    if (executeActionStatement(statement, element, event)) {
+      shouldPreventDefault = true;
+    }
+  });
+  if (shouldPreventDefault && event.cancelable) {
+    event.preventDefault();
+  }
+}
+
+function bindDelegatedDataAction(eventType, attributeName) {
+  var listenerType = eventType === 'focus' ? 'focusin' : eventType;
+  document.addEventListener(listenerType, function(event) {
+    var element = event.target && event.target.closest ? event.target.closest('[' + attributeName + ']') : null;
+    if (!element || (eventType === 'click' && element.disabled)) {
+      return;
+    }
+    executeDataAction(element.getAttribute(attributeName), element, event);
+  });
+}
+
+bindDelegatedDataAction('click', 'data-action-click');
+bindDelegatedDataAction('change', 'data-action-change');
+bindDelegatedDataAction('input', 'data-action-input');
+bindDelegatedDataAction('focus', 'data-action-focus');
+
+function bindManagedUI(root) {
+  root = root || document;
+
+  root.querySelectorAll('[data-render-detection-overlay]').forEach(function(img) {
+    if (img.dataset.overlayBound === 'true') return;
+    img.dataset.overlayBound = 'true';
+    img.addEventListener('load', function() {
+      renderDetectionOverlay(img);
+    });
+    if (img.complete) {
+      renderDetectionOverlay(img);
+    }
+  });
+
+  root.querySelectorAll('[data-identify-enter-id]').forEach(function(input) {
+    if (input.dataset.identifyBound === 'true') return;
+    input.dataset.identifyBound = 'true';
+    input.addEventListener('keydown', function(event) {
+      if (event.key !== 'Enter') return;
+      identifyEnter(
+        input.value,
+        input.getAttribute('data-identify-enter-id'),
+        input.getAttribute('data-identify-enter-label') || ''
+      );
+    });
+  });
+
+  var idModalSearch = root.querySelector('#id-modal-search');
+  if (idModalSearch && idModalSearch.dataset.keydownBound !== 'true') {
+    idModalSearch.dataset.keydownBound = 'true';
+    idModalSearch.addEventListener('keydown', function(event) {
+      if (typeof window.idModalKeydown === 'function') {
+        window.idModalKeydown(event);
+      }
+    });
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  bindManagedUI(document);
+});
+
+document.body.addEventListener('htmx:afterSwap', function(event) {
+  bindManagedUI(event.target || document);
+});
+
+document.body.addEventListener('htmx:afterRequest', function(event) {
+  var trigger = event.detail && event.detail.elt;
+  if (trigger && trigger.matches('[data-recompress-trigger]')) {
+    if (event.detail.successful) {
+      trigger.textContent = 'Started';
+      trigger.disabled = true;
+    } else {
+      trigger.textContent = 'Already running';
     }
   }
 });
@@ -2642,7 +2938,7 @@ function trackObject(eventId, label) {
   var searchBox = document.getElementById('identify-search');
   var prefill = searchBox ? searchBox.value.trim() : '';
   showInputModal('Track ' + label, 'Name this ' + label + ':', prefill, function(name) {
-    var endpoint = label === 'person' ? '/api/events/' + eventId + '/track-person' : '/api/objects';
+    var endpoint = label === 'person' ? '/api/events/' + pathSegment(eventId) + '/track-person' : '/api/objects';
     var body = label === 'person'
       ? JSON.stringify({name: name})
       : JSON.stringify({event_id: eventId, name: name});
@@ -2664,7 +2960,7 @@ function trackObject(eventId, label) {
 }
 
 function assignPersonToEvent(personId, personName, eventId) {
-  fetch('/api/events/' + eventId + '/assign-person', {
+  fetch('/api/events/' + pathSegment(eventId) + '/assign-person', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({person_id: personId})
@@ -2737,8 +3033,19 @@ function toggleDetectionPopover(box, eventId, label) {
   var pop = document.createElement('div');
   pop.className = 'detection-popover';
 
-  // Build buttons from the sidebar data if available
-  var html = '<div style="font-size:var(--text-sm);font-weight:600;margin-bottom:0.25rem">Identify this ' + label + '</div>';
+  function addActionButton(text, onClick) {
+    var button = document.createElement('button');
+    button.className = 'btn btn-sm';
+    button.style.cssText = 'width:100%;margin-bottom:0.2rem';
+    button.textContent = text;
+    button.addEventListener('click', onClick);
+    pop.appendChild(button);
+  }
+
+  var title = document.createElement('div');
+  title.style.cssText = 'font-size:var(--text-sm);font-weight:600;margin-bottom:0.25rem';
+  title.textContent = 'Identify this ' + label;
+  pop.appendChild(title);
 
   // Check for named people buttons in the sidebar
   var sidebar = document.querySelector('.event-sidebar');
@@ -2747,9 +3054,9 @@ function toggleDetectionPopover(box, eventId, label) {
     personBtns.forEach(function(btn) {
       var match = btn.getAttribute('onclick').match(/assignPersonToEvent\((\d+),\s*'([^']+)'/);
       if (match) {
-        html += '<button class="btn btn-sm" style="width:100%;margin-bottom:0.2rem" '
-          + 'onclick="assignPersonToEvent(' + match[1] + ',\'' + match[2] + '\',\'' + eventId + '\')">'
-          + 'This is ' + match[2] + '</button>';
+        addActionButton('This is ' + match[2], function() {
+          assignPersonToEvent(parseInt(match[1], 10), match[2], eventId);
+        });
       }
     });
   }
@@ -2758,16 +3065,18 @@ function toggleDetectionPopover(box, eventId, label) {
   objectBtns.forEach(function(btn) {
     var match = btn.getAttribute('onclick').match(/addObjectReference\((\d+),\s*'([^']+)'/);
     if (match) {
-      html += '<button class="btn btn-sm" style="width:100%;margin-bottom:0.2rem" '
-        + 'onclick="addObjectReference(' + match[1] + ',\'' + match[2] + '\',\'' + eventId + '\')">'
-        + 'This is ' + match[2] + '</button>';
+      addActionButton('This is ' + match[2], function() {
+        addObjectReference(parseInt(match[1], 10), match[2], eventId);
+      });
     }
   });
 
-  html += '<button class="btn btn-sm btn-ghost" style="width:100%" '
-    + 'onclick="trackObject(\'' + eventId + '\',\'' + label + '\')">Track as new ' + label + '</button>';
-
-  pop.innerHTML = html;
+  var trackButton = document.createElement('button');
+  trackButton.className = 'btn btn-sm btn-ghost';
+  trackButton.style.width = '100%';
+  trackButton.textContent = 'Track as new ' + label;
+  trackButton.addEventListener('click', function() { trackObject(eventId, label); });
+  pop.appendChild(trackButton);
   box.appendChild(pop);
 
   // Close on outside click
@@ -2810,10 +3119,10 @@ function loadIdentifyGrid() {
               if (el) el.style.backgroundImage = 'url(/api/faces/' + faces[0].id + '/crop)';
             }
           });
-        } else if (p.source_event_id) {
-          var el = document.getElementById('id-thumb-' + p.id);
-          if (el) el.style.backgroundImage = 'url(/api/events/' + p.source_event_id + '/detection-crop)';
-        }
+	        } else if (p.source_event_id) {
+	          var el = document.getElementById('id-thumb-' + p.id);
+	          if (el) el.style.backgroundImage = 'url(/api/events/' + pathSegment(p.source_event_id) + '/detection-crop)';
+	        }
       });
     });
   } else {
@@ -2842,30 +3151,49 @@ function renderIdentifyResults(query) {
     return p.name.toLowerCase().indexOf(q) !== -1;
   }) : _identifyData;
 
-  var html = '<div style="display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.25rem">';
+  grid.textContent = '';
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.35rem;margin-top:0.25rem';
   filtered.forEach(function(p) {
-    var escapedName = p.name.replace(/'/g, "\\'");
-    var onclick = p._isObject
-      ? 'addObjectReference(' + p.id + ',\'' + escapedName + '\',\'' + eventId + '\')'
-      : 'assignPersonToEvent(' + p.id + ',\'' + escapedName + '\',\'' + eventId + '\')';
-    html += '<div class="identify-chip" onclick="' + onclick + '" title="' + p.name + '">';
+    var chip = document.createElement('div');
+    chip.className = 'identify-chip';
+    chip.title = p.name;
+    chip.addEventListener('click', function() {
+      if (p._isObject) addObjectReference(p.id, p.name, eventId);
+      else assignPersonToEvent(p.id, p.name, eventId);
+    });
+    var thumb = document.createElement('div');
+    thumb.className = 'identify-chip-thumb';
     if (p._isObject) {
-      html += '<div class="identify-chip-thumb" style="background-image:url(/api/objects/' + p.id + '/crop)"></div>';
+      thumb.style.backgroundImage = 'url(/api/objects/' + pathSegment(p.id) + '/crop)';
     } else {
-      html += '<div class="identify-chip-thumb" id="id-thumb-' + p.id + '"></div>';
+      thumb.id = 'id-thumb-' + p.id;
     }
-    html += '<span>' + p.name + '</span></div>';
+    var name = document.createElement('span');
+    name.textContent = p.name;
+    chip.appendChild(thumb);
+    chip.appendChild(name);
+    wrap.appendChild(chip);
   });
 
   // Show "create new" chip if query doesn't match anything exactly
   if (q && !filtered.some(function(p) { return p.name.toLowerCase() === q; })) {
-    html += '<div class="identify-chip identify-chip-new" onclick="trackObject(\'' + eventId + '\',\'' + label + '\')" title="Track as new">';
-    html += '<div class="identify-chip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--accent)">+</div>';
-    html += '<span>New: ' + raw + '</span></div>';
+    var newChip = document.createElement('div');
+    newChip.className = 'identify-chip identify-chip-new';
+    newChip.title = 'Track as new';
+    newChip.addEventListener('click', function() { trackObject(eventId, label); });
+    var plus = document.createElement('div');
+    plus.className = 'identify-chip-thumb';
+    plus.style.cssText = 'display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--accent)';
+    plus.textContent = '+';
+    var newText = document.createElement('span');
+    newText.textContent = 'New: ' + raw;
+    newChip.appendChild(plus);
+    newChip.appendChild(newText);
+    wrap.appendChild(newChip);
   }
 
-  html += '</div>';
-  grid.innerHTML = html;
+  grid.appendChild(wrap);
 }
 
 function identifyEnter(query, eventId, label) {
@@ -2895,7 +3223,7 @@ if (document.getElementById('identify-grid')) loadIdentifyGrid();
 function reloadEventDetail(eventId) {
   var detail = document.getElementById('event-detail');
   if (detail && typeof htmx !== 'undefined') {
-    htmx.ajax('GET', '/partials/event/' + eventId, {target: '#event-detail', swap: 'innerHTML'});
+    htmx.ajax('GET', '/partials/event/' + pathSegment(eventId), {target: '#event-detail', swap: 'innerHTML'});
   }
 }
 
@@ -2906,13 +3234,13 @@ function showInputModal(title, message, defaultValue, onConfirm) {
     var html = '<div class="shortcut-backdrop" id="input-backdrop"></div>'
       + '<div class="shortcut-modal" id="input-modal" role="dialog">'
       + '<div class="shortcut-modal-header"><h2 id="input-title"></h2>'
-      + '<button class="btn btn-icon btn-ghost" onclick="closeInputModal()" aria-label="Close">'
+      + '<button class="btn btn-icon btn-ghost" data-action-click="closeInputModal()" aria-label="Close">'
       + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>'
       + '<div class="shortcut-modal-body" style="grid-template-columns:1fr;gap:0.75rem;padding:1rem 1.25rem">'
       + '<p id="input-message" style="margin:0;font-size:var(--text-sm);color:var(--text-secondary)"></p>'
       + '<input type="text" id="input-field" class="person-name-input" style="width:100%;padding:0.6rem 0.8rem;font-size:1rem">'
       + '<div style="display:flex;gap:0.5rem;justify-content:flex-end">'
-      + '<button class="btn btn-sm btn-ghost" onclick="closeInputModal()">Cancel</button>'
+      + '<button class="btn btn-sm btn-ghost" data-action-click="closeInputModal()">Cancel</button>'
       + '<button class="btn btn-sm btn-primary" id="input-confirm-btn">OK</button>'
       + '</div></div></div>';
     document.body.insertAdjacentHTML('beforeend', html);
@@ -2945,7 +3273,7 @@ function closeInputModal() {
 }
 
 function addObjectReference(objectId, objectName, eventId) {
-  fetch('/api/objects/' + objectId + '/references', {
+  fetch('/api/objects/' + pathSegment(objectId) + '/references', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({event_id: eventId})
@@ -2997,21 +3325,41 @@ function addObjectReference(objectId, objectName, eventId) {
     // Create notification banner
     var banner = document.createElement('div');
     banner.className = 'doorbell-notification';
-    banner.innerHTML = '<div class="doorbell-notification-inner">'
-      + '<div class="doorbell-icon">'
-      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>'
-      + '</div>'
-      + '<div class="doorbell-content">'
-      + '<div class="doorbell-title">' + person + ' at the door</div>'
-      + '<div class="doorbell-meta">' + camera + '</div>'
-      + '</div>'
-      + '<img class="doorbell-snapshot" src="/api/cameras/' + data.camera + '/snapshot?t=' + Date.now() + '" alt="snapshot">'
-      + '<button class="doorbell-close" onclick="this.parentElement.parentElement.remove()">&times;</button>'
-      + '</div>';
+    var inner = document.createElement('div');
+    inner.className = 'doorbell-notification-inner';
+    var icon = document.createElement('div');
+    icon.className = 'doorbell-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+    var content = document.createElement('div');
+    content.className = 'doorbell-content';
+    var title = document.createElement('div');
+    title.className = 'doorbell-title';
+    title.textContent = person + ' at the door';
+    var meta = document.createElement('div');
+    meta.className = 'doorbell-meta';
+    meta.textContent = camera;
+    var snapshot = document.createElement('img');
+    snapshot.className = 'doorbell-snapshot';
+    snapshot.src = '/api/cameras/' + pathSegment(data.camera || '') + '/snapshot?t=' + Date.now();
+    snapshot.alt = 'snapshot';
+    var close = document.createElement('button');
+    close.className = 'doorbell-close';
+    close.textContent = '\u00d7';
+    close.addEventListener('click', function(e) {
+      e.stopPropagation();
+      banner.remove();
+    });
+    content.appendChild(title);
+    content.appendChild(meta);
+    inner.appendChild(icon);
+    inner.appendChild(content);
+    inner.appendChild(snapshot);
+    inner.appendChild(close);
+    banner.appendChild(inner);
 
     banner.addEventListener('click', function(e) {
       if (e.target.tagName === 'BUTTON') return;
-      window.location.href = '/camera.html?name=' + data.camera;
+      window.location.href = '/camera.html?name=' + encodeURIComponent(data.camera || '');
     });
 
     document.body.appendChild(banner);

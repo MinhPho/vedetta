@@ -25,7 +25,7 @@
       <a href="/objects.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Objects</a>
       <a href="/system.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>System</a>
     </div>
-    <button class="btn btn-icon btn-ghost" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
+    <button class="btn btn-icon btn-ghost" data-action-click="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
       <svg id="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg id="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
     </button>
@@ -46,24 +46,24 @@
 
     <!-- Label Filter Chips -->
     <div class="chip-bar" id="filter-chips" role="toolbar" aria-label="Event filters">
-      <button class="chip active" data-filter="label" data-value="" onclick="toggleChip(this, 'label')">All</button>
-      <button class="chip" data-filter="label" data-value="person" onclick="toggleChip(this, 'label')">
+      <button class="chip active" data-filter="label" data-value="" data-action-click="toggleChip(this, 'label')">All</button>
+      <button class="chip" data-filter="label" data-value="person" data-action-click="toggleChip(this, 'label')">
         <span class="chip-dot person"></span>Person
       </button>
-      <button class="chip" data-filter="label" data-value="car" onclick="toggleChip(this, 'label')">
+      <button class="chip" data-filter="label" data-value="car" data-action-click="toggleChip(this, 'label')">
         <span class="chip-dot car"></span>Car
       </button>
-      <button class="chip" data-filter="label" data-value="dog" onclick="toggleChip(this, 'label')">
+      <button class="chip" data-filter="label" data-value="dog" data-action-click="toggleChip(this, 'label')">
         <span class="chip-dot dog"></span>Dog
       </button>
-      <button class="chip" data-filter="label" data-value="cat" onclick="toggleChip(this, 'label')">
+      <button class="chip" data-filter="label" data-value="cat" data-action-click="toggleChip(this, 'label')">
         <span class="chip-dot cat"></span>Cat
       </button>
     </div>
 
     <!-- Camera Filter Chips -->
     <div class="chip-bar" id="camera-chips" role="toolbar" aria-label="Camera filters">
-      <button class="chip active" data-filter="camera" data-value="" onclick="toggleChip(this, 'camera')">All Cameras</button>
+      <button class="chip active" data-filter="camera" data-value="" data-action-click="toggleChip(this, 'camera')">All Cameras</button>
     </div>
 
     <!-- Object Filter Chips (populated dynamically) -->
@@ -99,7 +99,7 @@
   <div class="shortcut-modal" id="shortcut-modal" role="dialog" aria-label="Keyboard shortcuts">
     <div class="shortcut-modal-header">
       <h2>Keyboard Shortcuts</h2>
-      <button class="btn btn-icon btn-ghost" onclick="closeShortcutModal()" aria-label="Close">
+      <button class="btn btn-icon btn-ghost" data-action-click="closeShortcutModal()" aria-label="Close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -136,38 +136,57 @@
       var byCamera = counts.by_camera || {};
       var total = counts.total || 0;
 
-      // Update label chip counts
-      var allChip = document.querySelector('.chip[data-filter="label"][data-value=""]');
-      if (allChip && total > 0) {
-        allChip.innerHTML = 'All <span class="count">' + total + '</span>';
-      }
-      document.querySelectorAll('.chip[data-filter="label"]').forEach(function(chip) {
-        var val = chip.dataset.value;
-        if (val && byLabel[val]) {
-          var dot = chip.querySelector('.chip-dot');
-          var dotHTML = dot ? dot.outerHTML : '';
-          var label = val.charAt(0).toUpperCase() + val.slice(1);
-          chip.innerHTML = dotHTML + label + ' <span class="count">' + byLabel[val] + '</span>';
-        }
-      });
+	      // Update label chip counts
+	      var allChip = document.querySelector('.chip[data-filter="label"][data-value=""]');
+	      if (allChip && total > 0) {
+	        allChip.textContent = 'All ';
+	        var totalCount = document.createElement('span');
+	        totalCount.className = 'count';
+	        totalCount.textContent = total;
+	        allChip.appendChild(totalCount);
+	      }
+	      document.querySelectorAll('.chip[data-filter="label"]').forEach(function(chip) {
+	        var val = chip.dataset.value;
+	        if (val && byLabel[val]) {
+	          var dot = chip.querySelector('.chip-dot');
+	          var label = val.charAt(0).toUpperCase() + val.slice(1);
+	          chip.textContent = '';
+	          if (dot) chip.appendChild(dot.cloneNode(true));
+	          chip.appendChild(document.createTextNode(label + ' '));
+	          var count = document.createElement('span');
+	          count.className = 'count';
+	          count.textContent = byLabel[val];
+	          chip.appendChild(count);
+	        }
+	      });
 
       // Create camera chips with counts
       var bar = document.getElementById('camera-chips');
-      var allCamChip = document.querySelector('.chip[data-filter="camera"][data-value=""]');
-      if (allCamChip && total > 0) {
-        allCamChip.innerHTML = 'All Cameras <span class="count">' + total + '</span>';
-      }
-      ((camData.items || []).map(function(c) { return c.name; })).forEach(function(name) {
-        var btn = document.createElement('button');
-        btn.className = 'chip';
-        btn.dataset.filter = 'camera';
-        btn.dataset.value = name;
-        var displayName = name.replace(/_/g, ' ');
-        var countHTML = byCamera[name] ? ' <span class="count">' + byCamera[name] + '</span>' : '';
-        btn.innerHTML = displayName + countHTML;
-        btn.onclick = function() { toggleChip(this, 'camera'); };
-        bar.appendChild(btn);
-      });
+	      var allCamChip = document.querySelector('.chip[data-filter="camera"][data-value=""]');
+	      if (allCamChip && total > 0) {
+	        allCamChip.textContent = 'All Cameras ';
+	        var allCamCount = document.createElement('span');
+	        allCamCount.className = 'count';
+	        allCamCount.textContent = total;
+	        allCamChip.appendChild(allCamCount);
+	      }
+	      ((camData.items || []).map(function(c) { return c.name; })).forEach(function(name) {
+	        var btn = document.createElement('button');
+	        btn.className = 'chip';
+	        btn.dataset.filter = 'camera';
+	        btn.dataset.value = name;
+	        var displayName = name.replace(/_/g, ' ');
+	        btn.textContent = displayName;
+	        if (byCamera[name]) {
+	          btn.appendChild(document.createTextNode(' '));
+	          var camCount = document.createElement('span');
+	          camCount.className = 'count';
+	          camCount.textContent = byCamera[name];
+	          btn.appendChild(camCount);
+	        }
+	        btn.onclick = function() { toggleChip(this, 'camera'); };
+	        bar.appendChild(btn);
+	      });
 
       // Object filter chips
       if (objects && objects.length > 0) {
@@ -180,15 +199,15 @@
         allObjBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" style="margin-right:3px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>All Objects';
         allObjBtn.onclick = function() { toggleChip(this, 'object'); };
         objBar.appendChild(allObjBtn);
-        objects.forEach(function(obj) {
-          var btn = document.createElement('button');
-          btn.className = 'chip';
-          btn.dataset.filter = 'object';
-          btn.dataset.value = obj.name;
-          btn.innerHTML = obj.name;
-          btn.onclick = function() { toggleChip(this, 'object'); };
-          objBar.appendChild(btn);
-        });
+	        objects.forEach(function(obj) {
+	          var btn = document.createElement('button');
+	          btn.className = 'chip';
+	          btn.dataset.filter = 'object';
+	          btn.dataset.value = obj.name;
+	          btn.textContent = obj.name;
+	          btn.onclick = function() { toggleChip(this, 'object'); };
+	          objBar.appendChild(btn);
+	        });
       }
     });
   </script>

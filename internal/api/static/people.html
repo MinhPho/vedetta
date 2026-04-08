@@ -47,7 +47,7 @@
       <a href="/objects.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Objects</a>
       <a href="/system.html" class="topnav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>System</a>
     </div>
-    <button class="btn btn-icon btn-ghost" onclick="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
+    <button class="btn btn-icon btn-ghost" data-action-click="toggleTheme()" aria-label="Toggle theme" title="Toggle dark/light theme" id="theme-toggle">
       <svg id="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg id="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:none"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
     </button>
@@ -58,7 +58,7 @@
   <main class="page">
     <div class="page-header" style="display:flex;align-items:center;gap:1rem">
       <h1 style="margin:0">People</h1>
-      <button class="btn btn-sm btn-ghost" id="backfill-btn" onclick="runBackfill()" title="Scan historical snapshots for faces">
+      <button class="btn btn-sm btn-ghost" id="backfill-btn" data-action-click="runBackfill()" title="Scan historical snapshots for faces">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
         Scan History
       </button>
@@ -103,21 +103,20 @@
         <input type="text" id="id-modal-search" class="person-name-input"
           placeholder="Search or type new name..."
           style="width:100%;padding:0.5rem 0.7rem;font-size:1rem;margin-bottom:0.5rem"
-          oninput="idModalFilter(this.value)"
-          onkeydown="idModalKeydown(event)">
+          data-action-input="idModalFilter(this.value)">
         <div id="id-modal-results" style="max-height:250px;overflow-y:auto"></div>
         <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
-          <button class="btn btn-sm btn-ghost" onclick="idModalSkip()" style="flex:1">Skip</button>
-          <button class="btn btn-sm btn-ghost" style="flex:1;color:var(--danger)" onclick="idModalIgnore()">Ignore</button>
+          <button class="btn btn-sm btn-ghost" data-action-click="idModalSkip()" style="flex:1">Skip</button>
+          <button class="btn btn-sm btn-ghost" style="flex:1;color:var(--danger)" data-action-click="idModalIgnore()">Ignore</button>
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:0.75rem">
-          <button class="btn btn-sm" onclick="idModalPrev()">← Previous</button>
+          <button class="btn btn-sm" data-action-click="idModalPrev()">← Previous</button>
           <span id="id-modal-counter" style="font-size:var(--text-sm);color:var(--text-tertiary);align-self:center"></span>
-          <button class="btn btn-sm" onclick="idModalNext()">Next →</button>
+          <button class="btn btn-sm" data-action-click="idModalNext()">Next →</button>
         </div>
       </div>
     </div>
-    <button class="btn btn-icon btn-ghost" onclick="closeIdModal()" aria-label="Close"
+    <button class="btn btn-icon btn-ghost" data-action-click="closeIdModal()" aria-label="Close"
       style="position:absolute;top:0.75rem;right:0.75rem">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
@@ -137,7 +136,7 @@
   <!-- Snapshot Viewer Modal -->
   <div id="snapshot-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:950;cursor:pointer"></div>
   <div id="snapshot-modal" role="dialog" aria-label="Face snapshot" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:960;max-width:90vw;max-height:90vh;text-align:center">
-    <button onclick="closeSnapshotModal()" aria-label="Close" style="position:absolute;top:-2rem;right:0;background:none;border:none;color:#fff;font-size:1.5rem;cursor:pointer">&times;</button>
+    <button data-action-click="closeSnapshotModal()" aria-label="Close" style="position:absolute;top:-2rem;right:0;background:none;border:none;color:#fff;font-size:1.5rem;cursor:pointer">&times;</button>
     <img id="snapshot-img" src="" alt="Full snapshot" style="max-width:90vw;max-height:85vh;border-radius:0.5rem;display:block">
     <div id="snapshot-meta" style="margin-top:0.5rem;font-size:var(--text-sm);color:var(--text-tertiary)"></div>
   </div>
@@ -147,14 +146,14 @@
   <div class="shortcut-modal" id="merge-modal" role="dialog" aria-label="Merge people">
     <div class="shortcut-modal-header">
       <h2>Merge People</h2>
-      <button class="btn btn-icon btn-ghost" onclick="closeMergeModal()" aria-label="Close">
+      <button class="btn btn-icon btn-ghost" data-action-click="closeMergeModal()" aria-label="Close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="shortcut-modal-body" style="grid-template-columns:1fr;gap:0.75rem;padding:1rem 1.25rem">
       <p id="merge-message" style="margin:0;font-size:var(--text-sm);color:var(--text-secondary)"></p>
       <div style="display:flex;gap:0.5rem;justify-content:flex-end">
-        <button class="btn btn-sm btn-ghost" onclick="closeMergeModal()">Cancel</button>
+        <button class="btn btn-sm btn-ghost" data-action-click="closeMergeModal()">Cancel</button>
         <button class="btn btn-sm btn-primary" id="merge-confirm-btn">Merge</button>
       </div>
     </div>
@@ -165,12 +164,12 @@
   <div class="shortcut-modal" id="assign-modal" role="dialog" aria-label="Assign face to person">
     <div class="shortcut-modal-header">
       <h2>Assign to Person</h2>
-      <button class="btn btn-icon btn-ghost" onclick="closeAssignModal()" aria-label="Close">
+      <button class="btn btn-icon btn-ghost" data-action-click="closeAssignModal()" aria-label="Close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="shortcut-modal-body" style="grid-template-columns:1fr;gap:0.5rem;padding:1rem 1.25rem">
-      <button class="btn btn-sm btn-primary" onclick="assignToNewPerson()" style="width:100%">Create New Person</button>
+      <button class="btn btn-sm btn-primary" data-action-click="assignToNewPerson()" style="width:100%">Create New Person</button>
       <div id="assign-people-list" style="display:flex;flex-direction:column;gap:0.375rem;margin-top:0.5rem"></div>
     </div>
   </div>
@@ -180,7 +179,7 @@
   <div class="shortcut-modal" id="shortcut-modal" role="dialog" aria-label="Keyboard shortcuts">
     <div class="shortcut-modal-header">
       <h2>Keyboard Shortcuts</h2>
-      <button class="btn btn-icon btn-ghost" onclick="closeShortcutModal()" aria-label="Close">
+      <button class="btn btn-icon btn-ghost" data-action-click="closeShortcutModal()" aria-label="Close">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
@@ -227,21 +226,21 @@
         var ignoreClass = p.ignore ? ' person-card--ignored' : '';
         html += '<div class="person-card' + ignoreClass + '" data-person-id="' + p.id + '">'
           + '<div class="person-card-header">'
-          + '<div class="person-thumb-wrap" onclick="togglePersonFaces(' + p.id + ')">'
+          + '<div class="person-thumb-wrap" data-action-click="togglePersonFaces(' + p.id + ')">'
           + '<div class="face-thumb person-thumb" id="person-thumb-' + p.id + '"></div>'
           + '</div>'
           + '<div class="person-info">'
           + '<input type="text" class="person-name-input" value="' + escapeAttr(p.name) + '" '
           + 'placeholder="Unnamed" '
-          + 'onchange="renamePerson(' + p.id + ', this.value)" '
-          + 'onfocus="this.select()">'
+          + 'data-action-change="renamePerson(' + p.id + ', this.value)" '
+          + 'data-action-focus="this.select()">'
           + '<div class="person-meta">'
           + (p.face_count > 0 ? '<span class="badge badge-sm">' + p.face_count + ' face' + (p.face_count !== 1 ? 's' : '') + '</span>' : '')
           + (p.appearance_count > 0 ? '<span class="badge badge-sm">' + p.appearance_count + ' appearance' + (p.appearance_count !== 1 ? 's' : '') + '</span>' : '')
           + (!p.face_count && !p.appearance_count ? '<span class="badge badge-sm" style="color:var(--text-tertiary)">No sightings</span>' : '')
-          + '<button class="btn btn-xs ' + (p.ignore ? 'btn-primary' : 'btn-ghost') + '" onclick="toggleIgnore(' + p.id + ', ' + !p.ignore + ')">'
+          + '<button class="btn btn-xs ' + (p.ignore ? 'btn-primary' : 'btn-ghost') + '" data-action-click="toggleIgnore(' + p.id + ', ' + !p.ignore + ')">'
           + (p.ignore ? 'Ignored' : 'Ignore') + '</button>'
-          + '<button class="btn btn-xs btn-ghost btn-danger" onclick="deletePerson(' + p.id + ', \'' + escapeAttr(p.name) + '\')">Delete</button>'
+	          + '<button class="btn btn-xs btn-ghost btn-danger" data-action-click="deletePerson(' + p.id + ', ' + jsStringArg(p.name) + ')">Delete</button>'
           + '</div>'
           + '</div>'
           + '</div>'
@@ -257,7 +256,7 @@
         if (p.best_face_id) {
           thumb.style.backgroundImage = 'url(/api/faces/' + p.best_face_id + '/crop)';
         } else if (p.source_event_id) {
-          thumb.style.backgroundImage = 'url(/api/events/' + p.source_event_id + '/detection-crop)';
+	          thumb.style.backgroundImage = 'url(/api/events/' + encodeURIComponent(p.source_event_id) + '/detection-crop)';
         }
       });
     }
@@ -285,8 +284,8 @@
           html += '<div style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin-bottom:0.25rem">Faces (' + faces.length + ')</div>';
           html += '<div class="face-grid">';
           faces.forEach(function(f) {
-            html += '<div class="face-thumb-wrap-link" onclick="showFaceSnapshot(' + f.id + ',\'' + escapeAttr(f.event_id || '') + '\',\'' + escapeAttr(f.camera || '') + '\')">'
-              + '<div class="face-thumb" style="background-image:url(/api/faces/' + f.id + '/crop)" title="' + (f.camera || '') + ' - ' + new Date(f.timestamp).toLocaleString() + '"></div>'
+	            html += '<div class="face-thumb-wrap-link" data-action-click="showFaceSnapshot(' + f.id + ',' + jsStringArg(f.event_id || '') + ',' + jsStringArg(f.camera || '') + ')">'
+	              + '<div class="face-thumb" style="background-image:url(/api/faces/' + f.id + '/crop)" title="' + escapeAttr(f.camera || '') + ' - ' + escapeAttr(new Date(f.timestamp).toLocaleString()) + '"></div>'
               + '</div>';
           });
           html += '</div>';
@@ -297,9 +296,9 @@
           html += '<div style="font-size:var(--text-sm);font-weight:600;color:var(--text-secondary);margin:0.5rem 0 0.25rem">Appearances (' + events.length + ')</div>';
           html += '<div style="display:flex;gap:0.35rem;flex-wrap:wrap">';
           events.forEach(function(ev) {
-            var src = ev.snapshot_available ? '/api/events/' + ev.id + '/detection-crop' : '/api/cameras/' + ev.camera + '/snapshot';
-            var time = new Date(ev.timestamp).toLocaleString();
-            html += '<a href="/event.html?id=' + ev.id + '" title="' + ev.camera + ' — ' + time + '" style="display:block">'
+	            var src = ev.snapshot_available ? '/api/events/' + encodeURIComponent(ev.id) + '/detection-crop' : '/api/cameras/' + encodeURIComponent(ev.camera) + '/snapshot';
+	            var time = new Date(ev.timestamp).toLocaleString();
+	            html += '<a href="/event.html?id=' + encodeURIComponent(ev.id) + '" title="' + escapeAttr(ev.camera) + ' — ' + escapeAttr(time) + '" style="display:block">'
               + '<div style="width:70px;height:70px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(' + src + ');background-size:cover;background-position:center;border:1px solid var(--border)"></div>'
               + '</a>';
           });
@@ -423,7 +422,7 @@
         section.style.display = '';
         var html = '';
         _unmatchedFaces.forEach(function(f, i) {
-          html += '<div class="unid-card" onclick="openFaceModal(' + i + ')" title="' + (f.camera || '') + ' — ' + new Date(f.timestamp).toLocaleString() + '">'
+	          html += '<div class="unid-card" data-action-click="openFaceModal(' + i + ')" title="' + escapeAttr(f.camera || '') + ' — ' + escapeAttr(new Date(f.timestamp).toLocaleString()) + '">'
             + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/faces/' + f.id + '/crop);background-size:cover;background-position:center"></div>'
             + '</div>';
         });
@@ -466,9 +465,9 @@
         var html = '';
         unidentified.forEach(function(ev) {
           var time = new Date(ev.timestamp).toLocaleString();
-          html += '<div class="unid-card" data-event-id="' + ev.id + '" onclick="selectUnidentified(this, \'' + ev.id + '\')" title="' + ev.camera + ' — ' + time + '">'
-            + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/events/' + ev.id + '/detection-crop);background-size:cover;background-position:center"></div>'
-            + '<button class="unid-dismiss" onclick="event.stopPropagation();dismissAppearance(\'' + ev.id + '\',this.parentElement)" title="Ignore">&times;</button>'
+	          html += '<div class="unid-card" data-event-id="' + escapeAttr(ev.id) + '" data-action-click="selectUnidentified(this, ' + jsStringArg(ev.id) + ')" title="' + escapeAttr(ev.camera) + ' — ' + escapeAttr(time) + '">'
+	            + '<div style="width:70px;height:90px;border-radius:var(--radius-sm);background:var(--surface);background-image:url(/api/events/' + encodeURIComponent(ev.id) + '/detection-crop);background-size:cover;background-position:center"></div>'
+	            + '<button class="unid-dismiss" data-action-click="event.stopPropagation();dismissAppearance(' + jsStringArg(ev.id) + ',this.parentElement)" title="Ignore">&times;</button>'
             + '</div>';
         });
         grid.innerHTML = html;
@@ -504,12 +503,12 @@
       modal.style.display = '';
       backdrop.classList.add('open');
 
-      document.getElementById('id-modal-snapshot').src = '/api/events/' + eventId + '/snapshot';
-      document.getElementById('id-modal-crop').src = '/api/events/' + eventId + '/detection-crop';
+	      document.getElementById('id-modal-snapshot').src = '/api/events/' + encodeURIComponent(eventId) + '/snapshot';
+	      document.getElementById('id-modal-crop').src = '/api/events/' + encodeURIComponent(eventId) + '/detection-crop';
       document.getElementById('id-modal-counter').textContent = (_idModalIndex + 1) + ' / ' + _idModalEvents.length;
 
       // Load event meta
-      fetch('/api/events/' + eventId).then(function(r) { return r.json(); }).then(function(ev) {
+	      fetch('/api/events/' + encodeURIComponent(eventId)).then(function(r) { return r.json(); }).then(function(ev) {
         var time = new Date(ev.timestamp).toLocaleString();
         document.getElementById('id-modal-meta').textContent = ev.camera.replace(/_/g, ' ') + ' — ' + time + ' — ' + Math.round(ev.score * 100) + '%';
       });
@@ -539,15 +538,15 @@
 
       var html = '';
       filtered.slice(0, 10).forEach(function(p) {
-        html += '<div class="identify-chip" style="margin:0.15rem 0;width:100%" onclick="idModalAssign(' + p.id + ',\'' + p.name.replace(/'/g, "\\'") + '\')">'
-          + '<div class="identify-chip-thumb" id="idm-thumb-' + p.id + '"></div>'
-          + '<span>' + p.name + '</span></div>';
+	        html += '<div class="identify-chip" style="margin:0.15rem 0;width:100%" data-action-click="idModalAssign(' + p.id + ',' + jsStringArg(p.name) + ')">'
+	          + '<div class="identify-chip-thumb" id="idm-thumb-' + p.id + '"></div>'
+	          + '<span>' + escapeHtml(p.name) + '</span></div>';
       });
 
       if (raw && !filtered.some(function(p) { return p.name.toLowerCase() === q; })) {
-        html += '<div class="identify-chip identify-chip-new" style="margin:0.15rem 0;width:100%" onclick="idModalCreate(\'' + raw.replace(/'/g, "\\'") + '\')">'
-          + '<div class="identify-chip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--accent)">+</div>'
-          + '<span>New: ' + raw + '</span></div>';
+	        html += '<div class="identify-chip identify-chip-new" style="margin:0.15rem 0;width:100%" data-action-click="idModalCreate(' + jsStringArg(raw) + ')">'
+	          + '<div class="identify-chip-thumb" style="display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--accent)">+</div>'
+	          + '<span>New: ' + escapeHtml(raw) + '</span></div>';
       }
 
       if (!html && !q) {
@@ -577,7 +576,7 @@
 
     function idModalAssign(personId, personName) {
       var eventId = _idModalEvents[_idModalIndex];
-      fetch('/api/events/' + eventId + '/assign-person', {
+	      fetch('/api/events/' + encodeURIComponent(eventId) + '/assign-person', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({person_id: personId})
@@ -593,7 +592,7 @@
 
     function idModalCreate(name) {
       var eventId = _idModalEvents[_idModalIndex];
-      fetch('/api/events/' + eventId + '/track-person', {
+	      fetch('/api/events/' + encodeURIComponent(eventId) + '/track-person', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name: name})
@@ -648,7 +647,7 @@
     }
 
     function dismissAppearance(eventId, card) {
-      fetch('/api/events/' + eventId + '/assign-person', {
+	      fetch('/api/events/' + encodeURIComponent(eventId) + '/assign-person', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ignore: true})
@@ -669,8 +668,8 @@
       var html = '';
       peopleData.forEach(function(p) {
         html += '<button class="btn btn-sm btn-ghost" style="width:100%;text-align:left;justify-content:flex-start" '
-          + 'onclick="assignFace(' + faceId + ',' + p.id + ')">'
-          + escapeAttr(p.name) + ' (' + p.face_count + ' faces)</button>';
+          + 'data-action-click="assignFace(' + faceId + ',' + p.id + ')">'
+	          + escapeHtml(p.name) + ' (' + p.face_count + ' faces)</button>';
       });
       if (!peopleData.length) {
         html = '<div style="color:var(--text-tertiary);font-size:var(--text-sm);padding:0.25rem 0">No existing people. Create a new one above.</div>';
@@ -714,9 +713,17 @@
       });
     }
 
-    function escapeAttr(s) {
-      return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
-    }
+	    function escapeHtml(s) {
+	      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+	    }
+
+	    function escapeAttr(s) {
+	      return escapeHtml(s);
+	    }
+
+	    function jsStringArg(s) {
+	      return escapeAttr(JSON.stringify(String(s || '')));
+	    }
 
     function showFaceSnapshot(faceId, eventId, camera) {
       if (!eventId) {
@@ -729,7 +736,7 @@
       var meta = document.getElementById('snapshot-meta');
 
       meta.textContent = (camera || 'Unknown') + ' — ' + eventId;
-      img.src = '/api/events/' + eventId + '/snapshot';
+	      img.src = '/api/events/' + encodeURIComponent(eventId) + '/snapshot';
       modal.style.display = 'block';
       backdrop.style.display = 'block';
     }

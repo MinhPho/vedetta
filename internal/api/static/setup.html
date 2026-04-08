@@ -449,11 +449,31 @@
 
   <script>
     (function() {
-      // --- Utilities ---
-      function $(id) { return document.getElementById(id); }
+	      // --- Utilities ---
+	      function $(id) { return document.getElementById(id); }
+	      var setupToken = new URLSearchParams(location.search).get('setup_token') || sessionStorage.getItem('vedetta_setup_token') || '';
+	      if (setupToken) {
+	        sessionStorage.setItem('vedetta_setup_token', setupToken);
+	        if (location.search.indexOf('setup_token=') !== -1) {
+	          history.replaceState(null, '', location.pathname);
+	        }
+	      }
 
-      function setStatus(el, message, type) {
-        el.textContent = message || '';
+	      function setupFetch(url, options) {
+	        options = options || {};
+	        var headers = new Headers(options.headers || {});
+	        if (setupToken) headers.set('X-Setup-Token', setupToken);
+	        return fetch(url, Object.assign({}, options, { headers: headers }));
+	      }
+
+	      function setupURL(url) {
+	        if (!setupToken) return url;
+	        var separator = url.indexOf('?') === -1 ? '?' : '&';
+	        return url + separator + 'setup_token=' + encodeURIComponent(setupToken);
+	      }
+
+	      function setStatus(el, message, type) {
+	        el.textContent = message || '';
         el.className = 'status' + (type ? ' ' + type : '');
       }
 
@@ -490,10 +510,10 @@
         adminSubmit.disabled = true;
         setStatus(adminStatus, 'Creating account...', '');
 
-        fetch('/api/setup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: username, password: password })
+	        setupFetch('/api/setup', {
+	          method: 'POST',
+	          headers: { 'Content-Type': 'application/json' },
+	          body: JSON.stringify({ username: username, password: password })
         })
           .then(function(resp) {
             return resp.json().then(function(body) {
@@ -544,7 +564,7 @@
         show($('scan-loading'));
         $('discover-subtitle').textContent = 'Scanning your network for cameras...';
 
-        fetch('/api/discover')
+	        setupFetch('/api/discover')
           .then(function(resp) { return resp.json(); })
           .then(function(data) {
             discoveredCameras = data.cameras || [];
@@ -609,9 +629,8 @@
             html += '<div class="camera-details">';
             if (result.thumbnail) {
               html += '<div class="camera-thumbnail-wrap loading" id="thumb-wrap-' + i + '">';
-              html += '<img class="camera-thumbnail" src="' + escapeHtml(result.thumbnail) + '" alt="Camera preview" loading="lazy"';
-              html += ' onload="this.parentElement.classList.remove(\'loading\')"';
-              html += ' onerror="this.parentElement.style.display=\'none\'">';
+	              html += '<img class="camera-thumbnail" src="' + escapeHtml(setupURL(result.thumbnail)) + '" alt="Camera preview" loading="lazy"';
+              html += '>';
               html += '</div>';
             }
             if (result.streams && result.streams.length > 0) {
@@ -631,13 +650,33 @@
             html += '<div class="override-fields">';
             html += '<input type="text" placeholder="Username" id="override-user-' + i + '">';
             html += '<input type="password" placeholder="Password" id="override-pass-' + i + '">';
-            html += '<button type="button" class="btn btn-secondary btn-small" onclick="retryProbe(' + i + ')">Retry</button>';
+            html += '<button type="button" class="btn btn-secondary btn-small" data-action-click="retryProbe(' + i + ')">Retry</button>';
             html += '</div></details>';
             html += '</div>';
           }
 
           card.innerHTML = html;
+          var thumb = card.querySelector('.camera-thumbnail');
+          if (thumb) {
+            thumb.addEventListener('load', function() {
+              if (thumb.parentElement) thumb.parentElement.classList.remove('loading');
+            });
+            thumb.addEventListener('error', function() {
+              if (thumb.parentElement) thumb.parentElement.style.display = 'none';
+            });
+          }
           list.appendChild(card);
+        });
+
+        list.querySelectorAll('[data-action-click]').forEach(function(btn) {
+          if (btn.dataset.boundAction) return;
+          btn.dataset.boundAction = 'true';
+          btn.addEventListener('click', function(event) {
+            var match = String(btn.getAttribute('data-action-click') || '').match(/^retryProbe\((\d+)\)$/);
+            if (!match) return;
+            event.preventDefault();
+            window.retryProbe(parseInt(match[1], 10));
+          });
         });
 
         // Update checkbox listeners
@@ -671,10 +710,10 @@
           return { ip: c.ip, port: c.port || 554, manufacturer: c.manufacturer || '' };
         });
 
-        fetch('/api/discover/probe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cameras: camerasToProbe, username: username, password: password })
+	        setupFetch('/api/discover/probe', {
+	          method: 'POST',
+	          headers: { 'Content-Type': 'application/json' },
+	          body: JSON.stringify({ cameras: camerasToProbe, username: username, password: password })
         })
           .then(function(resp) { return resp.json(); })
           .then(function(data) {
@@ -701,9 +740,9 @@
         var password = document.getElementById('override-pass-' + index).value;
         if (!username || !password) return;
 
-        fetch('/api/discover/probe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+	        setupFetch('/api/discover/probe', {
+	          method: 'POST',
+	          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             cameras: [{ ip: cam.ip, port: cam.port || 554, manufacturer: cam.manufacturer || '' }],
             username: username,
@@ -748,9 +787,9 @@
           selected.push({ name: name, url: streamUrl, record_url: recordUrl });
         });
 
-        fetch('/api/cameras', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+	        setupFetch('/api/cameras', {
+	          method: 'POST',
+	          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cameras: selected })
         })
           .then(function(resp) { return resp.json(); })
@@ -769,7 +808,7 @@
       // Skip setup
       $('skip-setup').addEventListener('click', function(e) {
         e.preventDefault();
-        fetch('/api/setup/complete', { method: 'POST' })
+	        setupFetch('/api/setup/complete', { method: 'POST' })
           .then(function() { location.href = '/login.html'; })
           .catch(function() { location.href = '/login.html'; });
       });
@@ -780,9 +819,9 @@
         return div.innerHTML;
       }
 
-      function escapeAttr(str) {
-        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      }
+	      function escapeAttr(str) {
+	        return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	      }
     })();
   </script>
 </body>
