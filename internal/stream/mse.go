@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,10 +82,6 @@ const (
 	msePingInterval   = 30 * time.Second
 	mseReadTimeout    = 60 * time.Second
 )
-
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(_ *http.Request) bool { return true },
-}
 
 // mseClient represents a single WebSocket viewer.
 type mseClient struct {
@@ -483,17 +481,46 @@ func (mc *mseConsumer) removeClient(c *mseClient) int {
 
 // MSEManager manages per-camera MSE consumers.
 type MSEManager struct {
-	hub *rtsp.Hub
-	mu  sync.Mutex
-	consumers map[string]*mseConsumer
+	hub            *rtsp.Hub
+	allowedOrigins []string
+	mu             sync.Mutex
+	consumers      map[string]*mseConsumer
 }
 
 // NewMSEManager creates an MSE manager.
-func NewMSEManager(hub *rtsp.Hub) *MSEManager {
+func NewMSEManager(hub *rtsp.Hub, allowedOrigins []string) *MSEManager {
 	return &MSEManager{
-		hub:       hub,
-		consumers: make(map[string]*mseConsumer),
+		hub:            hub,
+		allowedOrigins: append([]string(nil), allowedOrigins...),
+		consumers:      make(map[string]*mseConsumer),
 	}
+}
+
+func originAllowed(r *http.Request, allowedOrigins []string) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+
+	normalized := u.Scheme + "://" + u.Host
+	reqScheme := "http"
+	if r.TLS != nil {
+		reqScheme = "https"
+	}
+	if strings.EqualFold(normalized, reqScheme+"://"+r.Host) {
+		return true
+	}
+	for _, allowed := range allowedOrigins {
+		if strings.EqualFold(strings.TrimSpace(allowed), normalized) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *MSEManager) getOrCreateConsumer(rtspURL string) *mseConsumer {
@@ -541,7 +568,12 @@ func (m *MSEManager) removeConsumerIfEmpty(rtspURL string, expected *mseConsumer
 
 // HandleWebSocket upgrades an HTTP request to a WebSocket and streams fMP4 to the client.
 func (m *MSEManager) HandleWebSocket(w http.ResponseWriter, r *http.Request, cameraName, rtspURL string) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(req *http.Request) bool {
+			return originAllowed(req, m.allowedOrigins)
+		},
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("MSE WebSocket upgrade failed", "camera", cameraName, "error", err)
 		return

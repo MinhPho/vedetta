@@ -20,7 +20,9 @@ import (
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/pion/rtp"
 
+	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/media"
+	"github.com/rvben/vedetta/internal/rtsp"
 )
 
 // DiscoveredCamera represents a camera found via ONVIF WS-Discovery.
@@ -65,8 +67,8 @@ const (
 
 // WS-Discovery XML response structures
 type probeMatchEnvelope struct {
-	XMLName xml.Name   `xml:"Envelope"`
-	Body    probeBody  `xml:"Body"`
+	XMLName xml.Name  `xml:"Envelope"`
+	Body    probeBody `xml:"Body"`
 }
 
 type probeBody struct {
@@ -392,7 +394,7 @@ func GrabThumbnail(rtspURL string, quality int) ([]byte, error) {
 	if err == nil {
 		return jpegData, nil
 	}
-	slog.Debug("RTSP thumbnail failed, trying HTTP snapshot", "url", rtspURL, "error", err)
+	slog.Debug("RTSP thumbnail failed, trying HTTP snapshot", "url", rtsp.SanitizeURL(rtspURL), "error", err)
 
 	// Extract credentials and host from the RTSP URL for HTTP fallback
 	u, parseErr := url.Parse(rtspURL)
@@ -615,20 +617,5 @@ func grabThumbnailHTTP(host, username, password string) ([]byte, error) {
 
 // sanitizeName converts a camera name to a config-friendly identifier.
 func sanitizeName(name string) string {
-	name = strings.ToLower(name)
-	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-
-	var clean strings.Builder
-	for _, c := range name {
-		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
-			clean.WriteRune(c)
-		}
-	}
-
-	result := clean.String()
-	if result == "" {
-		return "camera"
-	}
-	return result
+	return config.SanitizeCameraName(name)
 }

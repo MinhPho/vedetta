@@ -9,20 +9,24 @@ import (
 
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/media"
+	"github.com/rvben/vedetta/internal/safepath"
 )
 
 // ExtractClip creates an event clip by copying relevant segments
 // and trimming to the event's pre/post capture window.
 func (r *Recorder) ExtractClip(_ context.Context, event camera.Event) (string, error) {
-	clipDir := filepath.Join(r.config.Path, event.CameraName, "clips", event.Timestamp.Format("2006-01-02"))
+	clipDir, err := safepath.Join(r.config.Path, event.CameraName, "clips", event.Timestamp.Format("2006-01-02"))
+	if err != nil {
+		return "", fmt.Errorf("resolve clip dir: %w", err)
+	}
 	if err := os.MkdirAll(clipDir, 0o755); err != nil {
 		return "", fmt.Errorf("create clip dir: %w", err)
 	}
 
 	filename := fmt.Sprintf("%s_%s_%s.mp4",
 		event.Timestamp.Format("15-04-05"),
-		event.Label,
-		event.ID,
+		safepath.FileComponent(event.Label),
+		safepath.FileComponent(event.ID),
 	)
 	clipPath := filepath.Join(clipDir, filename)
 

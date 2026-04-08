@@ -21,14 +21,14 @@ import (
 )
 
 const (
-	maxFailures        = 10
-	maxTokenCreations  = 20
-	failureWindow      = 5 * time.Minute
-	cleanupInterval    = time.Minute
-	SessionCookieName  = "vedetta_session"
-	CSRFCookieName     = "vedetta_csrf"
-	SessionAbsoluteTTL = 12 * time.Hour
-	SessionIdleTTL     = 30 * time.Minute
+	maxFailures         = 10
+	maxTokenCreations   = 20
+	failureWindow       = 5 * time.Minute
+	cleanupInterval     = time.Minute
+	SessionCookieName   = "vedetta_session"
+	CSRFCookieName      = "vedetta_csrf"
+	SessionAbsoluteTTL  = 12 * time.Hour
+	SessionIdleTTL      = 30 * time.Minute
 	RememberAbsoluteTTL = 30 * 24 * time.Hour // 30 days
 	RememberIdleTTL     = 7 * 24 * time.Hour  // 7 days
 )
@@ -41,6 +41,7 @@ const (
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInsufficientScope  = errors.New("insufficient scope")
 	ErrRateLimited        = errors.New("rate limited")
 	ErrStorageUnavailable = errors.New("auth storage unavailable")
 )
@@ -416,6 +417,32 @@ func (c *Checker) RequireCSRF(r *http.Request, p *Principal) bool {
 }
 
 func (c *Checker) CreateToken(username, name string, scopes []string, remoteIP string) (*storage.APIToken, string, error) {
+	normalized, err := normalizeTokenScopes(scopes)
+	if err != nil {
+		return nil, "", err
+	}
+	return c.createToken(username, name, normalized, remoteIP)
+}
+
+func (c *Checker) CreateTokenForPrincipal(principal *Principal, name string, scopes []string, remoteIP string) (*storage.APIToken, string, error) {
+	if principal == nil {
+		return nil, "", ErrInvalidCredentials
+	}
+	normalized, err := normalizeTokenScopes(scopes)
+	if err != nil {
+		return nil, "", err
+	}
+	if principal.Kind == AuthKindToken {
+		for _, scope := range normalized {
+			if !principal.HasAnyScope(scope) {
+				return nil, "", ErrInsufficientScope
+			}
+		}
+	}
+	return c.createToken(principal.Username, name, normalized, remoteIP)
+}
+
+func (c *Checker) createToken(username, name string, scopes []string, remoteIP string) (*storage.APIToken, string, error) {
 	if c == nil {
 		return nil, "", ErrInvalidCredentials
 	}
@@ -439,9 +466,6 @@ func (c *Checker) CreateToken(username, name string, scopes []string, remoteIP s
 	}
 	hash := sha256.Sum256([]byte(rawToken))
 	now := time.Now().UTC()
-	if len(scopes) == 0 {
-		scopes = []string{"api:read"}
-	}
 
 	token := &storage.APIToken{
 		Username:    username,
@@ -459,6 +483,29 @@ func (c *Checker) CreateToken(username, name string, scopes []string, remoteIP s
 
 	slog.Info("api token created", "username", username, "token_id", id, "name", name)
 	return token, rawToken, nil
+}
+
+func normalizeTokenScopes(scopes []string) ([]string, error) {
+	if len(scopes) == 0 {
+		return []string{"api:read"}, nil
+	}
+	normalized := make([]string, 0, len(scopes))
+	seen := make(map[string]struct{}, len(scopes))
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return nil, fmt.Errorf("token scope cannot be empty")
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		normalized = append(normalized, scope)
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("token scope cannot be empty")
+	}
+	return normalized, nil
 }
 
 func (c *Checker) RevokeToken(id int64, username string) error {
@@ -681,9 +728,9 @@ func (p *Principal) Allows(method, path string) bool {
 	}
 	if path == "/api/tokens" || strings.HasPrefix(path, "/api/tokens/") {
 		if isSafeMethod(method) {
-			return p.HasAnyScope("tokens:read", "tokens:write", "api:read", "api:*", "*")
+			return p.HasAnyScope("tokens:read", "tokens:write", "api:*", "*")
 		}
-		return p.HasAnyScope("tokens:write", "api:write", "api:*", "*")
+		return p.HasAnyScope("tokens:write", "api:*", "*")
 	}
 	if isSafeMethod(method) {
 		return p.HasAnyScope("api:read", "api:*", "*")

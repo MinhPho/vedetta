@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestSanitizeURL_RedactsCredentialsAndSecrets(t *testing.T) {
+	raw := "rtsp://user:pass@example.com/live?token=abc123&profile=main#frag"
+	got := SanitizeURL(raw)
+	want := "rtsp://example.com/live?profile=main&token=REDACTED"
+	if got != want {
+		t.Fatalf("SanitizeURL() = %q, want %q", got, want)
+	}
+}
+
+func TestSanitizeURL_Invalid(t *testing.T) {
+	if got := SanitizeURL("://bad"); got != "rtsp://***@<invalid>" {
+		t.Fatalf("SanitizeURL() = %q, want invalid placeholder", got)
+	}
+}
+
 func TestHubGetOrCreate_ReturnsSameSource(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

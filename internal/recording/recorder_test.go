@@ -224,7 +224,7 @@ func TestPrepareExport_NoSegments(t *testing.T) {
 	from := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)
 
-	result, err := rec.PrepareExport("cam1", from, to)
+	result, err := rec.PrepareExport(context.Background(), "cam1", from, to)
 	if err == nil {
 		result.Close()
 		t.Fatal("expected error for no segments, got nil")
@@ -246,13 +246,79 @@ func TestPrepareExport_DeletedSegment(t *testing.T) {
 		SizeBytes: 1024,
 	})
 
-	result, err := rec.PrepareExport("cam1", now.Add(-5*time.Minute), now)
+	result, err := rec.PrepareExport(context.Background(), "cam1", now.Add(-5*time.Minute), now)
 	if err == nil {
 		result.Close()
 		t.Fatal("expected error for deleted segment, got nil")
 	}
 	if !strings.Contains(err.Error(), "segments deleted") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareExport_ContextCanceledCleansLateOutput(t *testing.T) {
+	rec, db := newTestRecorder(t)
+
+	segDir := filepath.Join(rec.config.Path, "cam1", "segments")
+	if err := os.MkdirAll(segDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	segPath := filepath.Join(segDir, "segment.mp4")
+	if err := os.WriteFile(segPath, []byte("segment"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	if err := db.SaveSegment(storage.SegmentRecord{
+		Camera:    "cam1",
+		Path:      segPath,
+		StartTime: now.Add(-10 * time.Minute),
+		EndTime:   now,
+		SizeBytes: 7,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	rec.exportProcess = func(inputs []string, outputPath string, start, duration time.Duration) error {
+		started <- outputPath
+		<-release
+		if err := os.WriteFile(outputPath, []byte("late export"), 0o644); err != nil {
+			return err
+		}
+		close(finished)
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := rec.PrepareExport(ctx, "cam1", now.Add(-5*time.Minute), now)
+		errCh <- err
+	}()
+
+	outputPath := <-started
+	cancel()
+
+	if err := <-errCh; err != context.Canceled {
+		t.Fatalf("PrepareExport() error = %v, want %v", err, context.Canceled)
+	}
+
+	close(release)
+	<-finished
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := os.Stat(outputPath)
+		if os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("temporary export file %s was not cleaned up", outputPath)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

@@ -230,6 +230,37 @@ cameras:
 	}
 }
 
+func TestLoadRejectsUnsafeCameraName(t *testing.T) {
+	path := writeConfig(t, `
+cameras:
+  - name: ../../front
+    url: rtsp://localhost/stream
+`)
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected unsafe camera name to be rejected")
+	}
+}
+
+func TestSanitizeCameraName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"Front Door", "front_door"},
+		{"backyard-cam", "backyard_cam"},
+		{"Camera #1", "camera_1"},
+		{"", "camera"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := SanitizeCameraName(tt.input); got != tt.want {
+				t.Fatalf("SanitizeCameraName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadMaxStorage(t *testing.T) {
 	path := writeConfig(t, `
 cameras:

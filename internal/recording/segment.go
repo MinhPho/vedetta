@@ -13,6 +13,7 @@ import (
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/rtsp"
+	"github.com/rvben/vedetta/internal/safepath"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
@@ -54,7 +55,11 @@ func NewSegmentRecorder(cfg config.RecordingConfig, db *storage.DB, hub *rtsp.Hu
 // StartRecording begins continuous segment recording for a camera
 // by creating a RecordingConsumer that receives RTP packets from the Hub.
 func (sr *SegmentRecorder) StartRecording(ctx context.Context, cameraName, rtspURL string) {
-	segDir := filepath.Join(sr.baseDir, cameraName, "segments")
+	segDir, err := safepath.Join(sr.baseDir, cameraName, "segments")
+	if err != nil {
+		slog.Error("invalid segment directory", "camera", cameraName, "error", err)
+		return
+	}
 	if err := os.MkdirAll(segDir, 0o755); err != nil {
 		slog.Error("failed to create segment directory", "camera", cameraName, "error", err)
 		return
@@ -297,4 +302,3 @@ func probeDuration(path string) time.Duration {
 	}
 	return dur
 }
-

@@ -15,6 +15,7 @@ import (
 	"github.com/rvben/vedetta/internal/detect"
 	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/rtsp"
+	"github.com/rvben/vedetta/internal/safepath"
 	"github.com/rvben/vedetta/internal/snapshot"
 )
 
@@ -112,6 +113,10 @@ func NewCamera(cfg config.CameraConfig, detector *detect.Detector, motion config
 	if snapshotQuality <= 0 {
 		snapshotQuality = 85
 	}
+	latestSnapshotPath, err := safepath.Join(recordingPath, cfg.Name, "latest.jpg")
+	if err != nil {
+		slog.Error("invalid latest snapshot path", "camera", cfg.Name, "error", err)
+	}
 	cam := &Camera{
 		config:               cfg,
 		detector:             detector,
@@ -123,7 +128,7 @@ func NewCamera(cfg config.CameraConfig, detector *detect.Detector, motion config
 		hub:                  hub,
 		eventSnapDir:         snapshotPath,
 		eventSnapQuality:     snapshotQuality,
-		latestSnapshotPath:   filepath.Join(recordingPath, cfg.Name, "latest.jpg"),
+		latestSnapshotPath:   latestSnapshotPath,
 		detectEnabled:        cfg.DetectEnabled(),
 		motionMinRegionScore: motion.MinRegionScore,
 		motionActivity:       motionActivity,
@@ -189,6 +194,9 @@ func (c *Camera) snapshotPath() string {
 // still have an image to show.
 func (c *Camera) loadCachedSnapshot() {
 	path := c.snapshotPath()
+	if path == "" {
+		return
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -237,6 +245,9 @@ func (c *Camera) saveCachedSnapshot() {
 	c.mu.RUnlock()
 
 	path := c.snapshotPath()
+	if path == "" {
+		return
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return
 	}
@@ -442,7 +453,7 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 
 		// Generate one annotated frame with ALL bounding boxes (reused for all new events).
 		// Prefer the full-resolution main stream frame; fall back to the detection frame.
-		var cleanFrame *image.RGBA   // clean snapshot for disk (embeddings, crops)
+		var cleanFrame *image.RGBA     // clean snapshot for disk (embeddings, crops)
 		var annotatedFrame *image.RGBA // annotated snapshot for display (MQTT)
 		if c.eventSnapDir != "" {
 			hasNewTrack := false
@@ -555,19 +566,23 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 				}
 
 				if cleanFrame != nil {
-					snapFile := filepath.Join(c.eventSnapDir, c.config.Name, eventID+".jpg")
-					ev.SnapshotPath = snapFile
-					ev.SnapshotImage = cleanFrame // clean frame for disk (embeddings, crops)
-					ev.AnnotatedImage = annotatedFrame // annotated for MQTT display
-					// Scale box to snapshot resolution if different from detect resolution
-					snapW := cleanFrame.Bounds().Dx()
-					snapH := cleanFrame.Bounds().Dy()
-					if snapW != w || snapH != h {
-						ev.Box = [4]int{
-							box[0] * snapW / w,
-							box[1] * snapH / h,
-							box[2] * snapW / w,
-							box[3] * snapH / h,
+					snapFile, err := safepath.Join(c.eventSnapDir, c.config.Name, safepath.FileComponent(eventID)+".jpg")
+					if err != nil {
+						slog.Error("invalid event snapshot path", "camera", c.config.Name, "event", eventID, "error", err)
+					} else {
+						ev.SnapshotPath = snapFile
+						ev.SnapshotImage = cleanFrame      // clean frame for disk (embeddings, crops)
+						ev.AnnotatedImage = annotatedFrame // annotated for MQTT display
+						// Scale box to snapshot resolution if different from detect resolution
+						snapW := cleanFrame.Bounds().Dx()
+						snapH := cleanFrame.Bounds().Dy()
+						if snapW != w || snapH != h {
+							ev.Box = [4]int{
+								box[0] * snapW / w,
+								box[1] * snapH / h,
+								box[2] * snapW / w,
+								box[3] * snapH / h,
+							}
 						}
 					}
 				}

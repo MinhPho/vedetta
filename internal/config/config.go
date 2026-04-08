@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -94,8 +95,8 @@ type RecordingConfig struct {
 	RetainDays       int                 `yaml:"retain_days"`
 	EventRetain      int                 `yaml:"event_retain_days"` // Keep event clips longer than continuous
 	SegmentLength    time.Duration       `yaml:"segment_length"`
-	Continuous       bool                `yaml:"continuous"`     // Record continuously, not just events
-	MaxStorage       string              `yaml:"max_storage"`    // Human-readable max storage (e.g. "10GB", "500MB"); 0 or empty = unlimited
+	Continuous       bool                `yaml:"continuous"`  // Record continuously, not just events
+	MaxStorage       string              `yaml:"max_storage"` // Human-readable max storage (e.g. "10GB", "500MB"); 0 or empty = unlimited
 	TieredStorage    TieredStorageConfig `yaml:"tiered_storage"`
 	maxStorageBytes  int64
 }
@@ -145,6 +146,7 @@ type APIConfig struct {
 	Host           string   `yaml:"host"`
 	Port           int      `yaml:"port"`
 	Exposure       string   `yaml:"exposure"`
+	AllowedOrigins []string `yaml:"allowed_origins"`
 	TrustedProxies []string `yaml:"trusted_proxies"`
 	TLSCert        string   `yaml:"tls_cert"` // path to TLS certificate file (enables HTTPS)
 	TLSKey         string   `yaml:"tls_key"`  // path to TLS private key file
@@ -167,6 +169,71 @@ type AuthConfig struct {
 type AuthUser struct {
 	Username     string `yaml:"username"`
 	PasswordHash string `yaml:"password_hash"`
+}
+
+const MaxCameraNameLength = 64
+
+// ValidateCameraName enforces names that are safe as identifiers and path
+// components. Camera display labels can be handled separately by the UI.
+func ValidateCameraName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if len(name) > MaxCameraNameLength {
+		return fmt.Errorf("name must be at most %d characters", MaxCameraNameLength)
+	}
+	for i, r := range name {
+		if i == 0 && !isASCIIAlnum(r) {
+			return fmt.Errorf("name must start with a letter or digit")
+		}
+		if !isASCIIAlnum(r) && r != '_' && r != '-' {
+			return fmt.Errorf("name may only contain letters, digits, underscores, and hyphens")
+		}
+	}
+	return nil
+}
+
+// SanitizeCameraName converts discovery/display names into safe config names.
+func SanitizeCameraName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	lastSep := false
+	for _, r := range name {
+		var out byte
+		switch {
+		case r >= 'a' && r <= 'z':
+			out = byte(r)
+		case r >= '0' && r <= '9':
+			out = byte(r)
+		case r == ' ', r == '_', r == '-', r == '.':
+			out = '_'
+		case r >= 'A' && r <= 'Z':
+			out = byte(r + ('a' - 'A'))
+		default:
+			continue
+		}
+		if out == '_' {
+			if b.Len() == 0 || lastSep {
+				continue
+			}
+			lastSep = true
+		} else {
+			lastSep = false
+		}
+		b.WriteByte(out)
+		if b.Len() >= MaxCameraNameLength {
+			break
+		}
+	}
+	result := strings.Trim(b.String(), "_-")
+	if result == "" {
+		return "camera"
+	}
+	return result
+}
+
+func isASCIIAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 // Defaults returns a Config populated with all default values.
@@ -272,6 +339,21 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("api.trusted_proxies[%d]: %w", i, err)
 		}
 	}
+	for i, origin := range cfg.API.AllowedOrigins {
+		u, err := url.Parse(origin)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			return nil, fmt.Errorf("api.allowed_origins[%d]: must be an absolute origin", i)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, fmt.Errorf("api.allowed_origins[%d]: scheme must be http or https", i)
+		}
+		if u.Path != "" && u.Path != "/" {
+			return nil, fmt.Errorf("api.allowed_origins[%d]: origin must not include a path", i)
+		}
+		if u.RawQuery != "" || u.Fragment != "" {
+			return nil, fmt.Errorf("api.allowed_origins[%d]: origin must not include query or fragment", i)
+		}
+	}
 
 	if cfg.Auth.Proxy.Header != "" && len(cfg.API.TrustedProxies) == 0 {
 		return nil, fmt.Errorf("auth.proxy.header requires at least one api.trusted_proxies entry")
@@ -291,8 +373,8 @@ func Load(path string) (*Config, error) {
 
 	for i := range cfg.Cameras {
 		cam := &cfg.Cameras[i]
-		if cam.Name == "" {
-			return nil, fmt.Errorf("camera %d: name is required", i)
+		if err := ValidateCameraName(cam.Name); err != nil {
+			return nil, fmt.Errorf("camera %d: %w", i, err)
 		}
 		if cam.URL == "" {
 			return nil, fmt.Errorf("camera %q: url is required", cam.Name)

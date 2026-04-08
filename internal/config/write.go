@@ -40,6 +40,12 @@ type yamlDetect struct {
 
 // WriteInitialConfig writes a new config.yml with auth credentials and all defaults.
 func WriteInitialConfig(path, username, passwordHash string) error {
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("config already exists")
+	} else if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("checking config: %w", err)
+	}
+
 	content, err := GenerateInitialConfigYAML(username, passwordHash)
 	if err != nil {
 		return fmt.Errorf("generating config: %w", err)
@@ -99,6 +105,13 @@ func GenerateInitialConfigYAML(username, passwordHash string) (string, error) {
 // AppendCamera adds a camera to an existing config file using yaml.Node to
 // preserve the existing document structure (comments, ordering, other sections).
 func AppendCamera(path string, cam CameraConfig, comment string) error {
+	if err := ValidateCameraName(cam.Name); err != nil {
+		return fmt.Errorf("invalid camera name: %w", err)
+	}
+	if cam.URL == "" {
+		return fmt.Errorf("camera url is required")
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("reading config: %w", err)
@@ -170,6 +183,13 @@ func AppendCamera(path string, cam CameraConfig, comment string) error {
 
 // GenerateCameraYAML returns a YAML snippet for a camera configuration.
 func GenerateCameraYAML(cam CameraConfig, comment string) (string, error) {
+	if err := ValidateCameraName(cam.Name); err != nil {
+		return "", fmt.Errorf("invalid camera name: %w", err)
+	}
+	if cam.URL == "" {
+		return "", fmt.Errorf("camera url is required")
+	}
+
 	camNode, err := marshalCameraNode(cam, comment)
 	if err != nil {
 		return "", fmt.Errorf("marshaling camera: %w", err)

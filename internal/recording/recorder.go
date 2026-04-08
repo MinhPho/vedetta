@@ -13,18 +13,19 @@ import (
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/rtsp"
+	"github.com/rvben/vedetta/internal/safepath"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
 // StorageStats contains aggregate storage information.
 type StorageStats struct {
-	TotalBytes      int64               `json:"total_bytes"`
-	SegmentCount    int                 `json:"segment_count"`
-	CameraStats     map[string]int64    `json:"camera_stats"`
-	DiskAvailable   uint64              `json:"disk_available_bytes"`
-	DiskLow         bool                `json:"disk_low"`
-	RecordingPaused bool                `json:"recording_paused"`
-	Recompression   RecompressionStats  `json:"recompression"`
+	TotalBytes      int64              `json:"total_bytes"`
+	SegmentCount    int                `json:"segment_count"`
+	CameraStats     map[string]int64   `json:"camera_stats"`
+	DiskAvailable   uint64             `json:"disk_available_bytes"`
+	DiskLow         bool               `json:"disk_low"`
+	RecordingPaused bool               `json:"recording_paused"`
+	Recompression   RecompressionStats `json:"recompression"`
 }
 
 // RecompressionStats summarises the tiered storage recompression feature.
@@ -38,15 +39,16 @@ type RecompressionStats struct {
 
 // Recorder manages saving video clips for detected events.
 type Recorder struct {
-	config       config.RecordingConfig
-	eventConfig  config.EventConfig
-	db           *storage.DB
-	hub          *rtsp.Hub
-	segments     *SegmentRecorder
-	recompressor *Recompressor
-	cameraURLs   map[string]string // camera name → record RTSP URL
-	startTime    time.Time
-	snapshotPath string
+	config        config.RecordingConfig
+	eventConfig   config.EventConfig
+	db            *storage.DB
+	hub           *rtsp.Hub
+	segments      *SegmentRecorder
+	recompressor  *Recompressor
+	cameraURLs    map[string]string // camera name → record RTSP URL
+	startTime     time.Time
+	snapshotPath  string
+	exportProcess func(inputs []string, outputPath string, start, duration time.Duration) error
 
 	// Cached storage stats refreshed in background
 	statsMu     sync.RWMutex
@@ -72,6 +74,12 @@ func New(cfg config.RecordingConfig, eventCfg config.EventConfig, cameras []conf
 		cameraURLs:   make(map[string]string),
 		startTime:    time.Now(),
 		snapshotPath: snapshotPath,
+		exportProcess: func(inputs []string, outputPath string, start, duration time.Duration) error {
+			if len(inputs) == 1 {
+				return media.TrimMP4(inputs[0], outputPath, start, duration)
+			}
+			return media.ConcatMP4(inputs, outputPath, start, duration)
+		},
 	}
 }
 
@@ -115,7 +123,11 @@ func (r *Recorder) StartContinuousRecording(ctx context.Context) {
 	// Reconcile filesystem with database in the background to avoid blocking startup.
 	go func() {
 		for name := range r.cameraURLs {
-			segDir := filepath.Join(r.config.Path, name, "segments")
+			segDir, err := safepath.Join(r.config.Path, name, "segments")
+			if err != nil {
+				slog.Error("invalid segment scan directory", "camera", name, "error", err)
+				continue
+			}
 			r.segments.ScanExistingSegments(name, segDir)
 		}
 	}()
@@ -268,7 +280,7 @@ func (er *ExportResult) Close() {
 // a result that can be streamed. This separates validation/preparation
 // (which can fail with a proper error) from streaming (which happens after
 // HTTP headers are sent).
-func (r *Recorder) PrepareExport(cameraName string, from, to time.Time) (*ExportResult, error) {
+func (r *Recorder) PrepareExport(ctx context.Context, cameraName string, from, to time.Time) (*ExportResult, error) {
 	segments := r.segments.FindSegments(cameraName, from, to)
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("no segments found for camera %q in range %s–%s", cameraName, from.Format(time.RFC3339), to.Format(time.RFC3339))
@@ -311,24 +323,39 @@ func (r *Recorder) PrepareExport(cameraName string, from, to time.Time) (*Export
 	// Run trim/concat with a timeout to prevent hanging on corrupt segments.
 	// Generous limit: 2 minutes per input segment.
 	timeout := time.Duration(len(inputs)) * 2 * time.Minute
-	errCh := make(chan error, 1)
+	type processResult struct {
+		err error
+	}
+	resultCh := make(chan processResult, 1)
+	abandoned := make(chan struct{})
 	go func() {
-		if len(inputs) == 1 {
-			errCh <- media.TrimMP4(inputs[0], tmpPath, startOffset, duration)
-		} else {
-			errCh <- media.ConcatMP4(inputs, tmpPath, startOffset, duration)
+		err := r.exportProcess(inputs, tmpPath, startOffset, duration)
+		select {
+		case resultCh <- processResult{err: err}:
+		case <-abandoned:
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
+	var cancel <-chan struct{}
+	if ctx != nil {
+		cancel = ctx.Done()
+	}
+
 	select {
-	case err := <-errCh:
-		if err != nil {
+	case result := <-resultCh:
+		if result.err != nil {
 			os.Remove(tmpPath)
-			return nil, fmt.Errorf("process segments: %w", err)
+			return nil, fmt.Errorf("process segments: %w", result.err)
 		}
 	case <-time.After(timeout):
+		close(abandoned)
 		os.Remove(tmpPath)
 		return nil, fmt.Errorf("export timed out after %s (possible corrupt segment)", timeout)
+	case <-cancel:
+		close(abandoned)
+		os.Remove(tmpPath)
+		return nil, context.Canceled
 	}
 
 	info, err := os.Stat(tmpPath)

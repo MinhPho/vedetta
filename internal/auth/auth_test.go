@@ -166,6 +166,34 @@ func TestBearerTokenAuthentication(t *testing.T) {
 	}
 }
 
+func TestTokenCreateCannotEscalateScopes(t *testing.T) {
+	c := newChecker(t, config.APIConfig{Exposure: "lan"})
+
+	tokenPrincipal := &Principal{
+		Username: "admin",
+		Kind:     AuthKindToken,
+		Scopes:   []string{"tokens:write"},
+	}
+	if _, _, err := c.CreateTokenForPrincipal(tokenPrincipal, "escalate", []string{"*"}, "10.0.0.1"); err != ErrInsufficientScope {
+		t.Fatalf("expected ErrInsufficientScope for wildcard escalation, got %v", err)
+	}
+	if _, _, err := c.CreateTokenForPrincipal(tokenPrincipal, "same-scope", []string{"tokens:write"}, "10.0.0.1"); err != nil {
+		t.Fatalf("same-scope token creation should succeed: %v", err)
+	}
+}
+
+func TestTokenEndpointWriteRequiresTokenScope(t *testing.T) {
+	apiWrite := &Principal{Username: "admin", Kind: AuthKindToken, Scopes: []string{"api:write"}}
+	if apiWrite.Allows(http.MethodPost, "/api/tokens") {
+		t.Fatal("api:write token should not create API tokens")
+	}
+
+	tokensWrite := &Principal{Username: "admin", Kind: AuthKindToken, Scopes: []string{"tokens:write"}}
+	if !tokensWrite.Allows(http.MethodPost, "/api/tokens") {
+		t.Fatal("tokens:write token should create API tokens")
+	}
+}
+
 func TestChecker_DBAuth(t *testing.T) {
 	dir := t.TempDir()
 	db, err := storage.New(filepath.Join(dir, "test.db"))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 )
 
@@ -14,9 +15,27 @@ func SanitizeURL(rawURL string) string {
 		return "rtsp://***@<invalid>"
 	}
 	if u.User == nil {
-		return rawURL
+		// Continue to query/fragment redaction even without userinfo.
+	} else {
+		u.User = nil
 	}
-	u.User = nil
+	if u.RawQuery != "" {
+		q := u.Query()
+		changed := false
+		for key := range q {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "pass") || strings.Contains(lower, "token") ||
+				strings.Contains(lower, "secret") || strings.Contains(lower, "key") ||
+				strings.Contains(lower, "sig") {
+				q.Set(key, "REDACTED")
+				changed = true
+			}
+		}
+		if changed {
+			u.RawQuery = q.Encode()
+		}
+	}
+	u.Fragment = ""
 	return u.String()
 }
 
