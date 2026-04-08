@@ -235,6 +235,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/updates/status", s.GetUpdateStatus)
 	s.mux.HandleFunc("GET /api/updates/check", s.CheckForUpdates)
 	s.mux.HandleFunc("POST /api/updates/dismiss", s.DismissUpdate)
+	s.mux.HandleFunc("GET /api/auth/info", s.GetAuthInfo)
+	s.mux.HandleFunc("POST /api/auth/password", s.ChangePassword)
 
 	// Setup status endpoint (returns "running" in normal mode)
 	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {

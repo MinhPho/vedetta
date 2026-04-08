@@ -206,6 +206,18 @@ func (c *Checker) Check(user, pass, remoteIP string) bool {
 	return true
 }
 
+// ProxyAuthEnabled reports whether proxy authentication is configured.
+func (c *Checker) ProxyAuthEnabled() bool {
+	return c.proxyHeader != ""
+}
+
+// UpdatePassword updates the in-memory password hash for a user.
+func (c *Checker) UpdatePassword(username string, hash []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.users[username] = hash
+}
+
 // ChangePassword verifies the current password and updates to the new one.
 func (c *Checker) ChangePassword(username, currentPassword, newPassword string) error {
 	if !c.verify(username, currentPassword) {

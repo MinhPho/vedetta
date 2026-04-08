@@ -303,6 +303,22 @@ func (s *Server) UpdateDetectSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) GetAuthInfo(w http.ResponseWriter, r *http.Request) {
+	principal := principalFromContext(r.Context())
+	if principal == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	proxyEnabled := s.auth != nil && s.auth.ProxyAuthEnabled()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username":           principal.Username,
+		"auth_method":        principal.Kind,
+		"proxy_auth_enabled": proxyEnabled,
+	})
+}
+
 func (s *Server) reconnectMQTT(cfg config.MQTTConfig) {
 	if s.mqttClient != nil {
 		if closer, ok := s.mqttClient.(interface{ Close() }); ok {

@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/rvben/vedetta/internal/auth"
+	"github.com/rvben/vedetta/internal/config"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
@@ -179,14 +181,14 @@ func (s *Server) ListTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+
 	principal := principalFromContext(r.Context())
 	if principal == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer r.Body.Close()
 
 	var req struct {
 		CurrentPassword string `json:"current_password"`
@@ -196,8 +198,8 @@ func (s *Server) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.CurrentPassword == "" || req.NewPassword == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "current_password and new_password required"})
+	if req.NewPassword == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password is required"})
 		return
 	}
 	if len(req.NewPassword) < 8 {
@@ -205,13 +207,34 @@ func (s *Server) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.auth.ChangePassword(principal.Username, req.CurrentPassword, req.NewPassword); err != nil {
-		if errors.Is(err, auth.ErrInvalidCredentials) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "current password is incorrect"})
+	// Verify current password (skip for proxy-auth users setting initial local password)
+	if principal.Kind != auth.AuthKindProxy {
+		if s.auth == nil || !s.auth.Check(principal.Username, req.CurrentPassword, "") {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "current password is incorrect"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		slog.Error("bcrypt hash failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 		return
+	}
+	newHash := string(hash)
+
+	if err := s.db.SaveAuthUser(principal.Username, newHash); err != nil {
+		slog.Error("failed to save auth user", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save user"})
+		return
+	}
+
+	if err := config.UpdateAuthPassword(s.configPath, principal.Username, newHash); err != nil {
+		slog.Warn("failed to update password in config file (DB updated)", "error", err)
+	}
+
+	if s.auth != nil {
+		s.auth.UpdatePassword(principal.Username, hash)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
