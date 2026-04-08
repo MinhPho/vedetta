@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/detect"
 	"github.com/rvben/vedetta/internal/storage"
 	"github.com/rvben/vedetta/internal/update"
 )
@@ -341,6 +342,139 @@ func TestDiscoverMQTTBrokers(t *testing.T) {
 		t.Skip("skipping mDNS discovery test in short mode")
 	}
 	t.Skip("skipping mDNS discovery: zeroconf double-close in test environments")
+}
+
+func TestGetRecordingSettings(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.SetRecordingConfig(config.RecordingConfig{
+		Continuous:    true,
+		RetainDays:    7,
+		EventRetain:   30,
+		SegmentLength: 10 * time.Minute,
+		PreCapture:    5 * time.Second,
+		PostCapture:   10 * time.Second,
+		MaxStorage:    "500GB",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/recording", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["continuous"] != true {
+		t.Errorf("expected continuous=true, got %v", body["continuous"])
+	}
+	if body["retain_days"] != float64(7) {
+		t.Errorf("expected retain_days=7, got %v", body["retain_days"])
+	}
+	if body["segment_length"] != "10m0s" {
+		t.Errorf("expected segment_length=10m0s, got %v", body["segment_length"])
+	}
+}
+
+func TestUpdateRecordingSettings(t *testing.T) {
+	srv, _ := newTestServer(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	os.WriteFile(cfgPath, []byte("auth:\n  users:\n    - username: admin\n      password_hash: \"$2a$10$7EqJtq98hPqEX7fNZaFWoOHi8V6I5WJFlQ7Y7S6d6n9zQ0jD4S3yu\"\nrecording:\n  path: ./recordings\n  continuous: true\n  retain_days: 7\napi:\n  host: 0.0.0.0\n  port: 5050\n  exposure: lan\n"), 0644)
+	srv.SetConfigPath(cfgPath)
+	srv.SetRecordingConfig(config.RecordingConfig{
+		Path: "./recordings", Continuous: true, RetainDays: 7,
+		SegmentLength: 10 * time.Minute, PreCapture: 5 * time.Second, PostCapture: 10 * time.Second,
+	})
+
+	payload := `{"continuous":false,"retain_days":14,"event_retain_days":60,"segment_length":"5m","pre_capture":"3s","post_capture":"8s","max_storage":"1TB"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/recording", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	json.NewDecoder(w.Body).Decode(&body)
+	if body["continuous"] != false {
+		t.Errorf("expected continuous=false")
+	}
+	if body["retain_days"] != float64(14) {
+		t.Errorf("expected retain_days=14, got %v", body["retain_days"])
+	}
+}
+
+func TestUpdateRecordingSettings_InvalidDuration(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.SetConfigPath("/dev/null")
+	srv.SetRecordingConfig(config.RecordingConfig{})
+
+	payload := `{"continuous":true,"retain_days":7,"event_retain_days":30,"segment_length":"notaduration","pre_capture":"5s","post_capture":"10s"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/recording", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetDetectSettings_NilDetector(t *testing.T) {
+	srv, _ := newTestServer(t)
+	// detector is nil by default
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings/detect", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestUpdateDetectSettings(t *testing.T) {
+	srv, _ := newTestServer(t)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	os.WriteFile(cfgPath, []byte("auth:\n  users:\n    - username: admin\n      password_hash: \"$2a$10$7EqJtq98hPqEX7fNZaFWoOHi8V6I5WJFlQ7Y7S6d6n9zQ0jD4S3yu\"\ndetect:\n  score_threshold: 0.5\napi:\n  host: 0.0.0.0\n  port: 5050\n  exposure: lan\n"), 0644)
+	srv.SetConfigPath(cfgPath)
+
+	d := detect.New(config.DetectConfig{ScoreThreshold: 0.5, Labels: []string{"person"}})
+	srv.SetDetector(d)
+
+	payload := `{"score_threshold":0.75,"labels":["person","car"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/detect", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify hot-reload happened
+	if d.ScoreThreshold() != 0.75 {
+		t.Errorf("expected hot-reloaded threshold 0.75, got %v", d.ScoreThreshold())
+	}
+}
+
+func TestUpdateDetectSettings_InvalidThreshold(t *testing.T) {
+	srv, _ := newTestServer(t)
+	d := detect.New(config.DetectConfig{ScoreThreshold: 0.5})
+	srv.SetDetector(d)
+
+	payload := `{"score_threshold":1.5,"labels":[]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/detect", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
 }
 
 // Ensure storage.DB satisfies the settingsStore interface used by the update checker.
