@@ -1,20 +1,34 @@
 package media
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	openh264 "github.com/y9o/go-openh264"
 )
 
 var (
-	openh264Once    sync.Once
-	openh264Loaded  bool
-	openh264LoadErr error
+	openh264StateMu       sync.Mutex
+	openh264Attempt       bool
+	openh264Loaded        bool
+	openh264LoadErr       error
+	openh264Source        string
+	openh264Path          string
+	openh264LoadedVersion string
+
+	openh264LoadLibrary  = openh264.Open
+	openh264CloseLibrary = openh264.Close
+	openh264CodecVersion = func() string {
+		ver := openh264.WelsGetCodecVersion()
+		return fmt.Sprintf("%d.%d.%d", ver.UMajor, ver.UMinor, ver.URevision)
+	}
+	openh264LibPathsFn = openH264LibPaths
 
 	// openh264Mu serializes all OpenH264 C library calls. The purego
 	// bindings use dlopen'd function pointers that share global state,
@@ -45,44 +59,95 @@ func openH264LibPaths() []string {
 }
 
 // tryLoadOpenH264 attempts to load the library from a given path.
-func tryLoadOpenH264(path string) bool {
-	if err := openh264.Open(path); err == nil {
-		ver := openh264.WelsGetCodecVersion()
-		slog.Info("OpenH264 loaded",
-			"path", path,
-			"version", fmt.Sprintf("%d.%d.%d", ver.UMajor, ver.UMinor, ver.URevision),
-		)
-		slog.Info("OpenH264 Video Codec provided by Cisco Systems, Inc.")
-		openh264Loaded = true
-		return true
+func tryLoadOpenH264(path, source string) error {
+	if err := openh264LoadLibrary(path); err != nil {
+		return err
 	}
-	return false
+
+	version := openh264CodecVersion()
+	slog.Info("OpenH264 loaded", "path", path, "source", source, "version", version)
+	slog.Info("OpenH264 Video Codec provided by Cisco Systems, Inc.")
+
+	openh264Loaded = true
+	openh264LoadErr = nil
+	openh264Source = source
+	openh264Path = path
+	openh264LoadedVersion = version
+	return nil
 }
 
 // ensureOpenH264 tries to load the OpenH264 library once.
-// Search order: OPENH264_LIB env → system paths.
+// Search order: OPENH264_LIB env → system paths → verified Vedetta install.
 func ensureOpenH264() bool {
-	openh264Once.Do(func() {
-		// 1. Environment variable
-		if envPath := os.Getenv("OPENH264_LIB"); envPath != "" {
-			if tryLoadOpenH264(envPath) {
-				return
-			}
-		}
+	openh264StateMu.Lock()
+	defer openh264StateMu.Unlock()
 
-		// 2. System paths
-		for _, path := range openH264LibPaths() {
-			if tryLoadOpenH264(path) {
-				return
-			}
-		}
+	if openh264Attempt {
+		return openh264Loaded
+	}
+	openh264Attempt = true
 
-		openh264LoadErr = fmt.Errorf(
-			"OpenH264 shared library not found; set OPENH264_LIB or install libopenh264 via the system package manager",
-		)
-		slog.Warn("H264 decode unavailable — detection disabled", "error", openh264LoadErr)
-	})
+	var attempts []string
+	recordFailure := func(label string, err error) {
+		if err == nil {
+			return
+		}
+		attempts = append(attempts, fmt.Sprintf("%s: %v", label, err))
+	}
+
+	if envPath := strings.TrimSpace(os.Getenv("OPENH264_LIB")); envPath != "" {
+		if err := tryLoadOpenH264(envPath, "environment"); err == nil {
+			return true
+		} else {
+			recordFailure("OPENH264_LIB", fmt.Errorf("failed to load %q: %w", envPath, err))
+		}
+	}
+
+	for _, path := range openh264LibPathsFn() {
+		if err := tryLoadOpenH264(path, "system"); err == nil {
+			return true
+		} else {
+			recordFailure(path, err)
+		}
+	}
+
+	if installedPath, installed, err := verifiedInstalledOpenH264Path(); err != nil {
+		recordFailure("installed cache", err)
+	} else if installed {
+		if err := tryLoadOpenH264(installedPath, "installed"); err == nil {
+			return true
+		} else {
+			recordFailure("installed cache", fmt.Errorf("failed to load %q: %w", installedPath, err))
+		}
+	}
+
+	baseErr := "OpenH264 shared library not found; set OPENH264_LIB, install libopenh264 via the system package manager, or install it from the setup/system page"
+	if len(attempts) > 0 {
+		openh264LoadErr = fmt.Errorf("%s (attempts: %s)", baseErr, strings.Join(attempts, "; "))
+	} else {
+		openh264LoadErr = errors.New(baseErr)
+	}
+	slog.Warn("H264 decode unavailable — detection disabled", "error", openh264LoadErr)
 	return openh264Loaded
+}
+
+func openH264StateSnapshot() (loaded bool, loadErr error, source, path, version string) {
+	openh264StateMu.Lock()
+	defer openh264StateMu.Unlock()
+	return openh264Loaded, openh264LoadErr, openh264Source, openh264Path, openh264LoadedVersion
+}
+
+func resetOpenH264State() {
+	openh264StateMu.Lock()
+	defer openh264StateMu.Unlock()
+
+	_ = openh264CloseLibrary()
+	openh264Attempt = false
+	openh264Loaded = false
+	openh264LoadErr = nil
+	openh264Source = ""
+	openh264Path = ""
+	openh264LoadedVersion = ""
 }
 
 // H264Decoder wraps OpenH264 for decoding H264 NAL units to YCbCr images.

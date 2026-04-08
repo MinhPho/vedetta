@@ -12,6 +12,7 @@ import (
 
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
+	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/recording"
 	"github.com/rvben/vedetta/internal/storage"
 )
@@ -458,6 +459,13 @@ func TestHandleSnapshot_CameraNotFound(t *testing.T) {
 }
 
 func TestHandleSystemAPI(t *testing.T) {
+	withOpenH264APITestHooks(t,
+		func() media.OpenH264Status {
+			return media.OpenH264Status{Supported: true, Available: false}
+		},
+		nil,
+	)
+
 	srv, db := newTestServer(t)
 
 	// Seed some segments to have storage data
@@ -492,6 +500,13 @@ func TestHandleSystemAPI(t *testing.T) {
 	}
 	if _, ok := body["storage"]; !ok {
 		t.Error("response missing 'storage' key")
+	}
+	codecs, ok := body["codecs"].(map[string]any)
+	if !ok {
+		t.Fatalf("response missing codecs map")
+	}
+	if _, ok := codecs["openh264"]; !ok {
+		t.Fatalf("response missing openh264 codec status")
 	}
 	storageBytes := body["storage_bytes"].(float64)
 	if storageBytes != 1048576 {

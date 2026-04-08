@@ -17,6 +17,7 @@
       --accent-strong: #1baee6;
       --danger: #ff7d7d;
       --success: #5dff97;
+      --warning: #ffcf70;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -337,6 +338,278 @@
     .cred-row .field { flex: 1; min-width: 140px; }
     .cred-row .field input { margin-bottom: 0; }
     .cred-row .btn { margin-bottom: 0; align-self: flex-end; }
+    .codec-card {
+      position: relative;
+      overflow: hidden;
+      padding: 1.2rem;
+    }
+    .codec-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(93, 215, 255, 0.4), transparent);
+      opacity: 0.7;
+    }
+    .codec-card::after {
+      content: '';
+      position: absolute;
+      top: -120px;
+      right: -100px;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(93, 215, 255, 0.12), transparent 68%);
+      pointer-events: none;
+    }
+    .codec-card[data-tone="success"] {
+      border-color: rgba(93, 255, 151, 0.28);
+      background: linear-gradient(180deg, rgba(12, 28, 22, 0.72), rgba(4, 12, 18, 0.48));
+    }
+    .codec-card[data-tone="error"] {
+      border-color: rgba(255, 125, 125, 0.28);
+      background: linear-gradient(180deg, rgba(36, 16, 20, 0.66), rgba(4, 12, 18, 0.48));
+    }
+    .codec-card[data-tone="warning"] {
+      border-color: rgba(255, 207, 112, 0.28);
+      background: linear-gradient(180deg, rgba(36, 26, 12, 0.62), rgba(4, 12, 18, 0.48));
+    }
+    .codec-card[data-tone="info"] {
+      border-color: rgba(93, 215, 255, 0.3);
+      background: linear-gradient(180deg, rgba(9, 26, 36, 0.72), rgba(4, 12, 18, 0.48));
+    }
+    .codec-shell {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+      gap: 1rem;
+      align-items: start;
+      z-index: 1;
+    }
+    .codec-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.9rem;
+    }
+    .codec-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      min-width: 0;
+    }
+    .codec-icon {
+      display: grid;
+      place-items: center;
+      width: 2.9rem;
+      height: 2.9rem;
+      border-radius: 14px;
+      border: 1px solid rgba(93, 215, 255, 0.24);
+      background: linear-gradient(180deg, rgba(93, 215, 255, 0.16), rgba(93, 215, 255, 0.06));
+      color: var(--accent);
+      flex-shrink: 0;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+    .codec-title-wrap h3 {
+      margin: 0;
+      font-size: 1.35rem;
+      line-height: 1.15;
+      color: var(--text);
+    }
+    .codec-eyebrow {
+      margin-bottom: 0.2rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .codec-intro {
+      margin: 0;
+      max-width: 48ch;
+      font-size: 0.98rem;
+      line-height: 1.55;
+    }
+    .codec-benefits {
+      display: flex;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+      margin-top: 0.95rem;
+    }
+    .codec-benefit {
+      display: inline-flex;
+      align-items: center;
+      min-height: 1.9rem;
+      padding: 0.35rem 0.72rem;
+      border-radius: 999px;
+      border: 1px solid rgba(159, 180, 198, 0.12);
+      background: rgba(159, 180, 198, 0.05);
+      color: var(--text);
+      font-size: 0.81rem;
+      line-height: 1.2;
+    }
+    .codec-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 2rem;
+      padding: 0.35rem 0.8rem;
+      border-radius: 999px;
+      border: 1px solid rgba(159, 180, 198, 0.16);
+      background: rgba(159, 180, 198, 0.09);
+      color: var(--text);
+      font-size: 0.84rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .codec-badge-muted {
+      color: var(--muted);
+      background: rgba(159, 180, 198, 0.08);
+    }
+    .codec-badge-info {
+      color: var(--accent);
+      background: rgba(93, 215, 255, 0.12);
+    }
+    .codec-badge-success {
+      color: var(--success);
+      background: rgba(93, 255, 151, 0.12);
+    }
+    .codec-badge-warning {
+      color: var(--warning);
+      background: rgba(255, 207, 112, 0.12);
+    }
+    .codec-badge-error {
+      color: var(--danger);
+      background: rgba(255, 125, 125, 0.12);
+    }
+    .codec-main {
+      min-width: 0;
+    }
+    .codec-state-panel {
+      margin-top: 1.1rem;
+      padding: 1rem;
+      border: 1px solid rgba(159, 180, 198, 0.12);
+      border-radius: 16px;
+      background: rgba(4, 12, 18, 0.38);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+    .codec-state-label,
+    .codec-sidecar-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .codec-headline {
+      margin-top: 0.45rem;
+      font-size: 1.14rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      color: var(--text);
+    }
+    .codec-detail {
+      margin-top: 0.4rem;
+      color: var(--muted);
+      font-size: 0.98rem;
+      line-height: 1.55;
+    }
+    .codec-sidecar {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      padding: 1rem;
+      border: 1px solid rgba(159, 180, 198, 0.12);
+      border-radius: 16px;
+      background: rgba(4, 12, 18, 0.46);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
+    .codec-sidecar-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .codec-sidecar-copy {
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+    .codec-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      margin-top: 0.35rem;
+    }
+    .codec-actions .btn {
+      width: 100%;
+    }
+    .codec-meta {
+      display: flex;
+      gap: 0.55rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .codec-meta-item {
+      display: inline-flex;
+      align-items: center;
+      min-height: 1.9rem;
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      border: 1px solid rgba(159, 180, 198, 0.14);
+      background: rgba(159, 180, 198, 0.06);
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.3;
+    }
+    .codec-status-inline.status {
+      min-height: 0;
+      margin-top: 0;
+      font-size: 0.88rem;
+    }
+    .codec-footnote {
+      margin-top: auto;
+      padding-top: 0.25rem;
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+    .codec-diagnostics {
+      margin-top: 0.95rem;
+      padding: 0.85rem 0.95rem;
+      border: 1px solid rgba(159, 180, 198, 0.12);
+      border-radius: 12px;
+      background: rgba(4, 12, 18, 0.46);
+    }
+    .codec-diagnostics summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 600;
+      list-style: none;
+    }
+    .codec-diagnostics summary::-webkit-details-marker {
+      display: none;
+    }
+    .codec-diagnostic-body {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    @media (max-width: 640px) {
+      .codec-shell {
+        grid-template-columns: 1fr;
+      }
+      .codec-header {
+        align-items: flex-start;
+      }
+      .codec-title-wrap h3 {
+        font-size: 1.2rem;
+      }
+    }
 
     /* Footer actions */
     .actions {
@@ -408,6 +681,54 @@
       </div>
       <h2>Camera Discovery</h2>
       <p id="discover-subtitle">Scanning your network for cameras...</p>
+
+      <div class="cred-section codec-card" id="codec-card" data-tone="muted">
+        <div class="codec-shell">
+          <div class="codec-main">
+            <div class="codec-header">
+              <div class="codec-title-wrap">
+                <div class="codec-icon" aria-hidden="true">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="7" y="7" width="10" height="10" rx="1.5"></rect>
+                    <path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2"></path>
+                  </svg>
+                </div>
+                <div>
+                  <div class="codec-eyebrow">Optional Codec</div>
+                  <h3>OpenH264</h3>
+                </div>
+              </div>
+              <span class="codec-badge codec-badge-info" id="codec-badge">Checking</span>
+            </div>
+            <p class="codec-intro">Use verified local H.264 software decoding when a camera stream needs it for snapshots and detection.</p>
+            <div class="codec-benefits" aria-hidden="true">
+              <span class="codec-benefit">Local decode</span>
+              <span class="codec-benefit">Snapshot extraction</span>
+              <span class="codec-benefit">Detection support</span>
+            </div>
+            <div class="codec-state-panel">
+              <div class="codec-state-label">Status</div>
+              <div class="codec-headline" id="codec-headline">Checking OpenH264…</div>
+              <div class="codec-detail" id="codec-detail">Vedetta can complete setup without it. This only checks whether a verified codec is already available.</div>
+              <div class="codec-meta hidden" id="codec-meta" aria-live="polite"></div>
+              <details class="codec-diagnostics hidden" id="codec-diagnostics">
+                <summary>Technical details</summary>
+                <div class="codec-diagnostic-body" id="codec-diagnostic-body"></div>
+              </details>
+            </div>
+          </div>
+          <div class="codec-sidecar">
+            <div class="codec-sidecar-label">Action</div>
+            <div class="codec-sidecar-title" id="codec-sidecar-title">Install now or skip</div>
+            <div class="codec-sidecar-copy" id="codec-sidecar-copy">You can continue setup without this codec and add it later from Settings.</div>
+            <div class="codec-actions">
+              <button type="button" class="btn btn-secondary btn-small" id="install-codec">Install OpenH264</button>
+              <div class="status codec-status-inline" id="codec-status"></div>
+            </div>
+            <div class="codec-footnote">Vedetta verifies the download before the codec is trusted and used.</div>
+          </div>
+        </div>
+      </div>
 
       <div id="scan-loading" class="scan-status">
         <div class="pulse-ring"></div>
@@ -553,11 +874,234 @@
       // --- Screen 2: Camera Discovery ---
       var discoveredCameras = [];
       var probeResults = {};
+      var codecCard = $('codec-card');
+      var codecBadge = $('codec-badge');
+      var codecHeadline = $('codec-headline');
+      var codecDetail = $('codec-detail');
+      var codecMeta = $('codec-meta');
+      var codecDiagnostics = $('codec-diagnostics');
+      var codecDiagnosticBody = $('codec-diagnostic-body');
+      var codecSidecarTitle = $('codec-sidecar-title');
+      var codecSidecarCopy = $('codec-sidecar-copy');
+      var installCodecButton = $('install-codec');
+      var codecStatus = $('codec-status');
 
       function goToCameraScreen() {
         showScreen('screen-cameras');
+        refreshCodecStatus();
         startDiscovery();
       }
+
+      function codecSourceLabel(source) {
+        switch (source) {
+          case 'environment': return 'Environment override';
+          case 'system': return 'System library';
+          case 'installed': return 'Vedetta install';
+          default: return '';
+        }
+      }
+
+      function setCodecTone(tone) {
+        var normalized = tone || 'muted';
+        codecCard.setAttribute('data-tone', normalized);
+        codecBadge.className = 'codec-badge codec-badge-' + normalized;
+      }
+
+      function clearChildren(el) {
+        while (el.firstChild) {
+          el.removeChild(el.firstChild);
+        }
+      }
+
+      function renderCodecMeta(data) {
+        var items = [];
+        var sourceLabel = codecSourceLabel(data.source);
+        if (sourceLabel) items.push(sourceLabel);
+        if (data.version) items.push('Version ' + data.version);
+        if (data.installed && data.source === 'installed') items.push('Verified install');
+        if (!items.length) {
+          hide(codecMeta);
+          clearChildren(codecMeta);
+          return;
+        }
+
+        clearChildren(codecMeta);
+        items.forEach(function(item) {
+          var chip = document.createElement('span');
+          chip.className = 'codec-meta-item';
+          chip.textContent = item;
+          codecMeta.appendChild(chip);
+        });
+        show(codecMeta);
+      }
+
+      function renderCodecDiagnostics(data) {
+        var details = [];
+        if (data.path) details.push('Path: ' + data.path);
+        if (data.diagnostic) details.push(data.diagnostic);
+        if (!data.show_diagnostics || details.length === 0) {
+          codecDiagnostics.open = false;
+          codecDiagnosticBody.textContent = '';
+          hide(codecDiagnostics);
+          return;
+        }
+        codecDiagnosticBody.textContent = details.join('\n\n');
+        show(codecDiagnostics);
+      }
+
+      function renderCodecSidecar(data) {
+        var title = 'Install now or skip';
+        var copy = 'You can continue setup without this codec and add it later from Settings.';
+
+        if (data.installing) {
+          title = 'Finishing codec setup';
+          copy = 'This usually takes a few seconds while Vedetta downloads, verifies, and activates OpenH264.';
+        } else if (data.available) {
+          title = 'Codec ready';
+          copy = 'OpenH264 is available. You can continue setup and Vedetta will use it when needed.';
+        } else if (data.state === 'unsupported') {
+          title = 'Continue without it';
+          copy = 'This platform does not support the built-in installer. Vedetta can still complete setup without OpenH264.';
+        } else if (data.state === 'attention' || data.state === 'install_failed') {
+          title = 'Retry or continue';
+          copy = 'You can retry now, or finish setup and revisit codec installation later from Settings.';
+        }
+
+        codecSidecarTitle.textContent = title;
+        codecSidecarCopy.textContent = copy;
+      }
+
+      function codecStatusPayload(overrides) {
+        var payload = {
+          badge: 'Optional',
+          badge_tone: 'muted',
+          headline: 'OpenH264 is not installed yet.',
+          detail: 'Vedetta can complete setup without it. Install it if you want local H.264 decoding for detection and snapshot extraction.',
+          action_label: 'Install OpenH264',
+          show_install: true,
+          show_diagnostics: false,
+          supported: true,
+          available: false,
+          installed: false,
+          installing: false
+        };
+        Object.keys(overrides || {}).forEach(function(key) {
+          payload[key] = overrides[key];
+        });
+        return payload;
+      }
+
+      function renderCodecStatus(data) {
+        data = codecStatusPayload(data);
+
+        setCodecTone(data.badge_tone);
+        codecBadge.textContent = data.badge || 'Optional';
+        codecHeadline.textContent = data.headline || 'OpenH264 status unavailable.';
+        codecDetail.textContent = data.detail || 'Vedetta can continue setup without it.';
+        renderCodecMeta(data);
+        renderCodecDiagnostics(data);
+        renderCodecSidecar(data);
+
+        if (data.show_install) {
+          show(installCodecButton);
+          installCodecButton.disabled = !!data.installing;
+          installCodecButton.textContent = data.installing ? 'Installing…' : (data.action_label || 'Install OpenH264');
+        } else {
+          hide(installCodecButton);
+        }
+
+        if (data.installing) {
+          setStatus(codecStatus, 'Downloading, verifying, and activating OpenH264…', '');
+        } else {
+          setStatus(codecStatus, '', '');
+        }
+      }
+
+      function renderCodecRequestError(message) {
+        renderCodecStatus({
+          badge: 'Status Unavailable',
+          badge_tone: 'error',
+          headline: 'OpenH264 status could not be loaded.',
+          detail: 'You can continue setup without it, or refresh the page and try again.',
+          diagnostic: message,
+          show_diagnostics: true
+        });
+        setStatus(codecStatus, message, 'error');
+      }
+
+      function refreshCodecStatus() {
+        renderCodecStatus({
+          badge: 'Checking',
+          badge_tone: 'info',
+          headline: 'Checking OpenH264…',
+          detail: 'Vedetta can complete setup without it. This only checks whether a verified codec is already available.',
+          show_install: false
+        });
+        setupFetch('/api/setup/codecs/openh264')
+          .then(function(resp) {
+            return resp.json().catch(function() {
+              return {};
+            }).then(function(body) {
+              if (!resp.ok) {
+                var err = new Error(body.error || body.headline || 'Failed to load codec status');
+                err.codecStatus = body;
+                throw err;
+              }
+              return body;
+            });
+          })
+          .then(renderCodecStatus)
+          .catch(function(err) {
+            if (err.codecStatus && (err.codecStatus.headline || err.codecStatus.badge)) {
+              renderCodecStatus(err.codecStatus);
+              setStatus(codecStatus, err.message, 'error');
+              return;
+            }
+            renderCodecRequestError(err.message);
+          });
+      }
+
+      function installCodec() {
+        renderCodecStatus({
+          badge: 'Installing',
+          badge_tone: 'info',
+          headline: 'Installing OpenH264…',
+          detail: 'Vedetta is downloading, verifying, and activating the codec.'
+        });
+        installCodecButton.disabled = true;
+        installCodecButton.textContent = 'Installing…';
+        setStatus(codecStatus, 'Downloading, verifying, and activating OpenH264…', '');
+
+        setupFetch('/api/setup/codecs/openh264/install', { method: 'POST' })
+          .then(function(resp) {
+            return resp.json().catch(function() {
+              return {};
+            }).then(function(body) {
+              if (!resp.ok) {
+                var err = new Error(body.error || body.headline || 'OpenH264 install failed');
+                err.codecStatus = body;
+                throw err;
+              }
+              return body;
+            });
+          })
+          .then(function(data) {
+            renderCodecStatus(data);
+            if (data.available) {
+              setStatus(codecStatus, 'OpenH264 is ready to use.', 'success');
+            }
+          })
+          .catch(function(err) {
+            if (err.codecStatus && (err.codecStatus.headline || err.codecStatus.badge)) {
+              renderCodecStatus(err.codecStatus);
+              setStatus(codecStatus, err.message, 'error');
+              return;
+            }
+            renderCodecRequestError(err.message);
+          });
+      }
+
+      installCodecButton.addEventListener('click', installCodec);
 
       function startDiscovery() {
         hide($('scan-results'));

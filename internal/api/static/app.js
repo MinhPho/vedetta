@@ -134,6 +134,7 @@ var allowedDataActionFunctions = new Set([
   'idModalNext',
   'idModalPrev',
   'idModalSkip',
+  'installOpenH264FromSystem',
   'onTimelineDatePick',
   'openAccountModal',
   'openFaceModal',
@@ -2448,6 +2449,59 @@ function refreshStats() {
       });
     })
     .catch(function() {});
+}
+
+function refreshSystemGrid() {
+  var grid = el('system-grid');
+  if (!grid) return Promise.resolve();
+  return fetch('/partials/system')
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('Failed to refresh system status');
+      return resp.text();
+    })
+    .then(function(html) {
+      grid.innerHTML = html;
+      bindManagedUI(grid);
+    });
+}
+
+function installOpenH264FromSystem(button) {
+  var originalText = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Installing…';
+  }
+
+  fetch('/api/system/codecs/openh264/install', { method: 'POST' })
+    .then(function(resp) {
+      return resp.json().catch(function() { return {}; }).then(function(body) {
+        if (!resp.ok) {
+          throw new Error(body.error || 'OpenH264 install failed');
+        }
+        return body;
+      });
+    })
+    .then(function(body) {
+      if (body.available) {
+        toast(body.source === 'installed' ? 'OpenH264 installed' : 'OpenH264 available');
+      } else if (body.installing) {
+        toast('OpenH264 install already running');
+      } else {
+        toast('OpenH264 install finished');
+      }
+    })
+    .catch(function(err) {
+      toast(err.message, 'error');
+    })
+    .finally(function() {
+      refreshSystemGrid().catch(function(err) {
+        console.error(err);
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      });
+    });
 }
 
 document.addEventListener('htmx:afterSwap', function(e) {

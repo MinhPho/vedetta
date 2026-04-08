@@ -166,6 +166,8 @@ func NewSetupMode(cfg config.APIConfig, db *storage.DB, configPath string, setup
 	// Setup-only routes are protected by a one-time setup token printed locally.
 	setup := sh.RequireSetupToken
 	s.mux.HandleFunc("POST /api/setup", setup(sh.HandleSetup))
+	s.mux.HandleFunc("GET /api/setup/codecs/openh264", setup(sh.HandleOpenH264Status))
+	s.mux.HandleFunc("POST /api/setup/codecs/openh264/install", setup(sh.HandleInstallOpenH264))
 	s.mux.HandleFunc("GET /api/discover", setup(sh.HandleDiscover))
 	s.mux.HandleFunc("POST /api/discover/probe", setup(sh.HandleProbe))
 	s.mux.HandleFunc("GET /api/discover/thumbnail/{ip}", setup(sh.HandleThumbnail))
@@ -243,6 +245,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/updates/dismiss", s.DismissUpdate)
 	s.mux.HandleFunc("GET /api/auth/info", s.GetAuthInfo)
 	s.mux.HandleFunc("POST /api/auth/password", s.ChangePassword)
+	s.mux.HandleFunc("GET /api/system/codecs/openh264", s.GetOpenH264Status)
+	s.mux.HandleFunc("POST /api/system/codecs/openh264/install", s.InstallOpenH264)
 
 	// Setup status endpoint (returns "running" in normal mode)
 	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {

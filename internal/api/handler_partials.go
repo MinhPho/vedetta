@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rvben/vedetta/internal/camera"
+	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/storage"
 )
 
@@ -379,7 +380,11 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	openH264 := openH264StatusInfo()
 	decoderName := "native Go"
+	if openH264.Available {
+		decoderName = "native Go + OpenH264"
+	}
 
 	uptime := time.Since(startTime)
 	uptimeStr := formatDuration(uptime)
@@ -428,6 +433,9 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 		UpdateAvailable      bool
 		UpdateVersion        string
 		UpdateURL            string
+		OpenH264             media.OpenH264Status
+		OpenH264UI           openH264Presentation
+		OpenH264SourceLabel  string
 	}
 
 	rc := stats.Recompression
@@ -453,6 +461,9 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 		RecompressLastRun:    lastRunStr,
 		RecompressSegments:   rc.SegmentsRecompressed,
 		RecompressBytesSaved: formatBytes(rc.BytesReclaimed),
+		OpenH264:             openH264,
+		OpenH264UI:           describeOpenH264Status(openH264),
+		OpenH264SourceLabel:  formatOpenH264Source(openH264.Source),
 	}
 
 	if s.updateChecker != nil {
@@ -472,6 +483,19 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+func formatOpenH264Source(source string) string {
+	switch source {
+	case "environment":
+		return "Environment override"
+	case "system":
+		return "System library"
+	case "installed":
+		return "Vedetta installed"
+	default:
+		return ""
+	}
+}
+
 const systemPartialTemplate = `<div class="sys-card">
   <div class="sys-card-header">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
@@ -483,6 +507,32 @@ const systemPartialTemplate = `<div class="sys-card">
     <div class="sys-row"><span class="key">Decoder</span><span class="val">{{.Decoder}}</span></div>
     <div class="sys-row"><span class="key">Go</span><span class="val">{{.GoVersion}}</span></div>
     <div class="sys-row"><span class="key">Cameras</span><span class="val">{{.CameraCount}} ({{.OnlineCount}} online)</span></div>
+  </div>
+</div>
+<div class="sys-card">
+  <div class="sys-card-header">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 5h14v14H5z"/><path d="M9 9h6v6H9z"/><path d="M9 1v4M15 1v4M9 19v4M15 19v4M19 9h4M19 14h4M1 9h4M1 14h4"/></svg>
+    Codec Status
+  </div>
+  <div class="sys-card-body">
+    <div class="sys-row"><span class="key">OpenH264</span><span class="val">{{if eq .OpenH264UI.BadgeTone "success"}}<span class="green">{{.OpenH264UI.Badge}}</span>{{else if eq .OpenH264UI.BadgeTone "error"}}<span class="red">{{.OpenH264UI.Badge}}</span>{{else}}{{.OpenH264UI.Badge}}{{end}}</span></div>
+    <div style="margin-top: 0.35rem; line-height: 1.45">
+      <div>{{.OpenH264UI.Headline}}</div>
+      {{if .OpenH264UI.Detail}}<div style="color: var(--muted); margin-top: 0.25rem">{{.OpenH264UI.Detail}}</div>{{end}}
+    </div>
+    {{if .OpenH264SourceLabel}}<div class="sys-row"><span class="key">Source</span><span class="val">{{.OpenH264SourceLabel}}</span></div>{{end}}
+    {{if .OpenH264.Version}}<div class="sys-row"><span class="key">Version</span><span class="val">{{.OpenH264.Version}}</span></div>{{end}}
+    {{if .OpenH264.Path}}<div class="sys-row"><span class="key">Path</span><span class="val" style="word-break: break-all">{{.OpenH264.Path}}</span></div>{{end}}
+    {{if .OpenH264UI.ShowDiagnostics}}<details style="margin-top: 0.75rem"><summary style="cursor: pointer; color: var(--muted)">Technical details</summary><div style="margin-top: 0.5rem; color: var(--muted); line-height: 1.4; word-break: break-word">{{.OpenH264UI.Diagnostic}}</div></details>{{end}}
+    {{if .OpenH264UI.ShowInstall}}
+    <div style="margin-top: 0.75rem">
+      {{if .OpenH264.Installing}}
+      <button class="btn btn-sm" disabled>Installing…</button>
+      {{else}}
+      <button class="btn btn-sm" data-action-click="installOpenH264FromSystem(this)">{{.OpenH264UI.ActionLabel}}</button>
+      {{end}}
+    </div>
+    {{end}}
   </div>
 </div>
 <div class="sys-card">

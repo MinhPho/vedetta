@@ -211,15 +211,24 @@ func (s *Server) GetSystem(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	stats := s.recorder.StorageStats()
+	openH264 := openH264StatusInfo()
+	openH264Resp := openH264StatusResponseFor(openH264)
+	decoder := "native Go"
+	if openH264.Available {
+		decoder = "native Go + OpenH264"
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":       s.version,
 		"uptime":        time.Since(startTime).String(),
-		"decoder":       "native Go",
+		"decoder":       decoder,
 		"cameras":       len(statuses),
 		"online":        onlineCount,
 		"storage_bytes": stats.TotalBytes,
 		"storage":       formatBytes(stats.TotalBytes),
+		"codecs": map[string]any{
+			"openh264": openH264Resp,
+		},
 	})
 }
 
