@@ -54,9 +54,9 @@ func TestChecker_FetchAndStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	origURL := githubLatestURL
-	githubLatestURL = server.URL
-	defer func() { githubLatestURL = origURL }()
+	origURL := GithubLatestURL
+	GithubLatestURL = server.URL
+	defer func() { GithubLatestURL = origURL }()
 
 	db := &mockSettingsStore{data: make(map[string]string)}
 	checker := New("v0.2.0", time.Hour, db)
@@ -94,9 +94,9 @@ func TestChecker_DismissClearsOnNewerVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	origURL := githubLatestURL
-	githubLatestURL = server.URL
-	defer func() { githubLatestURL = origURL }()
+	origURL := GithubLatestURL
+	GithubLatestURL = server.URL
+	defer func() { GithubLatestURL = origURL }()
 
 	db := &mockSettingsStore{data: make(map[string]string)}
 	checker := New("v0.2.0", time.Hour, db)

@@ -17,7 +17,7 @@ const (
 	requestTimeout  = 10 * time.Second
 )
 
-var githubLatestURL = "https://api.github.com/repos/rvben/vedetta/releases/latest"
+var GithubLatestURL = "https://api.github.com/repos/rvben/vedetta/releases/latest"
 
 type settingsStore interface {
 	GetSetting(key string) (string, error)
@@ -145,7 +145,7 @@ type githubRelease struct {
 
 func fetchLatestRelease() (*Release, error) {
 	client := &http.Client{Timeout: requestTimeout}
-	resp, err := client.Get(githubLatestURL)
+	resp, err := client.Get(GithubLatestURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetching latest release: %w", err)
 	}
