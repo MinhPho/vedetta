@@ -102,6 +102,88 @@ func GenerateInitialConfigYAML(username, passwordHash string) (string, error) {
 	return buf.String(), nil
 }
 
+// updateConfigSection reads the config file as a yaml.Node tree, finds or creates
+// the given top-level key, replaces its value with the provided struct, and writes
+// the file back, preserving existing structure and comments.
+func updateConfigSection(path, sectionKey string, value any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading config: %w", err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing config: %w", err)
+	}
+
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return fmt.Errorf("unexpected YAML structure: expected document node")
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return fmt.Errorf("unexpected YAML structure: expected mapping node")
+	}
+
+	var valueNode yaml.Node
+	if err := valueNode.Encode(value); err != nil {
+		return fmt.Errorf("marshaling %s: %w", sectionKey, err)
+	}
+
+	found := false
+	for i := 0; i < len(root.Content)-1; i += 2 {
+		if root.Content[i].Value == sectionKey {
+			root.Content[i+1] = &valueNode
+			found = true
+			break
+		}
+	}
+	if !found {
+		keyNode := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Tag:   "!!str",
+			Value: sectionKey,
+		}
+		root.Content = append(root.Content, keyNode, &valueNode)
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return fmt.Errorf("closing encoder: %w", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat config: %w", err)
+	}
+
+	return os.WriteFile(path, buf.Bytes(), info.Mode().Perm())
+}
+
+// UpdateMQTT updates the mqtt section of the config file.
+func UpdateMQTT(path string, mqtt MQTTConfig) error {
+	return updateConfigSection(path, "mqtt", mqtt)
+}
+
+// yamlUpdateConfig uses string for duration fields so YAML output is human-readable.
+type yamlUpdateConfig struct {
+	CheckEnabled  bool   `yaml:"check_enabled"`
+	CheckInterval string `yaml:"check_interval"`
+}
+
+// UpdateUpdates updates the updates section of the config file.
+func UpdateUpdates(path string, updates UpdateConfig) error {
+	y := yamlUpdateConfig{
+		CheckEnabled:  updates.CheckEnabled,
+		CheckInterval: updates.CheckInterval.String(),
+	}
+	return updateConfigSection(path, "updates", y)
+}
+
 // AppendCamera adds a camera to an existing config file using yaml.Node to
 // preserve the existing document structure (comments, ordering, other sections).
 func AppendCamera(path string, cam CameraConfig, comment string) error {
