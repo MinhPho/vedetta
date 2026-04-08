@@ -125,11 +125,16 @@ func (s *Server) UpdatePerson(w http.ResponseWriter, r *http.Request, id int64) 
 		return
 	}
 	if req.Name != nil {
-		if err := s.db.UpdatePersonName(id, *req.Name); err != nil {
+		name, err := normalizeOptionalDisplayName(*req.Name)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.db.UpdatePersonName(id, name); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		_ = s.db.UpdateSubLabelsForPerson(id, *req.Name)
+		_ = s.db.UpdateSubLabelsForPerson(id, name)
 	}
 	if req.Ignore != nil {
 		if err := s.db.SetPersonIgnore(id, *req.Ignore); err != nil {
@@ -292,7 +297,11 @@ func (s *Server) AssignFace(w http.ResponseWriter, r *http.Request, id int64) {
 
 	personID := req.PersonID
 	if personID == 0 {
-		name := req.Name
+		name, err := normalizeOptionalDisplayName(req.Name)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
 		if name == "" {
 			name = "Unknown"
 		}
@@ -349,6 +358,11 @@ func (s *Server) BackfillFaces(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no snapshot path configured"})
 		return
 	}
+	if !s.beginFaceBackfill() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "face backfill already running"})
+		return
+	}
+	defer s.endFaceBackfill()
 
 	// Get already-processed snapshot files to skip
 	processedEvents, err := s.db.FaceEventIDs()
@@ -400,6 +414,13 @@ func (s *Server) BackfillFaces(w http.ResponseWriter, r *http.Request) {
 	skipped = len(processedEvents)
 
 	for _, snap := range snapshots {
+		select {
+		case <-r.Context().Done():
+			slog.Info("face backfill cancelled by client", "scanned", totalScanned)
+			return
+		default:
+		}
+
 		f, err := os.Open(snap.path)
 		if err != nil {
 			continue

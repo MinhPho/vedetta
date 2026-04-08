@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,6 +32,10 @@ import (
 	"github.com/rvben/vedetta/internal/stream"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// Version is injected at build time via -ldflags="-X main.Version=<tag>".
+// Falls back to "dev" when building without ldflags (local development).
+var Version = "dev"
 
 // subsystems holds all initialized runtime components so both the normal and
 // setup-mode startup paths can share the same initialization logic.
@@ -88,10 +93,15 @@ func main() {
 
 	if setupMode {
 		slog.Info("no config file found, starting in setup mode", "config", *configPath)
-		slog.Info("open the web UI to complete setup", "url", fmt.Sprintf("http://localhost:%d", cfg.API.Port))
 
 		setupDone := make(chan struct{})
-		server := api.NewSetupMode(cfg.API, db, *configPath, setupDone)
+		setupAPI := api.SetupModeAPIConfig(cfg.API)
+		server := api.NewSetupMode(setupAPI, db, *configPath, setupDone)
+		setupURL := fmt.Sprintf("http://localhost:%d/?setup_token=%s", setupAPI.Port, url.QueryEscape(server.SetupToken()))
+		slog.Info("open the web UI to complete setup", "url", setupURL)
+		if setupAPI.Host != cfg.API.Host {
+			slog.Info("setup mode bound to loopback for safety", "addr", fmt.Sprintf("%s:%d", setupAPI.Host, setupAPI.Port))
+		}
 		go func() {
 			if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("API server failed", "error", err)
@@ -190,6 +200,7 @@ func main() {
 
 	// Start API server early so the UI is available during initialization
 	server := api.New(cfg.API, authChecker, db)
+	server.SetVersion(Version)
 	server.SetContext(ctx)
 	go func() {
 		if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {

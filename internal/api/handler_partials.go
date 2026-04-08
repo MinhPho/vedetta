@@ -33,7 +33,7 @@ func (s *Server) handleCameraGridPartial(w http.ResponseWriter, _ *http.Request)
     Vedetta can automatically discover cameras on your network using ONVIF. Or add one manually if you know the RTSP URL.
   </div>
   <div class="empty-actions">
-    <a href="#" onclick="startDiscovery(); return false;" class="action-card primary">
+    <a href="#" data-action-click="startDiscovery(); return false;" class="action-card primary">
       <div class="action-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
@@ -43,7 +43,7 @@ func (s *Server) handleCameraGridPartial(w http.ResponseWriter, _ *http.Request)
       </div>
       <div class="action-text"><h3>Discover Cameras</h3><p>Scan your network for ONVIF cameras</p></div>
     </a>
-    <a href="#" onclick="showAddManual(); return false;" class="action-card">
+    <a href="#" data-action-click="showAddManual(); return false;" class="action-card">
       <div class="action-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -74,7 +74,7 @@ func (s *Server) handleCameraGridPartial(w http.ResponseWriter, _ *http.Request)
 		})
 	}
 
-	tmpl := template.Must(template.New("grid").Parse(`{{range .}}<div class="cam-card" onclick="location.href='/camera.html?name={{.Name}}'" role="listitem">
+	tmpl := template.Must(template.New("grid").Parse(`{{range .}}<div class="cam-card" data-action-click="location.href='/camera.html?name={{.Name}}'" role="listitem">
   <div class="cam-preview">
     <img src="/api/cameras/{{.Name}}/snapshot" alt="{{.Name}}" loading="lazy">
     <div class="cam-live-badge">
@@ -277,12 +277,12 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`data-box-x2="{{index .Box 2}}" data-box-y2="{{index .Box 3}}" ` +
 			`data-label="{{.Label}}" data-sub-label="{{.SubLabel}}" ` +
 			`data-score="{{scorePercent .Score}}" data-event-id="{{.ID}}" ` +
-			`onload="renderDetectionOverlay(this)">` +
+			`data-render-detection-overlay="true">` +
 			`</div>` +
 			`{{else}}<img id="event-snapshot" src="/api/cameras/{{.CameraName}}/snapshot" alt="event">{{end}}` +
-			`{{if .HasRecording}}<div class="play-overlay" id="play-overlay" onclick="playEventRecording(this, '{{.CameraName}}', '{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}')">` +
+			`{{if .HasRecording}}<div class="play-overlay" id="play-overlay" data-action-click="playEventRecording(this, '{{.CameraName}}', '{{.Timestamp.Format "2006-01-02T15:04:05Z07:00"}}')">` +
 			`<svg viewBox="0 0 24 24" fill="white" width="64" height="64"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
-			`</div>{{else if .ClipAvailable}}<div class="play-overlay" id="play-overlay" onclick="playEventClip(this, '{{.ID}}')">` +
+			`</div>{{else if .ClipAvailable}}<div class="play-overlay" id="play-overlay" data-action-click="playEventClip(this, '{{.ID}}')">` +
 			`<svg viewBox="0 0 24 24" fill="white" width="64" height="64"><polygon points="5 3 19 12 5 21 5 3"/></svg>` +
 			`</div>{{end}}` +
 			`</div>` +
@@ -325,8 +325,8 @@ func (s *Server) handleEventDetailPartial(w http.ResponseWriter, r *http.Request
 			`<img src="/api/events/{{.ID}}/detection-crop" alt="detection" style="width:64px;height:auto;border-radius:var(--radius-sm);border:2px solid var(--accent)">` +
 			`<input type="text" id="identify-search" class="person-name-input" placeholder="Search or add new {{.Label}}..." ` +
 			`style="flex:1;padding:0.5rem 0.7rem;font-size:var(--text-sm)" ` +
-			`oninput="filterIdentifyResults(this.value)" ` +
-			`onkeydown="if(event.key==='Enter')identifyEnter(this.value,'{{.ID}}','{{.Label}}')">` +
+			`data-action-input="filterIdentifyResults(this.value)" ` +
+			`data-identify-enter-id="{{.ID}}" data-identify-enter-label="{{.Label}}">` +
 			`</div>` +
 			`<div id="identify-grid" data-event-id="{{.ID}}" data-label="{{.Label}}"></div>` +
 			`{{end}}` +
@@ -434,7 +434,7 @@ func (s *Server) handleSystemPartial(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	data := sysData{
-		Version:              "0.1.0",
+		Version:              s.version,
 		Uptime:               uptimeStr,
 		Decoder:              decoderName,
 		GoVersion:            runtime.Version(),
@@ -520,7 +520,7 @@ const systemPartialTemplate = `<div class="sys-card">
       <button class="btn btn-sm"
         hx-post="/api/system/recompress/trigger"
         hx-swap="none"
-        hx-on::after-request="if(event.detail.successful){this.textContent='Started';this.disabled=true}else{this.textContent='Already running'}">Run now</button>
+        data-recompress-trigger="true">Run now</button>
       {{end}}
     </div>
   </div>

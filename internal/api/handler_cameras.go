@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/media"
+	"github.com/rvben/vedetta/internal/safepath"
 )
 
 func (s *Server) ListCameras(w http.ResponseWriter, _ *http.Request) {
@@ -216,9 +216,14 @@ func (s *Server) PressDoorbell(w http.ResponseWriter, r *http.Request, name stri
 	}
 
 	// Save snapshot
-	snapDir := filepath.Join(s.snapshotPath, name)
-	snapPath := filepath.Join(snapDir, eventID+".jpg")
-	if err := os.MkdirAll(snapDir, 0o755); err == nil {
+	snapDir, err := safepath.Join(s.snapshotPath, name)
+	snapPath := ""
+	if err != nil {
+		slog.Error("invalid doorbell snapshot path", "camera", name, "error", err)
+	} else {
+		snapPath, err = safepath.Join(snapDir, safepath.FileComponent(eventID)+".jpg")
+	}
+	if err == nil && os.MkdirAll(snapDir, 0o755) == nil {
 		var buf bytes.Buffer
 		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err == nil {
 			if err := os.WriteFile(snapPath, buf.Bytes(), 0o644); err == nil {
@@ -588,9 +593,14 @@ func (s *Server) TriggerDoorbell(cameraName string) {
 		SnapshotAvailable: true,
 	}
 
-	snapDir := filepath.Join(s.snapshotPath, cameraName)
-	snapPath := filepath.Join(snapDir, eventID+".jpg")
-	if err := os.MkdirAll(snapDir, 0o755); err == nil {
+	snapDir, err := safepath.Join(s.snapshotPath, cameraName)
+	snapPath := ""
+	if err != nil {
+		slog.Error("invalid doorbell snapshot path", "camera", cameraName, "error", err)
+	} else {
+		snapPath, err = safepath.Join(snapDir, safepath.FileComponent(eventID)+".jpg")
+	}
+	if err == nil && os.MkdirAll(snapDir, 0o755) == nil {
 		var buf bytes.Buffer
 		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err == nil {
 			if err := os.WriteFile(snapPath, buf.Bytes(), 0o644); err == nil {

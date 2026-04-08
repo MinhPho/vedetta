@@ -80,7 +80,7 @@ func (s *Server) GetHealth(w http.ResponseWriter, _ *http.Request) {
 				},
 			},
 		},
-		"version": "0.1.0",
+		"version": s.version,
 		"uptime":  formatDuration(time.Since(startTime)),
 	})
 }
@@ -213,7 +213,7 @@ func (s *Server) GetSystem(w http.ResponseWriter, _ *http.Request) {
 	stats := s.recorder.StorageStats()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":       "0.1.0",
+		"version":       s.version,
 		"uptime":        time.Since(startTime).String(),
 		"decoder":       "native Go",
 		"cameras":       len(statuses),

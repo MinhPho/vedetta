@@ -4,15 +4,16 @@ BINARY := vedetta
 BUILD_DIR := ./build
 DOCKER_IMAGE := ghcr.io/rvben/vedetta
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -ldflags="-X main.Version=$(VERSION)"
 CODESIGN_IDENTITY := Apple Development: ruben@am8.nl (D7C7CMD397)
 CODESIGN_IDENTIFIER := nl.am8.vedetta
 DEPLOY_HOST := mac-mini
 
 build:
-	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
 
 build-deploy:
-	GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY)-arm64 -ldflags="-s -w" ./cmd/vedetta
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.Version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY)-arm64 ./cmd/vedetta
 	codesign --force --sign "$(CODESIGN_IDENTITY)" --identifier "$(CODESIGN_IDENTIFIER)" $(BUILD_DIR)/$(BINARY)-arm64
 
 deploy: build-deploy
@@ -25,7 +26,7 @@ deploy: build-deploy
 		launchctl load ~/Library/LaunchAgents/com.vedetta.plist'
 
 build-capi:
-	go build -tags cgo_onnxruntime -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
+	go build -tags cgo_onnxruntime $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd/vedetta
 
 run: build
 	$(BUILD_DIR)/$(BINARY) -config config.example.yml

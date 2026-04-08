@@ -205,6 +205,9 @@ func TestSetupHandler_AddCameras(t *testing.T) {
 
 func TestSetupHandler_Complete(t *testing.T) {
 	db := setupTestDB(t)
+	if err := db.SaveAuthUser("admin", "hash"); err != nil {
+		t.Fatalf("SaveAuthUser: %v", err)
+	}
 	done := make(chan struct{})
 	h := NewSetupHandler("/tmp/unused.yml", db, done)
 
@@ -289,6 +292,7 @@ func TestSetupFlow_EndToEnd(t *testing.T) {
 
 	setupDone := make(chan struct{})
 	server := NewSetupMode(config.APIConfig{Host: "127.0.0.1", Port: 0}, db, configPath, setupDone)
+	setupToken := server.SetupToken()
 
 	// Start on random port using httptest
 	ts := httptest.NewServer(server.mux)
@@ -308,7 +312,13 @@ func TestSetupFlow_EndToEnd(t *testing.T) {
 
 	// 3. Create admin account
 	body := strings.NewReader(`{"username":"admin","password":"test1234"}`)
-	resp, _ = http.Post(ts.URL+"/api/setup", "application/json", body)
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/setup", body)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Setup-Token", setupToken)
+	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("setup failed: %d", resp.StatusCode)
 	}
@@ -319,13 +329,23 @@ func TestSetupFlow_EndToEnd(t *testing.T) {
 	}
 
 	// 4. Discovery should work (returns 200, may have empty cameras)
-	resp, _ = http.Get(ts.URL + "/api/discover")
+	req, err = http.NewRequest(http.MethodGet, ts.URL+"/api/discover", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("X-Setup-Token", setupToken)
+	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("discover should return 200, got %d", resp.StatusCode)
 	}
 
 	// 5. Signal complete (skip cameras)
-	resp, _ = http.Post(ts.URL+"/api/setup/complete", "application/json", nil)
+	req, err = http.NewRequest(http.MethodPost, ts.URL+"/api/setup/complete", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("X-Setup-Token", setupToken)
+	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("complete failed: %d", resp.StatusCode)
 	}

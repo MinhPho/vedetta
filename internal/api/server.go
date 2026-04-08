@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -37,34 +39,41 @@ type MQTTPublisher interface {
 }
 
 type Server struct {
-	config         config.APIConfig
-	auth           *auth.Checker
-	db             *storage.DB
-	cameras        *camera.Manager
-	recorder       *recording.Recorder
-	hub            *rtsp.Hub
-	streams        *stream.StreamManager
-	mse            *stream.MSEManager
-	faceRecognizer *detect.FaceRecognizer
+	version              string
+	config               config.APIConfig
+	auth                 *auth.Checker
+	db                   *storage.DB
+	cameras              *camera.Manager
+	recorder             *recording.Recorder
+	hub                  *rtsp.Hub
+	streams              *stream.StreamManager
+	mse                  *stream.MSEManager
+	faceRecognizer       *detect.FaceRecognizer
 	objectEmbedder       *detect.ObjectEmbedder
 	ObjectMatchThreshold float64
 	mqttClient           MQTTPublisher
 	mqttEnabled          bool
 	hlsSegmentCache      sync.Map // map[string][]media.HLSSegmentRef — keyed by "camera:segID"
 	snapshotPath         string
-	faceCropDir    string
-	ptzClients     map[string]*camera.PTZClient
-	cameraConfigs  []config.CameraConfig
-	httpSrv        *http.Server
-	mux            *http.ServeMux
-	funcMap        template.FuncMap
-	ready          atomic.Bool
-	setupHandler   *SetupHandler
-	setupMode      bool
+	faceCropDir          string
+	ptzClients           map[string]*camera.PTZClient
+	cameraConfigs        []config.CameraConfig
+	httpSrv              *http.Server
+	mux                  *http.ServeMux
+	funcMap              template.FuncMap
+	ready                atomic.Bool
+	setupHandler         *SetupHandler
+	setupMode            bool
 
 	// SSE event bus for real-time browser notifications
 	sseMu      sync.Mutex
 	sseClients map[chan []byte]struct{}
+
+	objectRematchMu      sync.Mutex
+	objectRematchRunning map[int64]bool
+	objectRematchPending map[int64]bool
+	faceBackfillRunning  atomic.Bool
+	objectRematchFn      func(int64)
 
 	// ctx is the application lifetime context (cancelled on shutdown).
 	ctx context.Context
@@ -72,11 +81,13 @@ type Server struct {
 
 func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Server {
 	s := &Server{
-		config: cfg,
-		auth:   authChecker,
-		db:     db,
-		mux:        http.NewServeMux(),
-		sseClients: make(map[chan []byte]struct{}),
+		config:               cfg,
+		auth:                 authChecker,
+		db:                   db,
+		mux:                  http.NewServeMux(),
+		sseClients:           make(map[chan []byte]struct{}),
+		objectRematchRunning: make(map[int64]bool),
+		objectRematchPending: make(map[int64]bool),
 	}
 
 	s.funcMap = template.FuncMap{
@@ -127,26 +138,34 @@ func New(cfg config.APIConfig, authChecker *auth.Checker, db *storage.DB) *Serve
 // NewSetupMode creates a Server that only serves setup/onboarding endpoints.
 // No auth middleware is applied. The setupDone channel is closed when setup completes.
 func NewSetupMode(cfg config.APIConfig, db *storage.DB, configPath string, setupDone chan struct{}) *Server {
+	cfg = SetupModeAPIConfig(cfg)
 	s := &Server{
-		config:     cfg,
-		db:         db,
-		mux:        http.NewServeMux(),
-		sseClients: make(map[chan []byte]struct{}),
-		setupMode:  true,
+		config:               cfg,
+		db:                   db,
+		mux:                  http.NewServeMux(),
+		sseClients:           make(map[chan []byte]struct{}),
+		setupMode:            true,
+		objectRematchRunning: make(map[int64]bool),
+		objectRematchPending: make(map[int64]bool),
 	}
 
-	sh := NewSetupHandler(configPath, db, setupDone)
+	setupToken, err := GenerateSetupToken()
+	if err != nil {
+		panic(fmt.Sprintf("generate setup token: %v", err))
+	}
+	sh := NewSetupHandler(configPath, db, setupDone, setupToken)
 	s.setupHandler = sh
 
-	// Setup-only routes (no auth middleware)
-	s.mux.HandleFunc("POST /api/setup", sh.HandleSetup)
-	s.mux.HandleFunc("GET /api/discover", sh.HandleDiscover)
-	s.mux.HandleFunc("POST /api/discover/probe", sh.HandleProbe)
-	s.mux.HandleFunc("GET /api/discover/thumbnail/{ip}", sh.HandleThumbnail)
-	s.mux.HandleFunc("POST /api/cameras", sh.HandleAddCameras)
-	s.mux.HandleFunc("POST /api/setup/complete", sh.HandleComplete)
+	// Setup-only routes are protected by a one-time setup token printed locally.
+	setup := sh.RequireSetupToken
+	s.mux.HandleFunc("POST /api/setup", setup(sh.HandleSetup))
+	s.mux.HandleFunc("GET /api/discover", setup(sh.HandleDiscover))
+	s.mux.HandleFunc("POST /api/discover/probe", setup(sh.HandleProbe))
+	s.mux.HandleFunc("GET /api/discover/thumbnail/{ip}", setup(sh.HandleThumbnail))
+	s.mux.HandleFunc("POST /api/cameras", setup(sh.HandleAddCameras))
+	s.mux.HandleFunc("POST /api/setup/complete", setup(sh.HandleComplete))
 	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "setup"})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "setup", "token_required": sh.SetupTokenRequired()})
 	})
 
 	// Serve setup.html as default page
@@ -221,8 +240,10 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
 	var handler http.Handler = s.mux
-	if !s.setupMode {
-		handler = s.readyMiddleware(authMiddleware(s, s.mux))
+	if s.setupMode {
+		handler = securityHeadersMiddleware(apiBodyLimitMiddleware(s.mux))
+	} else {
+		handler = s.readyMiddleware(authMiddleware(s, apiBodyLimitMiddleware(s.mux)))
 	}
 
 	s.httpSrv = &http.Server{
@@ -244,6 +265,10 @@ func (s *Server) Start() error {
 	return s.httpSrv.ListenAndServe()
 }
 
+func (s *Server) SetVersion(v string) {
+	s.version = v
+}
+
 func (s *Server) SetMQTT(publisher MQTTPublisher) {
 	s.mqttClient = publisher
 	s.mqttEnabled = true
@@ -260,6 +285,31 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)
 }
 
+func (s *Server) SetupToken() string {
+	if s == nil || s.setupHandler == nil {
+		return ""
+	}
+	return s.setupHandler.SetupToken()
+}
+
+// SetupModeAPIConfig keeps first-run setup off the LAN even though normal-mode
+// defaults intentionally listen on all interfaces.
+func SetupModeAPIConfig(cfg config.APIConfig) config.APIConfig {
+	host := strings.TrimSpace(cfg.Host)
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		cfg.Host = "127.0.0.1"
+	}
+	return cfg
+}
+
+func GenerateSetupToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
 func (s *Server) TransitionToFull(authChecker *auth.Checker) {
 	s.auth = authChecker
 	s.setupMode = false
@@ -268,7 +318,7 @@ func (s *Server) TransitionToFull(authChecker *auth.Checker) {
 	s.mux = newMux
 	s.registerRoutes()
 
-	s.httpSrv.Handler = s.readyMiddleware(authMiddleware(s, newMux))
+	s.httpSrv.Handler = s.readyMiddleware(authMiddleware(s, apiBodyLimitMiddleware(newMux)))
 }
 
 func (s *Server) SetSubsystems(cameras *camera.Manager, recorder *recording.Recorder, hub *rtsp.Hub, faceRecognizer *detect.FaceRecognizer, objectEmbedder *detect.ObjectEmbedder, snapshotPath string, faceCropDir string, cameraConfigs []config.CameraConfig, ptzClients map[string]*camera.PTZClient) {
@@ -276,7 +326,7 @@ func (s *Server) SetSubsystems(cameras *camera.Manager, recorder *recording.Reco
 	s.recorder = recorder
 	s.hub = hub
 	s.streams = stream.NewStreamManager(hub)
-	s.mse = stream.NewMSEManager(hub)
+	s.mse = stream.NewMSEManager(hub, s.config.AllowedOrigins)
 	s.faceRecognizer = faceRecognizer
 	s.objectEmbedder = objectEmbedder
 	s.snapshotPath = snapshotPath

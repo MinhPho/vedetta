@@ -1,10 +1,14 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,23 +24,61 @@ type SetupHandler struct {
 	configPath string
 	db         *storage.DB
 	setupDone  chan struct{}
+	setupToken string
 	mu         sync.Mutex
 	thumbnails map[string][]byte // IP -> JPEG
 	completed  bool
 }
 
 // NewSetupHandler creates a handler for the setup/onboarding API.
-func NewSetupHandler(configPath string, db *storage.DB, setupDone chan struct{}) *SetupHandler {
+func NewSetupHandler(configPath string, db *storage.DB, setupDone chan struct{}, setupToken ...string) *SetupHandler {
+	token := ""
+	if len(setupToken) > 0 {
+		token = setupToken[0]
+	}
 	return &SetupHandler{
 		configPath: configPath,
 		db:         db,
 		setupDone:  setupDone,
+		setupToken: token,
 		thumbnails: make(map[string][]byte),
 	}
 }
 
+func (h *SetupHandler) SetupToken() string {
+	return h.setupToken
+}
+
+func (h *SetupHandler) SetupTokenRequired() bool {
+	return h.setupToken != ""
+}
+
+func (h *SetupHandler) RequireSetupToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.validSetupToken(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid setup token"})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (h *SetupHandler) validSetupToken(r *http.Request) bool {
+	if h.setupToken == "" {
+		return true
+	}
+	token := r.Header.Get("X-Setup-Token")
+	if token == "" {
+		token = r.URL.Query().Get("setup_token")
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(h.setupToken)) == 1
+}
+
 // HandleSetup creates the initial admin account and writes config.
 func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -45,8 +87,13 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	req.Username = strings.TrimSpace(req.Username)
 	if req.Username == "" || req.Password == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
+		return
+	}
+	if h.adminConfigured() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "setup account already configured"})
 		return
 	}
 
@@ -95,6 +142,9 @@ func (h *SetupHandler) HandleDiscover(w http.ResponseWriter, _ *http.Request) {
 
 // HandleProbe tests RTSP credentials against discovered cameras.
 func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+
 	var req struct {
 		Cameras []struct {
 			IP           string `json:"ip"`
@@ -108,6 +158,10 @@ func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	if len(req.Cameras) > 64 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many cameras to probe"})
+		return
+	}
 
 	type probeResult struct {
 		IP        string                 `json:"ip"`
@@ -119,9 +173,18 @@ func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
 
 	var results []probeResult
 	for _, cam := range req.Cameras {
+		addr, err := netip.ParseAddr(cam.IP)
+		if err != nil || !setupProbeAddrAllowed(addr) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "probe target must be a private, loopback, or link-local IP address"})
+			return
+		}
 		port := cam.Port
 		if port == 0 {
 			port = 554
+		}
+		if port < 1 || port > 65535 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid RTSP port"})
+			return
 		}
 		streams, err := camera.ProbeRTSPWithCredentials(cam.IP, port, cam.Manufacturer, req.Username, req.Password)
 		if err != nil {
@@ -176,6 +239,11 @@ func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
 // HandleThumbnail serves a cached camera thumbnail JPEG.
 func (h *SetupHandler) HandleThumbnail(w http.ResponseWriter, r *http.Request) {
 	ip := r.PathValue("ip")
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !setupProbeAddrAllowed(addr) {
+		http.NotFound(w, r)
+		return
+	}
 	h.mu.Lock()
 	data, ok := h.thumbnails[ip]
 	h.mu.Unlock()
@@ -191,6 +259,9 @@ func (h *SetupHandler) HandleThumbnail(w http.ResponseWriter, r *http.Request) {
 
 // HandleAddCameras writes camera entries to the config file.
 func (h *SetupHandler) HandleAddCameras(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+
 	var req struct {
 		Cameras []struct {
 			Name      string `json:"name"`
@@ -202,14 +273,27 @@ func (h *SetupHandler) HandleAddCameras(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	if len(req.Cameras) == 0 || len(req.Cameras) > 64 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "expected between 1 and 64 cameras"})
+		return
+	}
 
 	var yamlSnippets []string
 	for _, cam := range req.Cameras {
+		name := config.SanitizeCameraName(cam.Name)
+		if err := config.ValidateCameraName(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid camera name: " + err.Error()})
+			return
+		}
+		if strings.TrimSpace(cam.URL) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "camera url is required"})
+			return
+		}
 		enabled := true
 		cc := config.CameraConfig{
-			Name:      cam.Name,
-			URL:       cam.URL,
-			RecordURL: cam.RecordURL,
+			Name:      name,
+			URL:       strings.TrimSpace(cam.URL),
+			RecordURL: strings.TrimSpace(cam.RecordURL),
 			Detect: config.DetectStreamConfig{
 				Width:  640,
 				Height: 480,
@@ -224,7 +308,7 @@ func (h *SetupHandler) HandleAddCameras(w http.ResponseWriter, r *http.Request) 
 		}
 		comment := fmt.Sprintf("Added during setup on %s", time.Now().Format("2006-01-02"))
 		if err := config.AppendCamera(h.configPath, cc, comment); err != nil {
-			slog.Warn("failed to append camera to config", "name", cam.Name, "error", err)
+			slog.Warn("failed to append camera to config", "name", name, "error", err)
 			snippet, genErr := config.GenerateCameraYAML(cc, comment)
 			if genErr != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate camera YAML"})
@@ -249,6 +333,10 @@ func (h *SetupHandler) HandleAddCameras(w http.ResponseWriter, r *http.Request) 
 
 // HandleComplete signals that setup is done (used by "Skip for Now").
 func (h *SetupHandler) HandleComplete(w http.ResponseWriter, _ *http.Request) {
+	if !h.adminConfigured() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "admin account must be configured before completing setup"})
+		return
+	}
 	h.signalComplete()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -261,4 +349,19 @@ func (h *SetupHandler) signalComplete() {
 		h.completed = true
 		close(h.setupDone)
 	}
+}
+
+func (h *SetupHandler) adminConfigured() bool {
+	users, err := h.db.ListAuthUsers()
+	if err == nil && len(users) > 0 {
+		return true
+	}
+	if _, err := os.Stat(h.configPath); err == nil {
+		return true
+	}
+	return false
+}
+
+func setupProbeAddrAllowed(addr netip.Addr) bool {
+	return addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast()
 }

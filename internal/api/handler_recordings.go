@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rvben/vedetta/internal/media"
-	"github.com/rvben/vedetta/internal/recording"
 )
 
 func (s *Server) ListSegments(w http.ResponseWriter, r *http.Request, camera string, params ListSegmentsParams) {
@@ -401,57 +402,43 @@ func (s *Server) ExportRecording(w http.ResponseWriter, r *http.Request, camera 
 		return
 	}
 
-	// Run PrepareExport with a timeout to prevent the handler from blocking
-	// indefinitely on filesystem issues (e.g., EINTR on macOS APFS USB volumes).
-	type exportResult struct {
-		result *recording.ExportResult
-		err    error
-	}
-	exportCh := make(chan exportResult, 1)
-	go func() {
-		res, err := s.recorder.PrepareExport(camera, start, end)
-		exportCh <- exportResult{res, err}
-	}()
+	exportCtx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
 
-	exportTimeout := 5 * time.Minute
-	select {
-	case res := <-exportCh:
-		if res.err != nil {
+	result, err := s.recorder.PrepareExport(exportCtx, camera, start, end)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			slog.Error("recording export timed out",
+				"camera", camera,
+				"start", start.Format(time.RFC3339),
+				"end", end.Format(time.RFC3339),
+			)
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "export timed out"})
+		case errors.Is(err, context.Canceled):
+			slog.Info("recording export cancelled by client", "camera", camera)
+		default:
 			slog.Error("recording export failed",
 				"camera", camera,
 				"start", start.Format(time.RFC3339),
 				"end", end.Format(time.RFC3339),
-				"error", res.err,
+				"error", err,
 			)
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": res.err.Error()})
-			return
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		}
-		defer res.result.Close()
-
-		filename := fmt.Sprintf("%s_%s_%s.mp4",
-			camera,
-			start.Format("2006-01-02_15-04-05"),
-			end.Format("15-04-05"),
-		)
-
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
-
-		// ServeContent handles Content-Type, Content-Length, Range requests,
-		// and uses sendfile(2) for zero-copy streaming when possible.
-		http.ServeContent(w, r, filename, time.Now(), res.result.File)
-
-	case <-time.After(exportTimeout):
-		slog.Error("recording export timed out",
-			"camera", camera,
-			"start", start.Format(time.RFC3339),
-			"end", end.Format(time.RFC3339),
-			"timeout", exportTimeout,
-		)
-		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "export timed out"})
-
-	case <-r.Context().Done():
-		slog.Info("recording export cancelled by client",
-			"camera", camera,
-		)
+		return
 	}
+	defer result.Close()
+
+	filename := fmt.Sprintf("%s_%s_%s.mp4",
+		camera,
+		start.Format("2006-01-02_15-04-05"),
+		end.Format("15-04-05"),
+	)
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+	// ServeContent handles Content-Type, Content-Length, Range requests,
+	// and uses sendfile(2) for zero-copy streaming when possible.
+	http.ServeContent(w, r, filename, time.Now(), result.File)
 }

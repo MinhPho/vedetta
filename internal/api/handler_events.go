@@ -356,8 +356,13 @@ func (s *Server) TrackPerson(w http.ResponseWriter, r *http.Request, id string) 
 	var req struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	name, err := normalizeRequiredDisplayName(req.Name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -389,7 +394,7 @@ func (s *Server) TrackPerson(w http.ResponseWriter, r *http.Request, id string) 
 	if len(faceEmbedding) > 0 {
 		centroid = detect.Float32ToBytes(faceEmbedding)
 	}
-	personID, err := s.db.SavePersonWithEvent(req.Name, false, centroid, eventID)
+	personID, err := s.db.SavePersonWithEvent(name, false, centroid, eventID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -418,7 +423,7 @@ func (s *Server) TrackPerson(w http.ResponseWriter, r *http.Request, id string) 
 		if embErr == nil && len(bodyEmb) > 0 {
 			// Create a known_object for body matching
 			obj := storage.KnownObject{
-				Name:     req.Name,
+				Name:     name,
 				Label:    "person",
 				Centroid: detect.Float32ToBytes(bodyEmb),
 			}
@@ -449,14 +454,14 @@ func (s *Server) TrackPerson(w http.ResponseWriter, r *http.Request, id string) 
 	}
 
 	// Set sub_label on the event
-	_ = s.db.UpdateEventSubLabel(eventID, req.Name)
+	_ = s.db.UpdateEventSubLabel(eventID, name)
 
-	slog.Info("person tracked from event", "person_id", personID, "name", req.Name,
+	slog.Info("person tracked from event", "person_id", personID, "name", name,
 		"event", eventID, "method", method)
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"person_id": personID,
-		"name":      req.Name,
+		"name":      name,
 		"method":    method,
 	})
 }

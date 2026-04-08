@@ -102,11 +102,14 @@ func (s *Server) CreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, rawToken, err := s.auth.CreateToken(principal.Username, req.Name, req.Scopes, s.auth.ClientIP(r))
+	token, rawToken, err := s.auth.CreateTokenForPrincipal(principal, req.Name, req.Scopes, s.auth.ClientIP(r))
 	switch err {
 	case nil:
 	case auth.ErrRateLimited:
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited"})
+		return
+	case auth.ErrInsufficientScope:
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
 		return
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

@@ -44,7 +44,12 @@ func (s *Server) CreateObject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.EventID == "" || req.Name == "" {
+	name, err := normalizeRequiredDisplayName(req.Name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if req.EventID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "event_id and name are required"})
 		return
 	}
@@ -72,7 +77,7 @@ func (s *Server) CreateObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	obj := storage.KnownObject{
-		Name:     req.Name,
+		Name:     name,
 		Label:    event.Label,
 		Centroid: detect.Float32ToBytes(embedding),
 	}
@@ -97,7 +102,7 @@ func (s *Server) CreateObject(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Background re-match: tag recent events with this new object
-	go s.rematchRecentEvents(objID)
+	s.scheduleObjectRematch(objID)
 
 	obj.ID = objID
 	obj.CropPath = cropPath
@@ -113,8 +118,13 @@ func (s *Server) UpdateObject(w http.ResponseWriter, r *http.Request, id int64) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.Name != nil && *req.Name != "" {
-		if err := s.db.UpdateKnownObjectName(id, *req.Name); err != nil {
+	if req.Name != nil {
+		name, err := normalizeRequiredDisplayName(*req.Name)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.db.UpdateKnownObjectName(id, name); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -292,7 +302,7 @@ func (s *Server) AddObjectReference(w http.ResponseWriter, r *http.Request, id i
 	s.recomputeObjectCentroid(objectID)
 
 	// Background re-match: scan recent unmatched events for this object
-	go s.rematchRecentEvents(objectID)
+	s.scheduleObjectRematch(objectID)
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":        refID,

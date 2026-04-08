@@ -64,11 +64,18 @@ func authMiddleware(s *Server, next http.Handler) http.Handler {
 	})
 }
 
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		applySecurityHeaders(w)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func applySecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy())
 }
 
 func isPublicPath(r *http.Request) bool {
