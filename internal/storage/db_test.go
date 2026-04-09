@@ -1298,3 +1298,60 @@ func TestSaveSegment_PreservesRecompressionState(t *testing.T) {
 		t.Errorf("SizeBytes = %d, want 999", seg.SizeBytes)
 	}
 }
+
+func TestCameraStoppedState(t *testing.T) {
+	db := newTestDB(t)
+
+	// Initially no cameras are stopped
+	stopped, err := db.ListStoppedCameras()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 0 {
+		t.Fatalf("expected 0 stopped cameras, got %d", len(stopped))
+	}
+
+	// Mark a camera as stopped
+	if err := db.SetCameraStopped("front_door", true); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err = db.ListStoppedCameras()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 1 || stopped[0] != "front_door" {
+		t.Fatalf("expected [front_door], got %v", stopped)
+	}
+
+	// Mark another camera as stopped
+	if err := db.SetCameraStopped("backyard", true); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err = db.ListStoppedCameras()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 2 {
+		t.Fatalf("expected 2 stopped cameras, got %d", len(stopped))
+	}
+
+	// Resume a camera
+	if err := db.SetCameraStopped("front_door", false); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err = db.ListStoppedCameras()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stopped) != 1 || stopped[0] != "backyard" {
+		t.Fatalf("expected [backyard], got %v", stopped)
+	}
+
+	// Idempotent: stopping an already-stopped camera is fine
+	if err := db.SetCameraStopped("backyard", true); err != nil {
+		t.Fatal(err)
+	}
+}

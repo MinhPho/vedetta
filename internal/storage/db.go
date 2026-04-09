@@ -1974,6 +1974,34 @@ func (d *DB) DeleteSetting(key string) error {
 	return err
 }
 
+// SetCameraStopped marks a camera as stopped (true) or running (false) in the kv_store.
+func (d *DB) SetCameraStopped(name string, stopped bool) error {
+	key := "camera_stopped:" + name
+	if stopped {
+		return d.SetSetting(key, "1")
+	}
+	return d.DeleteSetting(key)
+}
+
+// ListStoppedCameras returns the names of all cameras currently marked as stopped.
+func (d *DB) ListStoppedCameras() ([]string, error) {
+	rows, err := d.db.Query("SELECT key FROM kv_store WHERE key LIKE 'camera_stopped:%'")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var names []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		names = append(names, strings.TrimPrefix(key, "camera_stopped:"))
+	}
+	return names, rows.Err()
+}
+
 func decodeZonePoints(z *camera.Zone, pointsJSON string) error {
 	if pointsJSON != "" && pointsJSON != "[]" {
 		if err := json.Unmarshal([]byte(pointsJSON), &z.Points); err != nil {
