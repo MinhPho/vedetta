@@ -37,3 +37,9 @@ Thumbs.db
 
 # Test artifacts
 internal/camera/test/
+
+# Superpowers docs (local specs/plans)
+docs/superpowers/
+
+# Git worktrees
+.worktrees/
