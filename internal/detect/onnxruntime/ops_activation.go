@@ -47,6 +47,11 @@ func opSigmoid(inputs []*Tensor, _ *Attributes) ([]*Tensor, error) {
 
 // fastSigmoid computes 1/(1+exp(-x)) using a lookup table with linear interpolation.
 func fastSigmoid(x float32) float32 {
+	// NaN propagates through sigmoid. A direct NaN check avoids the
+	// platform-dependent behavior of int(NaN) further down.
+	if x != x {
+		return x
+	}
 	if x <= sigmoidLUTMin {
 		return sigmoidLUT[0]
 	}
