@@ -264,18 +264,8 @@ func TestSetupModeOpenH264RoutesRequireToken(t *testing.T) {
 	db := setupTestDB(t)
 	server := NewSetupMode(config.APIConfig{Host: "127.0.0.1", Port: 0}, db, t.TempDir()+"/config.yml", make(chan struct{}))
 
-	t.Run("status requires token", func(t *testing.T) {
+	t.Run("status and install work without auth", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/setup/codecs/openh264", nil)
-		w := httptest.NewRecorder()
-		server.mux.ServeHTTP(w, req)
-		if w.Code != http.StatusForbidden {
-			t.Fatalf("status code = %d, want %d", w.Code, http.StatusForbidden)
-		}
-	})
-
-	t.Run("status and install succeed with token", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/setup/codecs/openh264", nil)
-		req.Header.Set("X-Setup-Token", server.SetupToken())
 		w := httptest.NewRecorder()
 		server.mux.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -283,7 +273,6 @@ func TestSetupModeOpenH264RoutesRequireToken(t *testing.T) {
 		}
 
 		req = httptest.NewRequest(http.MethodPost, "/api/setup/codecs/openh264/install", nil)
-		req.Header.Set("X-Setup-Token", server.SetupToken())
 		w = httptest.NewRecorder()
 		server.mux.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
@@ -304,14 +293,14 @@ func TestSetupPageIncludesOpenH264InstallUI(t *testing.T) {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "Optional Codec") {
+	if !strings.Contains(body, "OpenH264") {
 		t.Fatalf("setup page missing codec section")
 	}
 	if !strings.Contains(body, "id=\"codec-headline\"") {
 		t.Fatalf("setup page missing codec headline")
 	}
-	if !strings.Contains(body, "id=\"codec-sidecar-title\"") {
-		t.Fatalf("setup page missing codec action panel")
+	if !strings.Contains(body, "id=\"install-codec\"") {
+		t.Fatalf("setup page missing install button")
 	}
 	if !strings.Contains(body, "/api/setup/codecs/openh264/install") {
 		t.Fatalf("setup page missing install endpoint wiring")

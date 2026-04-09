@@ -6,101 +6,139 @@
   <title>Vedetta Setup</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
     :root {
       color-scheme: dark;
-      --bg: #07111a;
-      --panel: rgba(10, 24, 38, 0.92);
-      --panel-edge: rgba(125, 179, 255, 0.18);
-      --text: #f2f7fb;
-      --muted: #9fb4c6;
+      --bg: #060e15;
+      --panel: rgba(8, 20, 32, 0.94);
+      --panel-edge: rgba(93, 215, 255, 0.12);
+      --surface: rgba(4, 12, 18, 0.6);
+      --text: #e8f0f6;
+      --muted: #7e97ab;
       --accent: #5dd7ff;
+      --accent-dim: rgba(93, 215, 255, 0.08);
       --accent-strong: #1baee6;
       --danger: #ff7d7d;
       --success: #5dff97;
       --warning: #ffcf70;
+      --radius: 14px;
+      --radius-sm: 8px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       min-height: 100vh;
       display: grid;
       place-items: center;
-      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top, rgba(93, 215, 255, 0.18), transparent 35%),
-        linear-gradient(180deg, #0a1621 0%, var(--bg) 100%);
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      background: var(--bg);
       color: var(--text);
-      padding: 1rem;
+      padding: 1.5rem;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(93, 215, 255, 0.10), transparent),
+        radial-gradient(ellipse 60% 40% at 80% 100%, rgba(27, 174, 230, 0.06), transparent);
+      pointer-events: none;
     }
 
-    /* Shared panel styles */
+    /* Panels */
     .shell {
-      width: min(420px, calc(100vw - 2rem));
-      padding: 2rem;
+      position: relative;
+      width: min(440px, calc(100vw - 3rem));
+      padding: 2.25rem;
       border: 1px solid var(--panel-edge);
       border-radius: 20px;
       background: var(--panel);
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-      backdrop-filter: blur(20px);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 32px 80px rgba(0, 0, 0, 0.5);
     }
     .shell-wide {
-      width: min(720px, calc(100vw - 2rem));
-      padding: 2rem;
+      position: relative;
+      width: min(680px, calc(100vw - 3rem));
+      padding: 2.25rem;
       border: 1px solid var(--panel-edge);
       border-radius: 20px;
       background: var(--panel);
-      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
-      backdrop-filter: blur(20px);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 32px 80px rgba(0, 0, 0, 0.5);
     }
+
+    /* Step indicator */
+    .steps {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.75rem;
+    }
+    .step-dot {
+      width: 32px;
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(93, 215, 255, 0.15);
+      transition: background 0.3s;
+    }
+    .step-dot.done { background: var(--accent); }
+    .step-dot.active { background: var(--accent); }
 
     /* Branding */
     .brand {
       display: flex;
       align-items: center;
-      gap: 0.6rem;
-      margin-bottom: 0.5rem;
-    }
-    .brand svg { color: var(--accent); }
-    .brand-text {
-      font-size: 1.8rem;
-      font-weight: 700;
-      letter-spacing: 0.02em;
-    }
-
-    h1 {
-      margin: 0 0 0.5rem;
-      font-size: 1.8rem;
-      letter-spacing: 0.02em;
-    }
-    h2 {
-      font-size: 1.3rem;
+      gap: 0.55rem;
       margin-bottom: 0.25rem;
     }
-    p {
-      margin: 0 0 1.5rem;
+    .brand svg { color: var(--accent); opacity: 0.7; }
+    .brand-text {
+      font-size: 0.92rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
       color: var(--muted);
+    }
+
+    /* Typography */
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin: 0.15rem 0 0.35rem;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.92rem;
       line-height: 1.5;
+      margin-bottom: 1.5rem;
+    }
+    p {
+      margin: 0 0 1.25rem;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 0.92rem;
     }
     label {
       display: block;
-      margin-bottom: 0.35rem;
-      font-size: 0.92rem;
+      margin-bottom: 0.3rem;
+      font-size: 0.84rem;
+      font-weight: 500;
       color: var(--muted);
+      letter-spacing: 0.02em;
     }
     input[type="text"],
     input[type="password"] {
       width: 100%;
-      margin-bottom: 1rem;
-      padding: 0.85rem 0.95rem;
-      border: 1px solid rgba(159, 180, 198, 0.2);
-      border-radius: 12px;
-      background: rgba(4, 12, 18, 0.7);
+      margin-bottom: 0.85rem;
+      padding: 0.75rem 0.85rem;
+      border: 1px solid rgba(93, 215, 255, 0.1);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
       color: var(--text);
-      font-size: 1rem;
+      font-size: 0.95rem;
       font-family: inherit;
+      transition: border-color 0.15s;
     }
     input:focus {
       outline: none;
-      border-color: var(--accent);
+      border-color: rgba(93, 215, 255, 0.4);
     }
 
     /* Buttons */
@@ -108,60 +146,76 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 0.9rem 1rem;
+      padding: 0.75rem 1.15rem;
       border: 0;
-      border-radius: 12px;
-      font-size: 1rem;
-      font-weight: 700;
+      border-radius: var(--radius-sm);
+      font-size: 0.92rem;
+      font-weight: 600;
       font-family: inherit;
       cursor: pointer;
-      transition: opacity 0.15s;
+      transition: all 0.15s;
+      letter-spacing: 0.01em;
     }
-    .btn:hover { opacity: 0.9; }
-    .btn[disabled] { opacity: 0.7; cursor: wait; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn[disabled] { opacity: 0.5; cursor: not-allowed; filter: none; }
     .btn-primary {
       width: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+      background: var(--accent);
       color: #03111b;
+      font-weight: 700;
     }
     .btn-secondary {
-      background: rgba(159, 180, 198, 0.15);
-      color: var(--text);
-      border: 1px solid var(--panel-edge);
+      background: rgba(93, 215, 255, 0.08);
+      color: var(--accent);
+      border: 1px solid rgba(93, 215, 255, 0.15);
     }
+    .btn-secondary:hover { background: rgba(93, 215, 255, 0.14); }
     .btn-small {
-      padding: 0.55rem 0.85rem;
-      font-size: 0.88rem;
-      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.84rem;
     }
-
-    /* Status messages */
-    .status {
-      min-height: 1.3rem;
-      margin-top: 1rem;
+    .btn-ghost {
+      width: 100%;
+      padding: 0.75rem 1.15rem;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid rgba(93, 215, 255, 0.1);
+      border-radius: var(--radius-sm);
       font-size: 0.92rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-ghost:hover { color: var(--text); border-color: rgba(93, 215, 255, 0.25); }
+
+    /* Status */
+    .status {
+      min-height: 1.2rem;
+      margin-top: 0.75rem;
+      font-size: 0.84rem;
       color: var(--muted);
     }
     .status.error { color: var(--danger); }
     .status.success { color: var(--success); }
 
-    /* Screen visibility */
     .screen { display: none; }
     .screen.active { display: block; }
 
-    /* Config YAML display */
+    /* Config YAML */
     .yaml-block {
       position: relative;
       margin: 1rem 0;
     }
     .yaml-block pre {
-      background: rgba(4, 12, 18, 0.85);
+      background: var(--surface);
       border: 1px solid var(--panel-edge);
-      border-radius: 12px;
+      border-radius: var(--radius-sm);
       padding: 1rem;
       overflow-x: auto;
-      font-size: 0.85rem;
-      line-height: 1.5;
+      font-size: 0.82rem;
+      font-family: "IBM Plex Mono", monospace;
+      line-height: 1.55;
       color: var(--accent);
       max-height: 300px;
       overflow-y: auto;
@@ -172,463 +226,235 @@
       right: 0.5rem;
     }
 
-    /* Scanning animation */
+    /* ── Scan animation ── */
     .scan-status {
-      text-align: center;
-      padding: 2rem 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.25rem;
+      padding: 2.5rem 0 1.5rem;
     }
-    .pulse-ring {
-      display: inline-block;
-      width: 48px;
-      height: 48px;
+    .radar {
+      position: relative;
+      width: 64px;
+      height: 64px;
+    }
+    .radar-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid rgba(93, 215, 255, 0.15);
+    }
+    .radar-ring:nth-child(2) { inset: 8px; }
+    .radar-ring:nth-child(3) { inset: 16px; border-color: rgba(93, 215, 255, 0.25); }
+    .radar-sweep {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background: conic-gradient(from 0deg, transparent 0deg, rgba(93, 215, 255, 0.25) 40deg, transparent 80deg);
+      animation: sweep 2s linear infinite;
+    }
+    .radar-dot {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 6px; height: 6px;
+      margin: -3px 0 0 -3px;
       border-radius: 50%;
       background: var(--accent);
-      opacity: 0.3;
-      animation: pulse 1.5s ease-in-out infinite;
+      box-shadow: 0 0 8px var(--accent);
     }
-    @keyframes pulse {
-      0%, 100% { transform: scale(0.8); opacity: 0.3; }
-      50% { transform: scale(1.2); opacity: 0.6; }
+    @keyframes sweep { to { transform: rotate(360deg); } }
+    .scan-label {
+      font-size: 0.88rem;
+      color: var(--muted);
+      letter-spacing: 0.03em;
     }
 
-    /* Camera cards */
+    /* ── Codec banner ── */
+    .codec-banner {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid var(--panel-edge);
+      border-radius: var(--radius-sm);
+      background: var(--accent-dim);
+      margin-bottom: 1.25rem;
+      font-size: 0.86rem;
+    }
+    .codec-banner-text {
+      flex: 1;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .codec-banner-text strong { color: var(--text); }
+    .codec-banner-badge {
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.1rem 0.45rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      vertical-align: 1px;
+    }
+    .codec-banner-badge.tone-muted { color: var(--muted); background: rgba(126, 151, 171, 0.15); }
+    .codec-banner-badge.tone-info { color: var(--accent); background: rgba(93, 215, 255, 0.12); }
+    .codec-banner-badge.tone-success { color: var(--success); background: rgba(93, 255, 151, 0.12); }
+    .codec-banner-badge.tone-warning { color: var(--warning); background: rgba(255, 207, 112, 0.12); }
+    .codec-banner-badge.tone-error { color: var(--danger); background: rgba(255, 125, 125, 0.12); }
+    .codec-status-inline.status { min-height: 0; margin-top: 0.35rem; font-size: 0.82rem; }
+    .codec-diagnostics {
+      margin-top: 0.5rem;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid rgba(93, 215, 255, 0.08);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+    .codec-diagnostics summary {
+      cursor: pointer; color: var(--muted); font-size: 0.82rem; font-weight: 500;
+      list-style: none;
+    }
+    .codec-diagnostics summary::-webkit-details-marker { display: none; }
+    .codec-diagnostic-body {
+      margin-top: 0.4rem; color: var(--muted); font-size: 0.8rem;
+      font-family: "IBM Plex Mono", monospace; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word;
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center;
+      padding: 2rem 1rem;
+    }
+    .empty-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px; height: 56px;
+      border-radius: 16px;
+      background: var(--accent-dim);
+      border: 1px solid var(--panel-edge);
+      margin-bottom: 1rem;
+      color: var(--accent);
+      opacity: 0.7;
+    }
+    .empty-state h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+    .empty-state p {
+      font-size: 0.88rem;
+      max-width: 38ch;
+      margin: 0 auto 0.5rem;
+    }
+
+    /* ── Camera cards ── */
     .camera-list {
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
-      margin: 1rem 0;
+      gap: 0.6rem;
+      margin-bottom: 1.25rem;
     }
     .camera-card {
-      border: 1px solid var(--panel-edge);
-      border-radius: 12px;
-      padding: 1rem;
-      background: rgba(4, 12, 18, 0.5);
+      border: 1px solid rgba(93, 215, 255, 0.08);
+      border-radius: var(--radius-sm);
+      padding: 0.85rem;
+      background: var(--surface);
       transition: border-color 0.2s;
     }
-    .camera-card.probed-ok {
-      border-color: rgba(93, 255, 151, 0.4);
-    }
-    .camera-card.probed-fail {
-      border-color: rgba(255, 125, 125, 0.4);
-    }
+    .camera-card.probed-ok { border-color: rgba(93, 255, 151, 0.3); }
+    .camera-card.probed-fail { border-color: rgba(255, 125, 125, 0.3); }
     .camera-header {
       display: flex;
       align-items: flex-start;
-      gap: 0.75rem;
+      gap: 0.65rem;
     }
     .camera-header input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
+      width: 16px; height: 16px;
       accent-color: var(--accent);
       flex-shrink: 0;
-      margin-top: 0.3rem;
+      margin-top: 0.35rem;
     }
     .camera-info { flex: 1; min-width: 0; }
     .camera-name-input {
       width: 100%;
-      padding: 0.5rem 0.65rem;
-      margin-bottom: 0.35rem;
-      border: 1px solid rgba(159, 180, 198, 0.2);
-      border-radius: 8px;
-      background: rgba(4, 12, 18, 0.7);
+      padding: 0.4rem 0.55rem;
+      margin-bottom: 0.2rem;
+      border: 1px solid rgba(93, 215, 255, 0.1);
+      border-radius: 6px;
+      background: transparent;
       color: var(--text);
-      font-size: 1rem;
+      font-size: 0.95rem;
       font-weight: 600;
       font-family: inherit;
     }
-    .camera-name-input:focus {
-      outline: none;
-      border-color: var(--accent);
-    }
-    .camera-meta {
-      font-size: 0.85rem;
-      color: var(--muted);
-      margin-top: 0.15rem;
-    }
-    .camera-probe-status {
-      font-size: 0.92rem;
-      font-weight: 600;
-      flex-shrink: 0;
-    }
+    .camera-name-input:focus { outline: none; border-color: rgba(93, 215, 255, 0.35); background: var(--surface); }
+    .camera-meta { font-size: 0.8rem; color: var(--muted); margin-top: 0.1rem; font-family: "IBM Plex Mono", monospace; }
+    .camera-probe-status { font-size: 0.84rem; font-weight: 600; flex-shrink: 0; }
     .camera-probe-status.ok { color: var(--success); }
     .camera-probe-status.fail { color: var(--danger); }
     .camera-details {
-      margin-top: 0.75rem;
-      padding-top: 0.75rem;
-      border-top: 1px solid rgba(159, 180, 198, 0.1);
+      margin-top: 0.6rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid rgba(93, 215, 255, 0.06);
       display: flex;
-      gap: 0.75rem;
+      gap: 0.65rem;
       align-items: flex-start;
     }
     .camera-thumbnail-wrap {
       flex-shrink: 0;
-      width: 160px;
-      height: 90px;
-      border-radius: 8px;
+      width: 144px; height: 81px;
+      border-radius: 6px;
       overflow: hidden;
-      background: rgba(159, 180, 198, 0.08);
+      background: rgba(93, 215, 255, 0.04);
       position: relative;
     }
     .camera-thumbnail-wrap.loading::after {
       content: '';
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(90deg, transparent, rgba(159, 180, 198, 0.1), transparent);
-      animation: shimmer 1.5s infinite;
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(93, 215, 255, 0.06), transparent);
+      animation: shimmer 1.8s infinite;
     }
-    @keyframes shimmer {
-      0% { transform: translateX(-100%); }
-      100% { transform: translateX(100%); }
+    @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+    .camera-thumbnail { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; display: block; }
+    .camera-streams { font-size: 0.78rem; color: var(--muted); word-break: break-all; flex: 1; font-family: "IBM Plex Mono", monospace; }
+    .camera-streams div { margin-bottom: 0.2rem; }
+    .camera-override { margin-top: 0.6rem; padding-top: 0.6rem; border-top: 1px solid rgba(93, 215, 255, 0.06); }
+    .camera-override summary { font-size: 0.82rem; color: var(--muted); cursor: pointer; margin-bottom: 0.4rem; }
+    .override-fields { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .override-fields input { flex: 1; min-width: 110px; margin-bottom: 0.4rem; }
+
+    /* ── Connect prompt ── */
+    .connect-prompt {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid rgba(93, 215, 255, 0.08);
     }
-    .camera-thumbnail {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      border-radius: 8px;
-      display: block;
-    }
-    .camera-streams {
-      font-size: 0.82rem;
+    .connect-label {
+      font-size: 0.86rem;
       color: var(--muted);
-      word-break: break-all;
-      flex: 1;
+      margin-bottom: 0.6rem;
     }
-    .camera-streams div { margin-bottom: 0.25rem; }
-    .camera-override {
-      margin-top: 0.75rem;
-      padding-top: 0.75rem;
-      border-top: 1px solid rgba(159, 180, 198, 0.1);
-    }
-    .camera-override summary {
-      font-size: 0.88rem;
-      color: var(--muted);
-      cursor: pointer;
-      margin-bottom: 0.5rem;
-    }
-    .override-fields {
+    .connect-row {
       display: flex;
       gap: 0.5rem;
-      flex-wrap: wrap;
+      align-items: center;
     }
-    .override-fields input {
+    .connect-row input {
       flex: 1;
-      min-width: 120px;
-      margin-bottom: 0.5rem;
+      min-width: 100px;
+      margin-bottom: 0;
     }
+    .connect-row .btn { white-space: nowrap; flex-shrink: 0; }
 
-    /* Credentials section */
-    .cred-section {
-      border: 1px solid var(--panel-edge);
-      border-radius: 12px;
-      padding: 1rem;
-      margin-bottom: 1rem;
-      background: rgba(4, 12, 18, 0.4);
-    }
-    .cred-section h3 {
-      font-size: 0.95rem;
-      margin-bottom: 0.75rem;
-      color: var(--muted);
-    }
-    .cred-row {
-      display: flex;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-      align-items: flex-end;
-    }
-    .cred-row .field { flex: 1; min-width: 140px; }
-    .cred-row .field input { margin-bottom: 0; }
-    .cred-row .btn { margin-bottom: 0; align-self: flex-end; }
-    .codec-card {
-      position: relative;
-      overflow: hidden;
-      padding: 1.2rem;
-    }
-    .codec-card::before {
-      content: '';
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(93, 215, 255, 0.4), transparent);
-      opacity: 0.7;
-    }
-    .codec-card::after {
-      content: '';
-      position: absolute;
-      top: -120px;
-      right: -100px;
-      width: 260px;
-      height: 260px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(93, 215, 255, 0.12), transparent 68%);
-      pointer-events: none;
-    }
-    .codec-card[data-tone="success"] {
-      border-color: rgba(93, 255, 151, 0.28);
-      background: linear-gradient(180deg, rgba(12, 28, 22, 0.72), rgba(4, 12, 18, 0.48));
-    }
-    .codec-card[data-tone="error"] {
-      border-color: rgba(255, 125, 125, 0.28);
-      background: linear-gradient(180deg, rgba(36, 16, 20, 0.66), rgba(4, 12, 18, 0.48));
-    }
-    .codec-card[data-tone="warning"] {
-      border-color: rgba(255, 207, 112, 0.28);
-      background: linear-gradient(180deg, rgba(36, 26, 12, 0.62), rgba(4, 12, 18, 0.48));
-    }
-    .codec-card[data-tone="info"] {
-      border-color: rgba(93, 215, 255, 0.3);
-      background: linear-gradient(180deg, rgba(9, 26, 36, 0.72), rgba(4, 12, 18, 0.48));
-    }
-    .codec-shell {
-      position: relative;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-      gap: 1rem;
-      align-items: start;
-      z-index: 1;
-    }
-    .codec-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 1rem;
-      margin-bottom: 0.9rem;
-    }
-    .codec-title-wrap {
-      display: flex;
-      align-items: center;
-      gap: 0.85rem;
-      min-width: 0;
-    }
-    .codec-icon {
-      display: grid;
-      place-items: center;
-      width: 2.9rem;
-      height: 2.9rem;
-      border-radius: 14px;
-      border: 1px solid rgba(93, 215, 255, 0.24);
-      background: linear-gradient(180deg, rgba(93, 215, 255, 0.16), rgba(93, 215, 255, 0.06));
-      color: var(--accent);
-      flex-shrink: 0;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    }
-    .codec-title-wrap h3 {
-      margin: 0;
-      font-size: 1.35rem;
-      line-height: 1.15;
-      color: var(--text);
-    }
-    .codec-eyebrow {
-      margin-bottom: 0.2rem;
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--accent);
-    }
-    .codec-intro {
-      margin: 0;
-      max-width: 48ch;
-      font-size: 0.98rem;
-      line-height: 1.55;
-    }
-    .codec-benefits {
-      display: flex;
-      gap: 0.55rem;
-      flex-wrap: wrap;
-      margin-top: 0.95rem;
-    }
-    .codec-benefit {
-      display: inline-flex;
-      align-items: center;
-      min-height: 1.9rem;
-      padding: 0.35rem 0.72rem;
-      border-radius: 999px;
-      border: 1px solid rgba(159, 180, 198, 0.12);
-      background: rgba(159, 180, 198, 0.05);
-      color: var(--text);
-      font-size: 0.81rem;
-      line-height: 1.2;
-    }
-    .codec-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 2rem;
-      padding: 0.35rem 0.8rem;
-      border-radius: 999px;
-      border: 1px solid rgba(159, 180, 198, 0.16);
-      background: rgba(159, 180, 198, 0.09);
-      color: var(--text);
-      font-size: 0.84rem;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-    .codec-badge-muted {
-      color: var(--muted);
-      background: rgba(159, 180, 198, 0.08);
-    }
-    .codec-badge-info {
-      color: var(--accent);
-      background: rgba(93, 215, 255, 0.12);
-    }
-    .codec-badge-success {
-      color: var(--success);
-      background: rgba(93, 255, 151, 0.12);
-    }
-    .codec-badge-warning {
-      color: var(--warning);
-      background: rgba(255, 207, 112, 0.12);
-    }
-    .codec-badge-error {
-      color: var(--danger);
-      background: rgba(255, 125, 125, 0.12);
-    }
-    .codec-main {
-      min-width: 0;
-    }
-    .codec-state-panel {
-      margin-top: 1.1rem;
-      padding: 1rem;
-      border: 1px solid rgba(159, 180, 198, 0.12);
-      border-radius: 16px;
-      background: rgba(4, 12, 18, 0.38);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    }
-    .codec-state-label,
-    .codec-sidecar-label {
-      font-size: 0.76rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .codec-headline {
-      margin-top: 0.45rem;
-      font-size: 1.14rem;
-      font-weight: 700;
-      letter-spacing: 0.01em;
-      color: var(--text);
-    }
-    .codec-detail {
-      margin-top: 0.4rem;
-      color: var(--muted);
-      font-size: 0.98rem;
-      line-height: 1.55;
-    }
-    .codec-sidecar {
-      display: flex;
-      flex-direction: column;
-      gap: 0.55rem;
-      padding: 1rem;
-      border: 1px solid rgba(159, 180, 198, 0.12);
-      border-radius: 16px;
-      background: rgba(4, 12, 18, 0.46);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    }
-    .codec-sidecar-title {
-      font-size: 1rem;
-      font-weight: 700;
-      color: var(--text);
-    }
-    .codec-sidecar-copy {
-      color: var(--muted);
-      font-size: 0.92rem;
-      line-height: 1.5;
-    }
-    .codec-actions {
-      display: flex;
-      flex-direction: column;
-      gap: 0.7rem;
-      margin-top: 0.35rem;
-    }
-    .codec-actions .btn {
-      width: 100%;
-    }
-    .codec-meta {
-      display: flex;
-      gap: 0.55rem;
-      flex-wrap: wrap;
-      margin-top: 1rem;
-    }
-    .codec-meta-item {
-      display: inline-flex;
-      align-items: center;
-      min-height: 1.9rem;
-      padding: 0.35rem 0.7rem;
-      border-radius: 999px;
-      border: 1px solid rgba(159, 180, 198, 0.14);
-      background: rgba(159, 180, 198, 0.06);
-      color: var(--muted);
-      font-size: 0.82rem;
-      line-height: 1.3;
-    }
-    .codec-status-inline.status {
-      min-height: 0;
-      margin-top: 0;
-      font-size: 0.88rem;
-    }
-    .codec-footnote {
-      margin-top: auto;
-      padding-top: 0.25rem;
-      color: var(--muted);
-      font-size: 0.84rem;
-      line-height: 1.45;
-    }
-    .codec-diagnostics {
-      margin-top: 0.95rem;
-      padding: 0.85rem 0.95rem;
-      border: 1px solid rgba(159, 180, 198, 0.12);
-      border-radius: 12px;
-      background: rgba(4, 12, 18, 0.46);
-    }
-    .codec-diagnostics summary {
-      cursor: pointer;
-      color: var(--muted);
-      font-size: 0.88rem;
-      font-weight: 600;
-      list-style: none;
-    }
-    .codec-diagnostics summary::-webkit-details-marker {
-      display: none;
-    }
-    .codec-diagnostic-body {
-      margin-top: 0.75rem;
-      color: var(--muted);
-      font-size: 0.86rem;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    @media (max-width: 640px) {
-      .codec-shell {
-        grid-template-columns: 1fr;
-      }
-      .codec-header {
-        align-items: flex-start;
-      }
-      .codec-title-wrap h3 {
-        font-size: 1.2rem;
-      }
-    }
-
-    /* Footer actions */
+    /* ── Footer actions ── */
     .actions {
       display: flex;
-      gap: 0.75rem;
+      flex-direction: column;
+      gap: 0.6rem;
       margin-top: 1.5rem;
-      flex-wrap: wrap;
     }
-    .actions .btn-primary { flex: 1; }
-    .skip-link {
-      display: block;
-      text-align: center;
-      margin-top: 1rem;
-      color: var(--muted);
-      font-size: 0.92rem;
-      text-decoration: none;
-      cursor: pointer;
-    }
-    .skip-link:hover { color: var(--text); }
 
     .hidden { display: none; }
   </style>
@@ -638,22 +464,27 @@
   <!-- Screen 1: Create Admin Account -->
   <div id="screen-admin" class="screen active">
     <main class="shell">
+      <div class="steps">
+        <div class="step-dot active"></div>
+        <div class="step-dot"></div>
+      </div>
       <div class="brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/>
           <circle cx="12" cy="12" r="3"/>
         </svg>
         <span class="brand-text">vedetta</span>
       </div>
-      <p>Create your admin account</p>
+      <h2>Create your account</h2>
+      <p class="subtitle">Set up the admin credentials for your NVR.</p>
       <form id="admin-form">
         <label for="admin-username">Username</label>
         <input id="admin-username" type="text" autocomplete="username" required>
         <label for="admin-password">Password</label>
         <input id="admin-password" type="password" autocomplete="new-password" required>
-        <label for="admin-confirm">Confirm Password</label>
+        <label for="admin-confirm">Confirm password</label>
         <input id="admin-confirm" type="password" autocomplete="new-password" required>
-        <button type="submit" class="btn btn-primary" id="admin-submit">Create Account &amp; Continue</button>
+        <button type="submit" class="btn btn-primary" id="admin-submit">Continue</button>
         <div class="status" id="admin-status"></div>
       </form>
 
@@ -664,7 +495,7 @@
           <button type="button" class="btn btn-secondary btn-small copy-btn" id="copy-yaml">Copy</button>
         </div>
         <p id="config-readonly-msg"></p>
-        <button type="button" class="btn btn-primary" id="continue-to-cameras">Continue to Camera Discovery</button>
+        <button type="button" class="btn btn-primary" id="continue-to-cameras">Continue</button>
       </div>
     </main>
   </div>
@@ -672,98 +503,79 @@
   <!-- Screen 2: Camera Discovery -->
   <div id="screen-cameras" class="screen">
     <main class="shell-wide">
+      <div class="steps">
+        <div class="step-dot done"></div>
+        <div class="step-dot active"></div>
+      </div>
       <div class="brand">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7S2 12 2 12z"/>
           <circle cx="12" cy="12" r="3"/>
         </svg>
         <span class="brand-text">vedetta</span>
       </div>
-      <h2>Camera Discovery</h2>
-      <p id="discover-subtitle">Scanning your network for cameras...</p>
+      <h2>Add cameras</h2>
+      <p class="subtitle" id="discover-subtitle">Scanning your network for cameras…</p>
 
-      <div class="cred-section codec-card" id="codec-card" data-tone="muted">
-        <div class="codec-shell">
-          <div class="codec-main">
-            <div class="codec-header">
-              <div class="codec-title-wrap">
-                <div class="codec-icon" aria-hidden="true">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="7" y="7" width="10" height="10" rx="1.5"></rect>
-                    <path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2"></path>
-                  </svg>
-                </div>
-                <div>
-                  <div class="codec-eyebrow">Optional Codec</div>
-                  <h3>OpenH264</h3>
-                </div>
-              </div>
-              <span class="codec-badge codec-badge-info" id="codec-badge">Checking</span>
-            </div>
-            <p class="codec-intro">Use verified local H.264 software decoding when a camera stream needs it for snapshots and detection.</p>
-            <div class="codec-benefits" aria-hidden="true">
-              <span class="codec-benefit">Local decode</span>
-              <span class="codec-benefit">Snapshot extraction</span>
-              <span class="codec-benefit">Detection support</span>
-            </div>
-            <div class="codec-state-panel">
-              <div class="codec-state-label">Status</div>
-              <div class="codec-headline" id="codec-headline">Checking OpenH264…</div>
-              <div class="codec-detail" id="codec-detail">Vedetta can complete setup without it. This only checks whether a verified codec is already available.</div>
-              <div class="codec-meta hidden" id="codec-meta" aria-live="polite"></div>
-              <details class="codec-diagnostics hidden" id="codec-diagnostics">
-                <summary>Technical details</summary>
-                <div class="codec-diagnostic-body" id="codec-diagnostic-body"></div>
-              </details>
-            </div>
-          </div>
-          <div class="codec-sidecar">
-            <div class="codec-sidecar-label">Action</div>
-            <div class="codec-sidecar-title" id="codec-sidecar-title">Install now or skip</div>
-            <div class="codec-sidecar-copy" id="codec-sidecar-copy">You can continue setup without this codec and add it later from Settings.</div>
-            <div class="codec-actions">
-              <button type="button" class="btn btn-secondary btn-small" id="install-codec">Install OpenH264</button>
-              <div class="status codec-status-inline" id="codec-status"></div>
-            </div>
-            <div class="codec-footnote">Vedetta verifies the download before the codec is trusted and used.</div>
-          </div>
+      <div class="codec-banner" id="codec-card">
+        <div class="codec-banner-text">
+          <strong>OpenH264</strong> <span class="codec-banner-badge" id="codec-badge">checking</span>
+          <span id="codec-headline">Checking…</span>
         </div>
+        <button type="button" class="btn btn-secondary btn-small" id="install-codec">Install</button>
       </div>
+      <div class="status codec-status-inline" id="codec-status"></div>
+      <details class="codec-diagnostics hidden" id="codec-diagnostics">
+        <summary>Details</summary>
+        <div class="codec-diagnostic-body" id="codec-diagnostic-body"></div>
+      </details>
 
       <div id="scan-loading" class="scan-status">
-        <div class="pulse-ring"></div>
+        <div class="radar">
+          <div class="radar-ring"></div>
+          <div class="radar-ring"></div>
+          <div class="radar-ring"></div>
+          <div class="radar-sweep"></div>
+          <div class="radar-dot"></div>
+        </div>
+        <span class="scan-label">Discovering ONVIF devices…</span>
       </div>
 
       <div id="scan-results" class="hidden">
         <div id="no-cameras" class="hidden">
-          <p>No cameras found on the network. You can add cameras manually later from Settings.</p>
+          <div class="empty-state">
+            <div class="empty-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="5" width="20" height="14" rx="2"/>
+                <path d="M12 9v4M12 16h.01"/>
+              </svg>
+            </div>
+            <h3>No cameras found</h3>
+            <p>ONVIF discovery didn't find any devices. If you're running in Docker, host networking is required. You can add cameras manually from Settings.</p>
+          </div>
         </div>
 
         <div id="cameras-found" class="hidden">
-          <div class="cred-section">
-            <h3>Camera Credentials</h3>
-            <div class="cred-row">
-              <div class="field">
-                <label for="cam-username">Username</label>
-                <input id="cam-username" type="text" placeholder="admin">
-              </div>
-              <div class="field">
-                <label for="cam-password">Password</label>
-                <input id="cam-password" type="password">
-              </div>
-              <button type="button" class="btn btn-secondary btn-small" id="test-creds">Test Credentials</button>
+          <div id="camera-list" class="camera-list"></div>
+
+          <div class="connect-prompt" id="connect-prompt">
+            <p class="connect-label">Enter your camera login to connect and preview streams.</p>
+            <div class="connect-row">
+              <input id="cam-username" type="text" placeholder="Username">
+              <input id="cam-password" type="password" placeholder="Password">
+              <button type="button" class="btn btn-secondary btn-small" id="test-creds">Connect</button>
             </div>
             <div class="status" id="cred-status"></div>
           </div>
-
-          <div id="camera-list" class="camera-list"></div>
 
           <div class="actions">
             <button type="button" class="btn btn-primary" id="add-cameras" disabled>Add Selected Cameras</button>
           </div>
         </div>
 
-        <a class="skip-link" id="skip-setup">Skip for Now</a>
+        <div class="actions">
+          <button type="button" class="btn-ghost" id="skip-setup">Finish Setup</button>
+        </div>
       </div>
     </main>
   </div>
@@ -772,26 +584,6 @@
     (function() {
 	      // --- Utilities ---
 	      function $(id) { return document.getElementById(id); }
-	      var setupToken = new URLSearchParams(location.search).get('setup_token') || sessionStorage.getItem('vedetta_setup_token') || '';
-	      if (setupToken) {
-	        sessionStorage.setItem('vedetta_setup_token', setupToken);
-	        if (location.search.indexOf('setup_token=') !== -1) {
-	          history.replaceState(null, '', location.pathname);
-	        }
-	      }
-
-	      function setupFetch(url, options) {
-	        options = options || {};
-	        var headers = new Headers(options.headers || {});
-	        if (setupToken) headers.set('X-Setup-Token', setupToken);
-	        return fetch(url, Object.assign({}, options, { headers: headers }));
-	      }
-
-	      function setupURL(url) {
-	        if (!setupToken) return url;
-	        var separator = url.indexOf('?') === -1 ? '?' : '&';
-	        return url + separator + 'setup_token=' + encodeURIComponent(setupToken);
-	      }
 
 	      function setStatus(el, message, type) {
 	        el.textContent = message || '';
@@ -829,9 +621,9 @@
         }
 
         adminSubmit.disabled = true;
-        setStatus(adminStatus, 'Creating account...', '');
+        setStatus(adminStatus, 'Creating account…', '');
 
-	        setupFetch('/api/setup', {
+	        fetch('/api/setup', {
 	          method: 'POST',
 	          headers: { 'Content-Type': 'application/json' },
 	          body: JSON.stringify({ username: username, password: password })
@@ -874,15 +666,10 @@
       // --- Screen 2: Camera Discovery ---
       var discoveredCameras = [];
       var probeResults = {};
-      var codecCard = $('codec-card');
       var codecBadge = $('codec-badge');
       var codecHeadline = $('codec-headline');
-      var codecDetail = $('codec-detail');
-      var codecMeta = $('codec-meta');
       var codecDiagnostics = $('codec-diagnostics');
       var codecDiagnosticBody = $('codec-diagnostic-body');
-      var codecSidecarTitle = $('codec-sidecar-title');
-      var codecSidecarCopy = $('codec-sidecar-copy');
       var installCodecButton = $('install-codec');
       var codecStatus = $('codec-status');
 
@@ -892,212 +679,90 @@
         startDiscovery();
       }
 
-      function codecSourceLabel(source) {
-        switch (source) {
-          case 'environment': return 'Environment override';
-          case 'system': return 'System library';
-          case 'installed': return 'Vedetta install';
-          default: return '';
-        }
-      }
-
-      function setCodecTone(tone) {
-        var normalized = tone || 'muted';
-        codecCard.setAttribute('data-tone', normalized);
-        codecBadge.className = 'codec-badge codec-badge-' + normalized;
-      }
-
-      function clearChildren(el) {
-        while (el.firstChild) {
-          el.removeChild(el.firstChild);
-        }
-      }
-
-      function renderCodecMeta(data) {
-        var items = [];
-        var sourceLabel = codecSourceLabel(data.source);
-        if (sourceLabel) items.push(sourceLabel);
-        if (data.version) items.push('Version ' + data.version);
-        if (data.installed && data.source === 'installed') items.push('Verified install');
-        if (!items.length) {
-          hide(codecMeta);
-          clearChildren(codecMeta);
-          return;
-        }
-
-        clearChildren(codecMeta);
-        items.forEach(function(item) {
-          var chip = document.createElement('span');
-          chip.className = 'codec-meta-item';
-          chip.textContent = item;
-          codecMeta.appendChild(chip);
-        });
-        show(codecMeta);
-      }
-
-      function renderCodecDiagnostics(data) {
-        var details = [];
-        if (data.path) details.push('Path: ' + data.path);
-        if (data.diagnostic) details.push(data.diagnostic);
-        if (!data.show_diagnostics || details.length === 0) {
-          codecDiagnostics.open = false;
-          codecDiagnosticBody.textContent = '';
-          hide(codecDiagnostics);
-          return;
-        }
-        codecDiagnosticBody.textContent = details.join('\n\n');
-        show(codecDiagnostics);
-      }
-
-      function renderCodecSidecar(data) {
-        var title = 'Install now or skip';
-        var copy = 'You can continue setup without this codec and add it later from Settings.';
-
-        if (data.installing) {
-          title = 'Finishing codec setup';
-          copy = 'This usually takes a few seconds while Vedetta downloads, verifies, and activates OpenH264.';
-        } else if (data.available) {
-          title = 'Codec ready';
-          copy = 'OpenH264 is available. You can continue setup and Vedetta will use it when needed.';
-        } else if (data.state === 'unsupported') {
-          title = 'Continue without it';
-          copy = 'This platform does not support the built-in installer. Vedetta can still complete setup without OpenH264.';
-        } else if (data.state === 'attention' || data.state === 'install_failed') {
-          title = 'Retry or continue';
-          copy = 'You can retry now, or finish setup and revisit codec installation later from Settings.';
-        }
-
-        codecSidecarTitle.textContent = title;
-        codecSidecarCopy.textContent = copy;
-      }
-
-      function codecStatusPayload(overrides) {
-        var payload = {
-          badge: 'Optional',
-          badge_tone: 'muted',
-          headline: 'OpenH264 is not installed yet.',
-          detail: 'Vedetta can complete setup without it. Install it if you want local H.264 decoding for detection and snapshot extraction.',
-          action_label: 'Install OpenH264',
-          show_install: true,
-          show_diagnostics: false,
-          supported: true,
-          available: false,
-          installed: false,
-          installing: false
-        };
-        Object.keys(overrides || {}).forEach(function(key) {
-          payload[key] = overrides[key];
-        });
-        return payload;
+      function setCodecBadge(text, tone) {
+        codecBadge.textContent = text;
+        codecBadge.className = 'codec-banner-badge tone-' + (tone || 'muted');
       }
 
       function renderCodecStatus(data) {
-        data = codecStatusPayload(data);
+        if (data.available) {
+          setCodecBadge('ready', 'success');
+          codecHeadline.textContent = 'Installed and ready.';
+          hide(installCodecButton);
+          hide(codecDiagnostics);
+          setStatus(codecStatus, '', '');
+          return;
+        }
 
-        setCodecTone(data.badge_tone);
-        codecBadge.textContent = data.badge || 'Optional';
-        codecHeadline.textContent = data.headline || 'OpenH264 status unavailable.';
-        codecDetail.textContent = data.detail || 'Vedetta can continue setup without it.';
-        renderCodecMeta(data);
-        renderCodecDiagnostics(data);
-        renderCodecSidecar(data);
+        setCodecBadge(data.badge || 'optional', data.badge_tone || 'muted');
+
+        if (data.installing) {
+          codecHeadline.textContent = 'Installing…';
+        } else if (data.state === 'unsupported') {
+          codecHeadline.textContent = 'Not available on this platform.';
+        } else {
+          codecHeadline.textContent = 'Enables H.264 decoding for snapshots and detection. Can be installed later from Settings.';
+        }
 
         if (data.show_install) {
           show(installCodecButton);
           installCodecButton.disabled = !!data.installing;
-          installCodecButton.textContent = data.installing ? 'Installing…' : (data.action_label || 'Install OpenH264');
+          installCodecButton.textContent = data.installing ? 'Installing…' : (data.action_label || 'Install');
         } else {
           hide(installCodecButton);
         }
 
+        if (data.show_diagnostics && data.diagnostic) {
+          codecDiagnosticBody.textContent = data.diagnostic;
+          show(codecDiagnostics);
+        } else {
+          hide(codecDiagnostics);
+        }
+
         if (data.installing) {
-          setStatus(codecStatus, 'Downloading, verifying, and activating OpenH264…', '');
+          setStatus(codecStatus, 'Downloading and verifying…', '');
         } else {
           setStatus(codecStatus, '', '');
         }
       }
 
-      function renderCodecRequestError(message) {
-        renderCodecStatus({
-          badge: 'Status Unavailable',
-          badge_tone: 'error',
-          headline: 'OpenH264 status could not be loaded.',
-          detail: 'You can continue setup without it, or refresh the page and try again.',
-          diagnostic: message,
-          show_diagnostics: true
-        });
-        setStatus(codecStatus, message, 'error');
-      }
-
       function refreshCodecStatus() {
-        renderCodecStatus({
-          badge: 'Checking',
-          badge_tone: 'info',
-          headline: 'Checking OpenH264…',
-          detail: 'Vedetta can complete setup without it. This only checks whether a verified codec is already available.',
-          show_install: false
-        });
-        setupFetch('/api/setup/codecs/openh264')
-          .then(function(resp) {
-            return resp.json().catch(function() {
-              return {};
-            }).then(function(body) {
-              if (!resp.ok) {
-                var err = new Error(body.error || body.headline || 'Failed to load codec status');
-                err.codecStatus = body;
-                throw err;
-              }
-              return body;
-            });
-          })
+        setCodecBadge('checking', 'info');
+        codecHeadline.textContent = 'Checking…';
+        hide(installCodecButton);
+
+        fetch('/api/setup/codecs/openh264')
+          .then(function(resp) { return resp.json(); })
           .then(renderCodecStatus)
           .catch(function(err) {
-            if (err.codecStatus && (err.codecStatus.headline || err.codecStatus.badge)) {
-              renderCodecStatus(err.codecStatus);
-              setStatus(codecStatus, err.message, 'error');
-              return;
-            }
-            renderCodecRequestError(err.message);
+            setCodecBadge('error', 'error');
+            codecHeadline.textContent = 'Could not check status.';
+            show(installCodecButton);
+            setStatus(codecStatus, err.message, 'error');
           });
       }
 
       function installCodec() {
-        renderCodecStatus({
-          badge: 'Installing',
-          badge_tone: 'info',
-          headline: 'Installing OpenH264…',
-          detail: 'Vedetta is downloading, verifying, and activating the codec.'
-        });
+        setCodecBadge('installing', 'info');
+        codecHeadline.textContent = 'Installing…';
         installCodecButton.disabled = true;
-        installCodecButton.textContent = 'Installing…';
-        setStatus(codecStatus, 'Downloading, verifying, and activating OpenH264…', '');
+        setStatus(codecStatus, 'Downloading and verifying…', '');
 
-        setupFetch('/api/setup/codecs/openh264/install', { method: 'POST' })
-          .then(function(resp) {
-            return resp.json().catch(function() {
-              return {};
-            }).then(function(body) {
-              if (!resp.ok) {
-                var err = new Error(body.error || body.headline || 'OpenH264 install failed');
-                err.codecStatus = body;
-                throw err;
-              }
-              return body;
-            });
-          })
+        fetch('/api/setup/codecs/openh264/install', { method: 'POST' })
+          .then(function(resp) { return resp.json(); })
           .then(function(data) {
             renderCodecStatus(data);
             if (data.available) {
-              setStatus(codecStatus, 'OpenH264 is ready to use.', 'success');
+              setStatus(codecStatus, 'Ready.', 'success');
             }
           })
           .catch(function(err) {
-            if (err.codecStatus && (err.codecStatus.headline || err.codecStatus.badge)) {
-              renderCodecStatus(err.codecStatus);
-              setStatus(codecStatus, err.message, 'error');
-              return;
-            }
-            renderCodecRequestError(err.message);
+            setCodecBadge('failed', 'error');
+            codecHeadline.textContent = 'Install failed.';
+            installCodecButton.disabled = false;
+            installCodecButton.textContent = 'Retry';
+            show(installCodecButton);
+            setStatus(codecStatus, err.message, 'error');
           });
       }
 
@@ -1106,9 +771,9 @@
       function startDiscovery() {
         hide($('scan-results'));
         show($('scan-loading'));
-        $('discover-subtitle').textContent = 'Scanning your network for cameras...';
+        $('discover-subtitle').textContent = 'Scanning your network for cameras…';
 
-	        setupFetch('/api/discover')
+	        fetch('/api/discover')
           .then(function(resp) { return resp.json(); })
           .then(function(data) {
             discoveredCameras = data.cameras || [];
@@ -1118,7 +783,7 @@
             if (discoveredCameras.length === 0) {
               show($('no-cameras'));
               hide($('cameras-found'));
-              $('discover-subtitle').textContent = 'Network scan complete';
+              $('discover-subtitle').textContent = 'No cameras discovered';
             } else {
               hide($('no-cameras'));
               show($('cameras-found'));
@@ -1153,7 +818,8 @@
           var meta = [cam.manufacturer, cam.model, cam.ip].filter(Boolean).join(' \u00B7 ');
 
           var html = '<div class="camera-header">';
-          html += '<input type="checkbox" id="cam-check-' + i + '" data-index="' + i + '"' + (result && result.status === 'ok' ? ' checked' : '') + '>';
+          var isChecked = !result || result.status !== 'fail';
+          html += '<input type="checkbox" id="cam-check-' + i + '" data-index="' + i + '"' + (isChecked ? ' checked' : '') + '>';
           html += '<div class="camera-info">';
           html += '<input type="text" class="camera-name-input" id="cam-name-' + i + '" value="' + escapeAttr(name) + '" placeholder="Camera name">';
           html += '<div class="camera-meta">' + escapeHtml(meta) + '</div>';
@@ -1168,22 +834,21 @@
           }
           html += '</div>';
 
-          // Show details for probed cameras
-          if (result && result.status === 'ok') {
+          // Show stream info for connected cameras
+          if (result && result.status === 'ok' && result.streams && result.streams.length > 0) {
             html += '<div class="camera-details">';
             if (result.thumbnail) {
               html += '<div class="camera-thumbnail-wrap loading" id="thumb-wrap-' + i + '">';
-	              html += '<img class="camera-thumbnail" src="' + escapeHtml(setupURL(result.thumbnail)) + '" alt="Camera preview" loading="lazy"';
-              html += '>';
+              html += '<img class="camera-thumbnail" src="' + escapeHtml(result.thumbnail) + '" alt="" loading="lazy">';
               html += '</div>';
             }
-            if (result.streams && result.streams.length > 0) {
-              html += '<div class="camera-streams">';
-              result.streams.forEach(function(s) {
-                html += '<div>' + escapeHtml(s.resolution || 'stream') + ': ' + escapeHtml(s.url || '') + '</div>';
-              });
-              html += '</div>';
-            }
+            html += '<div class="camera-streams">';
+            result.streams.forEach(function(s) {
+              var display = s.resolution || 'stream';
+              try { var u = new URL(s.url); display += ': ' + u.pathname; } catch(e) {}
+              html += '<div>' + escapeHtml(display) + '</div>';
+            });
+            html += '</div>';
             html += '</div>';
           }
 
@@ -1205,9 +870,23 @@
             thumb.addEventListener('load', function() {
               if (thumb.parentElement) thumb.parentElement.classList.remove('loading');
             });
-            thumb.addEventListener('error', function() {
-              if (thumb.parentElement) thumb.parentElement.style.display = 'none';
-            });
+            // Thumbnail grab is async — retry a few times before giving up
+            (function retryThumb(img, attempts) {
+              img.addEventListener('error', function handler() {
+                img.removeEventListener('error', handler);
+                if (attempts > 0) {
+                  setTimeout(function() {
+                    img.addEventListener('error', function h2() {
+                      img.removeEventListener('error', h2);
+                      retryThumb(img, attempts - 1);
+                    });
+                    img.src = img.src.split('?')[0] + '?t=' + Date.now();
+                  }, 1500);
+                } else {
+                  if (img.parentElement) img.parentElement.style.display = 'none';
+                }
+              });
+            })(thumb, 3);
           }
           list.appendChild(card);
         });
@@ -1248,13 +927,13 @@
 
         var btn = $('test-creds');
         btn.disabled = true;
-        setStatus($('cred-status'), 'Testing credentials...', '');
+        setStatus($('cred-status'), 'Testing credentials…', '');
 
         var camerasToProbe = discoveredCameras.map(function(c) {
-          return { ip: c.ip, port: c.port || 554, manufacturer: c.manufacturer || '' };
+          return { ip: c.ip, port: c.port || 554, manufacturer: c.manufacturer || '', name: c.name || '' };
         });
 
-	        setupFetch('/api/discover/probe', {
+	        fetch('/api/discover/probe', {
 	          method: 'POST',
 	          headers: { 'Content-Type': 'application/json' },
 	          body: JSON.stringify({ cameras: camerasToProbe, username: username, password: password })
@@ -1284,11 +963,11 @@
         var password = document.getElementById('override-pass-' + index).value;
         if (!username || !password) return;
 
-	        setupFetch('/api/discover/probe', {
+	        fetch('/api/discover/probe', {
 	          method: 'POST',
 	          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            cameras: [{ ip: cam.ip, port: cam.port || 554, manufacturer: cam.manufacturer || '' }],
+            cameras: [{ ip: cam.ip, port: cam.port || 554, manufacturer: cam.manufacturer || '', name: cam.name || '' }],
             username: username,
             password: password
           })
@@ -1331,7 +1010,7 @@
           selected.push({ name: name, url: streamUrl, record_url: recordUrl });
         });
 
-	        setupFetch('/api/cameras', {
+	        fetch('/api/cameras', {
 	          method: 'POST',
 	          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cameras: selected })
@@ -1341,7 +1020,7 @@
             if (data.status === 'config_readonly' && data.yaml_snippets) {
               alert('Could not write to config file. Please add cameras manually:\n\n' + data.yaml_snippets.join('\n'));
             }
-            location.href = '/login.html';
+            location.href = '/';
           })
           .catch(function(err) {
             alert('Failed to add cameras: ' + err.message);
@@ -1349,12 +1028,12 @@
           });
       });
 
-      // Skip setup
+      // Finish setup
       $('skip-setup').addEventListener('click', function(e) {
         e.preventDefault();
-	        setupFetch('/api/setup/complete', { method: 'POST' })
-          .then(function() { location.href = '/login.html'; })
-          .catch(function() { location.href = '/login.html'; });
+	        fetch('/api/setup/complete', { method: 'POST' })
+          .then(function() { location.href = '/'; })
+          .catch(function() { location.href = '/'; });
       });
 
       function escapeHtml(str) {
@@ -1366,6 +1045,11 @@
 	      function escapeAttr(str) {
 	        return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	      }
+
+	      // If admin account already exists (page refresh after step 1), skip to cameras
+	      fetch('/api/setup/status').then(function(r) { return r.json(); }).then(function(d) {
+	        if (d.admin_configured) goToCameraScreen();
+	      }).catch(function() {});
     })();
   </script>
 </body>

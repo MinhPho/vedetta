@@ -1,7 +1,8 @@
 package api
 
 import (
-	"crypto/subtle"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/rvben/vedetta/internal/auth"
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/storage"
@@ -24,54 +26,19 @@ type SetupHandler struct {
 	configPath string
 	db         *storage.DB
 	setupDone  chan struct{}
-	setupToken string
 	mu         sync.Mutex
 	thumbnails map[string][]byte // IP -> JPEG
 	completed  bool
 }
 
 // NewSetupHandler creates a handler for the setup/onboarding API.
-func NewSetupHandler(configPath string, db *storage.DB, setupDone chan struct{}, setupToken ...string) *SetupHandler {
-	token := ""
-	if len(setupToken) > 0 {
-		token = setupToken[0]
-	}
+func NewSetupHandler(configPath string, db *storage.DB, setupDone chan struct{}) *SetupHandler {
 	return &SetupHandler{
 		configPath: configPath,
 		db:         db,
 		setupDone:  setupDone,
-		setupToken: token,
 		thumbnails: make(map[string][]byte),
 	}
-}
-
-func (h *SetupHandler) SetupToken() string {
-	return h.setupToken
-}
-
-func (h *SetupHandler) SetupTokenRequired() bool {
-	return h.setupToken != ""
-}
-
-func (h *SetupHandler) RequireSetupToken(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.validSetupToken(r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid setup token"})
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (h *SetupHandler) validSetupToken(r *http.Request) bool {
-	if h.setupToken == "" {
-		return true
-	}
-	token := r.Header.Get("X-Setup-Token")
-	if token == "" {
-		token = r.URL.Query().Get("setup_token")
-	}
-	return subtle.ConstantTimeCompare([]byte(token), []byte(h.setupToken)) == 1
 }
 
 // HandleSetup creates the initial admin account and writes config.
@@ -92,7 +59,7 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password are required"})
 		return
 	}
-	if h.adminConfigured() {
+	if h.AdminConfigured() {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "setup account already configured"})
 		return
 	}
@@ -111,6 +78,8 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.setSessionCookies(w, r, req.Username)
+
 	if err := config.WriteInitialConfig(h.configPath, req.Username, passwordHash); err != nil {
 		slog.Warn("config write failed, returning YAML for manual setup", "error", err)
 		yamlContent, genErr := config.GenerateInitialConfigYAML(req.Username, passwordHash)
@@ -127,6 +96,61 @@ func (h *SetupHandler) HandleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// setSessionCookies creates a session for the given user and sets session
+// cookies on the response. This allows auto-login after account creation
+// so the user doesn't have to re-enter credentials.
+func (h *SetupHandler) setSessionCookies(w http.ResponseWriter, r *http.Request, username string) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		slog.Error("setup: failed to generate session ID", "error", err)
+		return
+	}
+	sessionID := base64.RawURLEncoding.EncodeToString(buf)
+
+	if _, err := rand.Read(buf); err != nil {
+		slog.Error("setup: failed to generate CSRF token", "error", err)
+		return
+	}
+	csrfToken := base64.RawURLEncoding.EncodeToString(buf)
+
+	now := time.Now().UTC()
+	session := storage.AuthSession{
+		ID:         sessionID,
+		Username:   username,
+		CSRFToken:  csrfToken,
+		RemoteIP:   r.RemoteAddr,
+		UserAgent:  r.UserAgent(),
+		CreatedAt:  now,
+		LastSeenAt: now,
+		ExpiresAt:  now.Add(auth.SessionAbsoluteTTL),
+		IdleTTL:    auth.SessionIdleTTL,
+	}
+	if err := h.db.CreateSession(session); err != nil {
+		slog.Error("setup: failed to create session", "error", err)
+		return
+	}
+
+	secure := r.TLS != nil
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.SessionCookieName,
+		Value:    session.ID,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  session.ExpiresAt,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     auth.CSRFCookieName,
+		Value:    session.CSRFToken,
+		Path:     "/",
+		HttpOnly: false,
+		Secure:   secure,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  session.ExpiresAt,
+	})
 }
 
 // HandleDiscover runs WS-Discovery to find cameras on the network.
@@ -150,6 +174,7 @@ func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
 			IP           string `json:"ip"`
 			Port         int    `json:"port"`
 			Manufacturer string `json:"manufacturer"`
+			Name         string `json:"name"`
 		} `json:"cameras"`
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -186,7 +211,11 @@ func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid RTSP port"})
 			return
 		}
-		streams, err := camera.ProbeRTSPWithCredentials(cam.IP, port, cam.Manufacturer, req.Username, req.Password)
+		brand := cam.Manufacturer
+		if brand == "" {
+			brand = cam.Name
+		}
+		streams, err := camera.ProbeRTSPWithCredentials(cam.IP, port, brand, req.Username, req.Password)
 		if err != nil {
 			status := "error"
 			if err.Error() == "authentication failed" {
@@ -200,19 +229,21 @@ func (h *SetupHandler) HandleProbe(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Grab thumbnail asynchronously using the sub stream (or first available)
+		// Grab thumbnail asynchronously using the main stream (more frequent IDR frames)
 		thumbnailURL := ""
 		if len(streams) > 0 {
 			thumbnailURL = fmt.Sprintf("/api/discover/thumbnail/%s", cam.IP)
-			// Pick sub stream for thumbnail (smaller/faster), fall back to first
 			streamURL := streams[0].URL
-			for _, s := range streams {
-				if s.Resolution == "sub" {
-					streamURL = s.URL
-					break
-				}
-			}
 			go func(ip, rtspURL string) {
+				defer func() {
+					if p := recover(); p != nil {
+						slog.Error("thumbnail grab panicked", "ip", ip, "panic", p)
+					}
+				}()
+				// Wait for the probe's RTSP connections to fully close.
+				// Many cameras limit concurrent RTSP sessions and need
+				// time to release connection slots.
+				time.Sleep(3 * time.Second)
 				data, err := camera.GrabThumbnail(rtspURL, 75)
 				if err != nil {
 					slog.Debug("thumbnail grab failed", "ip", ip, "error", err)
@@ -333,7 +364,7 @@ func (h *SetupHandler) HandleAddCameras(w http.ResponseWriter, r *http.Request) 
 
 // HandleComplete signals that setup is done (used by "Skip for Now").
 func (h *SetupHandler) HandleComplete(w http.ResponseWriter, _ *http.Request) {
-	if !h.adminConfigured() {
+	if !h.AdminConfigured() {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "admin account must be configured before completing setup"})
 		return
 	}
@@ -351,7 +382,8 @@ func (h *SetupHandler) signalComplete() {
 	}
 }
 
-func (h *SetupHandler) adminConfigured() bool {
+// AdminConfigured reports whether an admin account has already been created.
+func (h *SetupHandler) AdminConfigured() bool {
 	users, err := h.db.ListAuthUsers()
 	if err == nil && len(users) > 0 {
 		return true

@@ -292,7 +292,6 @@ func TestSetupFlow_EndToEnd(t *testing.T) {
 
 	setupDone := make(chan struct{})
 	server := NewSetupMode(config.APIConfig{Host: "127.0.0.1", Port: 0}, db, configPath, setupDone)
-	setupToken := server.SetupToken()
 
 	// Start on random port using httptest
 	ts := httptest.NewServer(server.mux)
@@ -317,10 +316,23 @@ func TestSetupFlow_EndToEnd(t *testing.T) {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Setup-Token", setupToken)
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("setup failed: %d", resp.StatusCode)
+	}
+
+	// Verify session cookies are set (auto-login)
+	var hasSession, hasCSRF bool
+	for _, c := range resp.Cookies() {
+		if c.Name == "vedetta_session" && c.Value != "" {
+			hasSession = true
+		}
+		if c.Name == "vedetta_csrf" && c.Value != "" {
+			hasCSRF = true
+		}
+	}
+	if !hasSession || !hasCSRF {
+		t.Error("expected session cookies after account creation")
 	}
 
 	// Verify config file was created
@@ -329,23 +341,13 @@ func TestSetupFlow_EndToEnd(t *testing.T) {
 	}
 
 	// 4. Discovery should work (returns 200, may have empty cameras)
-	req, err = http.NewRequest(http.MethodGet, ts.URL+"/api/discover", nil)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	req.Header.Set("X-Setup-Token", setupToken)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, _ = http.Get(ts.URL + "/api/discover")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("discover should return 200, got %d", resp.StatusCode)
 	}
 
 	// 5. Signal complete (skip cameras)
-	req, err = http.NewRequest(http.MethodPost, ts.URL+"/api/setup/complete", nil)
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
-	req.Header.Set("X-Setup-Token", setupToken)
-	resp, _ = http.DefaultClient.Do(req)
+	resp, _ = http.Post(ts.URL+"/api/setup/complete", "", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("complete failed: %d", resp.StatusCode)
 	}

@@ -2,10 +2,8 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -157,25 +155,19 @@ func NewSetupMode(cfg config.APIConfig, db *storage.DB, configPath string, setup
 		objectRematchPending: make(map[int64]bool),
 	}
 
-	setupToken, err := GenerateSetupToken()
-	if err != nil {
-		panic(fmt.Sprintf("generate setup token: %v", err))
-	}
-	sh := NewSetupHandler(configPath, db, setupDone, setupToken)
+	sh := NewSetupHandler(configPath, db, setupDone)
 	s.setupHandler = sh
 
-	// Setup-only routes are protected by a one-time setup token printed locally.
-	setup := sh.RequireSetupToken
-	s.mux.HandleFunc("POST /api/setup", setup(sh.HandleSetup))
-	s.mux.HandleFunc("GET /api/setup/codecs/openh264", setup(sh.HandleOpenH264Status))
-	s.mux.HandleFunc("POST /api/setup/codecs/openh264/install", setup(sh.HandleInstallOpenH264))
-	s.mux.HandleFunc("GET /api/discover", setup(sh.HandleDiscover))
-	s.mux.HandleFunc("POST /api/discover/probe", setup(sh.HandleProbe))
-	s.mux.HandleFunc("GET /api/discover/thumbnail/{ip}", setup(sh.HandleThumbnail))
-	s.mux.HandleFunc("POST /api/cameras", setup(sh.HandleAddCameras))
-	s.mux.HandleFunc("POST /api/setup/complete", setup(sh.HandleComplete))
+	s.mux.HandleFunc("POST /api/setup", sh.HandleSetup)
+	s.mux.HandleFunc("GET /api/setup/codecs/openh264", sh.HandleOpenH264Status)
+	s.mux.HandleFunc("POST /api/setup/codecs/openh264/install", sh.HandleInstallOpenH264)
+	s.mux.HandleFunc("GET /api/discover", sh.HandleDiscover)
+	s.mux.HandleFunc("POST /api/discover/probe", sh.HandleProbe)
+	s.mux.HandleFunc("GET /api/discover/thumbnail/{ip}", sh.HandleThumbnail)
+	s.mux.HandleFunc("POST /api/cameras", sh.HandleAddCameras)
+	s.mux.HandleFunc("POST /api/setup/complete", sh.HandleComplete)
 	s.mux.HandleFunc("GET /api/setup/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "setup", "token_required": sh.SetupTokenRequired()})
+		writeJSON(w, http.StatusOK, map[string]any{"status": "setup", "admin_configured": sh.AdminConfigured()})
 	})
 
 	// Serve setup.html as default page
@@ -338,29 +330,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)
 }
 
-func (s *Server) SetupToken() string {
-	if s == nil || s.setupHandler == nil {
-		return ""
-	}
-	return s.setupHandler.SetupToken()
-}
-
-// SetupModeAPIConfig keeps first-run setup off the LAN even though normal-mode
-// defaults intentionally listen on all interfaces.
+// SetupModeAPIConfig returns the API config for setup mode.
 func SetupModeAPIConfig(cfg config.APIConfig) config.APIConfig {
-	host := strings.TrimSpace(cfg.Host)
-	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		cfg.Host = "127.0.0.1"
-	}
 	return cfg
-}
-
-func GenerateSetupToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (s *Server) TransitionToFull(authChecker *auth.Checker) {
