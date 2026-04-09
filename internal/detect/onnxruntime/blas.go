@@ -52,10 +52,6 @@ func SgemmInto(a []float32, b []float32, c []float32, m, n, k int) {
 	sgemmInto(a, b, c, m, n, k)
 }
 
-// sgemmThreshold is the minimum total output elements (m*n) below which
-// pure Go GEMM is used to avoid CGo call overhead.
-const sgemmThreshold = 512
-
 // sgemmPureGo performs matrix multiplication in pure Go with tiled loops.
 // Zeroes the output buffer before accumulating.
 func sgemmPureGo(a []float32, b []float32, c []float32, m, n, k int) {

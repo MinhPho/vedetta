@@ -7,6 +7,10 @@ package onnxruntime
 // #include <Accelerate/Accelerate.h>
 import "C"
 
+// sgemmThreshold is the minimum total output elements (m*n) below which
+// pure Go GEMM is used to avoid CGo call overhead.
+const sgemmThreshold = 512
+
 // sgemm uses Apple's Accelerate framework for SIMD-optimized matrix multiply.
 // For small matrices, falls back to pure Go to avoid CGo overhead.
 func sgemm(a []float32, b []float32, m, n, k int) []float32 {
