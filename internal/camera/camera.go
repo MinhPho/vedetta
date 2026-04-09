@@ -107,6 +107,7 @@ type CameraStatus struct {
 	Degraded       bool      `json:"degraded"`
 	DegradedReason string    `json:"degraded_reason,omitempty"`
 	PTZ            bool      `json:"ptz"`
+	Stopped        bool      `json:"stopped"`
 }
 
 func NewCamera(cfg config.CameraConfig, detector *detect.Detector, motion config.MotionConfig, events chan<- Event, eventEnds chan<- EventEnd, presenceEvents chan<- PresenceEvent, hub *rtsp.Hub, snapshotPath string, snapshotQuality int, recordingPath string, faceRecognizer *detect.FaceRecognizer, faceEvents chan<- FaceEvent, faceCropDir string, motionActivity chan<- MotionActivity) *Camera {

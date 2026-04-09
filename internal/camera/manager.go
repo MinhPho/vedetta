@@ -2,6 +2,7 @@ package camera
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -12,27 +13,29 @@ import (
 
 // Manager manages all camera streams.
 type Manager struct {
-	cameras        map[string]*Camera
-	order          []string // config-file order
-	detector       *detect.Detector
-	motionCfg      config.MotionConfig
-	events         chan<- Event
-	eventEnds      chan<- EventEnd
-	presenceEvents chan<- PresenceEvent
-	hub            *rtsp.Hub
-	snapshotPath   string
+	cameras         map[string]*Camera
+	cancelFuncs     map[string]context.CancelFunc
+	order           []string // config-file order
+	detector        *detect.Detector
+	motionCfg       config.MotionConfig
+	events          chan<- Event
+	eventEnds       chan<- EventEnd
+	presenceEvents  chan<- PresenceEvent
+	hub             *rtsp.Hub
+	snapshotPath    string
 	snapshotQuality int
-	recordingPath  string
-	faceRecognizer *detect.FaceRecognizer
-	faceEvents     chan<- FaceEvent
-	faceCropDir    string
-	motionActivity chan<- MotionActivity
-	mu             sync.RWMutex
+	recordingPath   string
+	faceRecognizer  *detect.FaceRecognizer
+	faceEvents      chan<- FaceEvent
+	faceCropDir     string
+	motionActivity  chan<- MotionActivity
+	mu              sync.RWMutex
 }
 
 func NewManager(configs []config.CameraConfig, detector *detect.Detector, motion config.MotionConfig, events chan<- Event, eventEnds chan<- EventEnd, presenceEvents chan<- PresenceEvent, hub *rtsp.Hub, snapshotPath string, snapshotQuality int, recordingPath string, faceRecognizer *detect.FaceRecognizer, faceEvents chan<- FaceEvent, faceCropDir string, motionActivity chan<- MotionActivity) *Manager {
 	m := &Manager{
 		cameras:         make(map[string]*Camera),
+		cancelFuncs:     make(map[string]context.CancelFunc),
 		detector:        detector,
 		motionCfg:       motion,
 		events:          events,
@@ -60,8 +63,8 @@ func NewManager(configs []config.CameraConfig, detector *detect.Detector, motion
 }
 
 func (m *Manager) Start(ctx context.Context) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for i, name := range m.order {
 		if i > 0 {
@@ -72,7 +75,9 @@ func (m *Manager) Start(ctx context.Context) {
 			}
 		}
 		if cam, ok := m.cameras[name]; ok {
-			cam.Start(ctx)
+			camCtx, camCancel := context.WithCancel(ctx)
+			m.cancelFuncs[name] = camCancel
+			cam.Start(camCtx)
 		}
 	}
 }
@@ -89,7 +94,7 @@ func (m *Manager) ListCameras() []string {
 	return append([]string(nil), m.order...)
 }
 
-// CameraStatuses returns the status of all managed cameras, sorted by name.
+// CameraStatuses returns the status of all managed cameras in config-file order.
 func (m *Manager) CameraStatuses() []CameraStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -97,7 +102,10 @@ func (m *Manager) CameraStatuses() []CameraStatus {
 	statuses := make([]CameraStatus, 0, len(m.order))
 	for _, name := range m.order {
 		if cam, ok := m.cameras[name]; ok {
-			statuses = append(statuses, cam.Status())
+			st := cam.Status()
+			_, running := m.cancelFuncs[name]
+			st.Stopped = !running
+			statuses = append(statuses, st)
 		}
 	}
 	return statuses
@@ -118,14 +126,50 @@ func (m *Manager) AddCamera(cfg config.CameraConfig) {
 	m.order = append(m.order, cfg.Name)
 }
 
-// StartCamera starts the named camera in a new goroutine. If the camera does
-// not exist, the call is a no-op.
-func (m *Manager) StartCamera(ctx context.Context, name string) {
-	m.mu.RLock()
+// StartCamera starts the named camera with its own derived context.
+func (m *Manager) StartCamera(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	cam, ok := m.cameras[name]
-	m.mu.RUnlock()
 	if !ok {
-		return
+		return fmt.Errorf("camera %q not found", name)
 	}
-	go cam.Start(ctx)
+	if _, running := m.cancelFuncs[name]; running {
+		return fmt.Errorf("camera %q is already running", name)
+	}
+
+	camCtx, camCancel := context.WithCancel(ctx)
+	m.cancelFuncs[name] = camCancel
+	cam.Start(camCtx)
+	return nil
+}
+
+// StopCamera cancels the context for the named camera, stopping its goroutine.
+func (m *Manager) StopCamera(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.cameras[name]; !ok {
+		return fmt.Errorf("camera %q not found", name)
+	}
+	cancel, ok := m.cancelFuncs[name]
+	if !ok {
+		return fmt.Errorf("camera %q is already stopped", name)
+	}
+	cancel()
+	delete(m.cancelFuncs, name)
+	return nil
+}
+
+// IsStopped returns true when the named camera exists but has no active context.
+// Returns false for unknown camera names.
+func (m *Manager) IsStopped(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, exists := m.cameras[name]; !exists {
+		return false
+	}
+	_, running := m.cancelFuncs[name]
+	return !running
 }
