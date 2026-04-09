@@ -16,7 +16,7 @@ import (
 type Publisher interface {
 	PublishEvent(event camera.Event, matchedObjects []string) error
 	PublishPresence(pe camera.PresenceEvent, objectName string)
-	PublishCameraStatus(cameraName string, online bool)
+	PublishCameraStatus(cameraName string, online bool, stopped bool)
 	PublishDiscovery(cameraNames []string)
 	PublishPresenceDiscovery(zones []ZoneInfo)
 	PublishObjectCount(cameraName, label string, count int)
@@ -183,9 +183,11 @@ func (c *Client) PublishObjectSighting(objectName string, event camera.Event) {
 	}
 }
 
-func (c *Client) PublishCameraStatus(cameraName string, online bool) {
+func (c *Client) PublishCameraStatus(cameraName string, online bool, stopped bool) {
 	status := "OFF"
-	if online {
+	if stopped {
+		status = "stopped"
+	} else if online {
 		status = "ON"
 	}
 	topic := fmt.Sprintf("%s/camera/%s/status", c.topic, cameraName)

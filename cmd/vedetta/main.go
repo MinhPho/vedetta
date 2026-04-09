@@ -449,7 +449,7 @@ func initSubsystems(ctx context.Context, cancel context.CancelFunc, cfg *config.
 		go func() {
 			publishStatuses := func() {
 				for _, st := range sub.manager.CameraStatuses() {
-					sub.mqttClient.PublishCameraStatus(st.Name, st.Online)
+					sub.mqttClient.PublishCameraStatus(st.Name, st.Online, st.Stopped)
 				}
 			}
 
