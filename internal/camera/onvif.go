@@ -289,31 +289,71 @@ func ProbeRTSPForBrand(ip string, port int, manufacturer string) ([]StreamProfil
 	return profiles, nil
 }
 
-// ProbeRTSPWithCredentials wraps ProbeRTSPForBrand, injecting credentials into
-// each discovered stream URL and verifying they are reachable.
+// ProbeRTSPWithCredentials discovers RTSP streams using credentials.
+// It first tries unauthenticated discovery, then injects credentials.
+// If the camera requires auth even for RTSP Describe (common for Tapo,
+// Reolink, etc.), it probes known URL patterns with credentials directly.
 func ProbeRTSPWithCredentials(ip string, port int, manufacturer, username, password string) ([]StreamProfile, error) {
-	profiles, err := ProbeRTSPForBrand(ip, port, manufacturer)
-	if err != nil {
-		return nil, err
+	brand := inferBrand(manufacturer)
+
+	// Try unauthenticated first
+	profiles, _ := ProbeRTSPForBrand(ip, port, brand)
+
+	if len(profiles) > 0 {
+		// Found streams without auth — inject credentials and verify
+		var authed []StreamProfile
+		for _, p := range profiles {
+			u, err := url.Parse(p.URL)
+			if err != nil {
+				continue
+			}
+			u.User = url.UserPassword(username, password)
+			if testRTSPURL(u.String()) {
+				authed = append(authed, StreamProfile{URL: u.String(), Resolution: p.Resolution})
+			}
+		}
+		if len(authed) == 0 {
+			return nil, fmt.Errorf("authentication failed")
+		}
+		return authed, nil
+	}
+
+	// No streams found without auth — try patterns with credentials directly.
+	// Many cameras require auth even for RTSP Describe.
+	var patterns []struct {
+		Path       string
+		Resolution string
+	}
+	if p, ok := rtspPatterns[brand]; ok {
+		patterns = p
+	} else {
+		patterns = rtspPatterns["generic"]
 	}
 
 	var authed []StreamProfile
-	for _, p := range profiles {
-		u, err := url.Parse(p.URL)
-		if err != nil {
-			continue
-		}
-		u.User = url.UserPassword(username, password)
-		if testRTSPURL(u.String()) {
-			authed = append(authed, StreamProfile{URL: u.String(), Resolution: p.Resolution})
+	for _, p := range patterns {
+		rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%d%s",
+			url.PathEscape(username), url.PathEscape(password), ip, port, p.Path)
+		if testRTSPURL(rtspURL) {
+			authed = append(authed, StreamProfile{URL: rtspURL, Resolution: p.Resolution})
 		}
 	}
 
-	if len(authed) == 0 && len(profiles) > 0 {
+	if len(authed) == 0 {
 		return nil, fmt.Errorf("authentication failed")
 	}
-
 	return authed, nil
+}
+
+// inferBrand guesses the camera brand from the manufacturer string or model name.
+func inferBrand(manufacturer string) string {
+	s := strings.ToLower(manufacturer)
+	for brand := range rtspPatterns {
+		if brand != "generic" && strings.Contains(s, brand) {
+			return brand
+		}
+	}
+	return s
 }
 
 // testRTSPURL uses gortsplib Describe to check if an RTSP URL is reachable.
@@ -423,11 +463,13 @@ func grabThumbnailRTSP(rtspURL string, quality int) ([]byte, error) {
 		return nil, fmt.Errorf("parse RTSP URL: %w", err)
 	}
 
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	proto := gortsplib.ProtocolTCP
 	client := &gortsplib.Client{
 		Scheme:       u.Scheme,
 		Host:         u.Host,
-		ReadTimeout:  10 * time.Second,
+		DialContext:  dialer.DialContext,
+		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 3 * time.Second,
 		Protocol:     &proto,
 	}
@@ -475,7 +517,6 @@ func grabThumbnailRTSP(rtspURL string, quality int) ([]byte, error) {
 
 	result := make(chan []byte, 1)
 	errCh := make(chan error, 1)
-
 	client.OnPacketRTPAny(func(_ *description.Media, _ format.Format, pkt *rtp.Packet) {
 		au, decErr := rtpDecoder.Decode(pkt)
 		if decErr != nil {
@@ -559,7 +600,7 @@ func grabThumbnailRTSP(rtspURL string, quality int) ([]byte, error) {
 		return nil, fmt.Errorf("RTSP play: %w", err)
 	}
 
-	timeout := time.NewTimer(10 * time.Second)
+	timeout := time.NewTimer(8 * time.Second)
 	defer timeout.Stop()
 
 	select {
@@ -581,7 +622,7 @@ var httpSnapshotPaths = []string{
 
 // grabThumbnailHTTP tries common HTTP snapshot endpoints with digest/basic auth.
 func grabThumbnailHTTP(host, username, password string) ([]byte, error) {
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := &http.Client{Timeout: 2 * time.Second}
 
 	for _, path := range httpSnapshotPaths {
 		snapshotURL := fmt.Sprintf("http://%s%s", host, path)
