@@ -280,6 +280,10 @@ func (c *Camera) Start(ctx context.Context) {
 
 // readFrames connects to the RTSP stream via the Hub and processes detection frames.
 func (c *Camera) readFrames(ctx context.Context) {
+	if c.hub == nil {
+		return
+	}
+
 	w := c.config.Detect.Width
 	h := c.config.Detect.Height
 	fps := c.config.Detect.FPS

@@ -792,6 +792,156 @@ func TestContract_ListObjects(t *testing.T) {
 	}
 }
 
+func TestContract_StopCamera(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	// Add a camera and put it in running state by calling StartCamera on the manager.
+	// The camera goroutine exits immediately because the hub is nil.
+	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
+	if err := srv.cameras.StartCamera(context.Background(), "test_cam"); err != nil {
+		t.Fatalf("StartCamera: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras/test_cam/stop", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	// Verify response contains stopped=true and camera name.
+	var status map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if status["name"] != "test_cam" {
+		t.Errorf("name = %v, want test_cam", status["name"])
+	}
+	if status["stopped"] != true {
+		t.Errorf("stopped = %v, want true", status["stopped"])
+	}
+}
+
+func TestContract_StopCamera_NotFound(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras/nonexistent/stop", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
+func TestContract_StopCamera_AlreadyStopped(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	// Add camera, start it (goroutine exits immediately with nil hub), then stop once.
+	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
+	if err := srv.cameras.StartCamera(context.Background(), "test_cam"); err != nil {
+		t.Fatalf("StartCamera: %v", err)
+	}
+
+	// First stop succeeds.
+	req1 := httptest.NewRequest(http.MethodPost, "/api/cameras/test_cam/stop", nil)
+	rec1 := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first stop: expected 200, got %d: %s", rec1.Code, rec1.Body.String())
+	}
+
+	// Second stop must return 409 Conflict.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/cameras/test_cam/stop", nil)
+	rec2 := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	cv.validate(req2, rec2)
+}
+
+func TestContract_StartCamera_AfterStop(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	// Add camera, start it, stop it via the API, then start it again via the API.
+	// Each cam.Start call spawns a goroutine that exits immediately with a nil hub.
+	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
+	if err := srv.cameras.StartCamera(context.Background(), "test_cam"); err != nil {
+		t.Fatalf("StartCamera: %v", err)
+	}
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/api/cameras/test_cam/stop", nil)
+	stopRec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(stopRec, stopReq)
+	if stopRec.Code != http.StatusOK {
+		t.Fatalf("stop: expected 200, got %d: %s", stopRec.Code, stopRec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras/test_cam/start", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+
+	var status map[string]any
+	if err := json.NewDecoder(bytes.NewReader(rec.Body.Bytes())).Decode(&status); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if status["name"] != "test_cam" {
+		t.Errorf("name = %v, want test_cam", status["name"])
+	}
+	if status["stopped"] != false {
+		t.Errorf("stopped = %v, want false", status["stopped"])
+	}
+}
+
+func TestContract_StartCamera_AlreadyRunning(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	// Add camera and start it (goroutine exits immediately with nil hub).
+	srv.cameras.AddCamera(config.CameraConfig{Name: "test_cam", URL: "rtsp://localhost/stream"})
+	if err := srv.cameras.StartCamera(context.Background(), "test_cam"); err != nil {
+		t.Fatalf("StartCamera: %v", err)
+	}
+
+	// Calling start on an already-running camera must return 409 Conflict.
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras/test_cam/start", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
+func TestContract_StartCamera_NotFound(t *testing.T) {
+	srv, _ := newTestServer(t)
+	cv := newContractValidator(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/cameras/nonexistent/start", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	cv.validate(req, rec)
+}
+
 func TestContract_CameraTimeline(t *testing.T) {
 	srv, db := newTestServer(t)
 	cv := newContractValidator(t)
