@@ -24,6 +24,26 @@ type Config struct {
 	RTSPServer RTSPServerConfig `yaml:"rtsp_server"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Updates    UpdateConfig     `yaml:"updates"`
+	Codecs     CodecsConfig     `yaml:"codecs"`
+}
+
+// CodecsConfig controls optional external codec behavior.
+type CodecsConfig struct {
+	OpenH264 OpenH264Config `yaml:"openh264"`
+}
+
+// OpenH264Config controls OpenH264 codec auto-install behavior.
+type OpenH264Config struct {
+	// AutoInstall downloads the Cisco-provided OpenH264 library on startup
+	// when the system copy is missing. Idempotent — does nothing if already
+	// available. Default: true.
+	AutoInstall *bool `yaml:"auto_install"`
+}
+
+// ShouldAutoInstall returns true when auto-install is enabled (default) or
+// explicitly set to true. Returns false only when explicitly disabled.
+func (c OpenH264Config) ShouldAutoInstall() bool {
+	return c.AutoInstall == nil || *c.AutoInstall
 }
 
 type CameraConfig struct {

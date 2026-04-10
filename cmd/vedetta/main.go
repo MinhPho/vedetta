@@ -24,6 +24,7 @@ import (
 	"github.com/rvben/vedetta/internal/camera"
 	"github.com/rvben/vedetta/internal/config"
 	"github.com/rvben/vedetta/internal/detect"
+	"github.com/rvben/vedetta/internal/media"
 	"github.com/rvben/vedetta/internal/mqtt"
 	"github.com/rvben/vedetta/internal/recording"
 	"github.com/rvben/vedetta/internal/rtsp"
@@ -226,6 +227,8 @@ func main() {
 			cancel()
 		}
 	}()
+
+	ensureOpenH264(ctx, cfg)
 
 	sub := initSubsystems(ctx, cancel, cfg, db)
 	defer closeSubsystems(sub)
@@ -477,6 +480,34 @@ func initSubsystems(ctx context.Context, cancel context.CancelFunc, cfg *config.
 	}
 
 	return &sub
+}
+
+// ensureOpenH264 auto-installs the OpenH264 library when it is missing and
+// auto_install is enabled in config (default). Idempotent: if OpenH264 is
+// already available, this is a no-op. Failures are logged but non-fatal —
+// detection stays disabled until the user installs the codec manually.
+func ensureOpenH264(ctx context.Context, cfg *config.Config) {
+	status := media.OpenH264StatusInfo()
+	if status.Available {
+		return
+	}
+	if !cfg.Codecs.OpenH264.ShouldAutoInstall() {
+		slog.Info("OpenH264 is unavailable and auto_install is disabled",
+			"hint", "set codecs.openh264.auto_install: true or install manually")
+		return
+	}
+
+	slog.Info("OpenH264 missing — auto-installing")
+	installed, err := media.InstallOpenH264(ctx)
+	if err != nil {
+		slog.Warn("OpenH264 auto-install failed; detection will be disabled",
+			"error", err,
+			"hint", "install libopenh264 via your system package manager, or via the Settings page")
+		return
+	}
+	slog.Info("OpenH264 auto-installed",
+		"version", installed.Version,
+		"path", installed.Path)
 }
 
 // closeSubsystems releases resources held by subsystems.

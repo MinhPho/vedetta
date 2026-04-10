@@ -663,3 +663,74 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+func TestOpenH264ConfigShouldAutoInstall(t *testing.T) {
+	// Default (nil): auto-install enabled
+	cfg := OpenH264Config{}
+	if !cfg.ShouldAutoInstall() {
+		t.Error("ShouldAutoInstall() with nil AutoInstall should default to true")
+	}
+
+	// Explicitly true
+	yes := true
+	cfg.AutoInstall = &yes
+	if !cfg.ShouldAutoInstall() {
+		t.Error("ShouldAutoInstall() with AutoInstall=true should return true")
+	}
+
+	// Explicitly false
+	no := false
+	cfg.AutoInstall = &no
+	if cfg.ShouldAutoInstall() {
+		t.Error("ShouldAutoInstall() with AutoInstall=false should return false")
+	}
+}
+
+func TestOpenH264ConfigYAMLParsing(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		want    bool
+		wantNil bool
+	}{
+		{
+			name:    "no codecs section",
+			yaml:    "",
+			wantNil: true,
+			want:    true, // nil defaults to true via ShouldAutoInstall
+		},
+		{
+			name: "auto_install true",
+			yaml: `codecs:
+  openh264:
+    auto_install: true
+`,
+			want: true,
+		},
+		{
+			name: "auto_install false",
+			yaml: `codecs:
+  openh264:
+    auto_install: false
+`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeConfig(t, tt.yaml)
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load failed: %v", err)
+			}
+			if tt.wantNil && cfg.Codecs.OpenH264.AutoInstall != nil {
+				t.Errorf("expected nil AutoInstall, got %v", *cfg.Codecs.OpenH264.AutoInstall)
+			}
+			got := cfg.Codecs.OpenH264.ShouldAutoInstall()
+			if got != tt.want {
+				t.Errorf("ShouldAutoInstall() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
