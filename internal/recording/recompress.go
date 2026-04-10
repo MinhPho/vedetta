@@ -60,6 +60,18 @@ func (r *Recompressor) Start(ctx context.Context) {
 	if !r.cfg.Enabled {
 		return
 	}
+	// Give segments stuck at the 3-failure cap another chance. A common
+	// reason for stuck failures is a transiently missing codec (e.g.
+	// OpenH264 wasn't installed yet during earlier recompression passes);
+	// once the environment is restored, we should retry rather than
+	// permanently excluding every segment that was attempted during the
+	// broken period.
+	if reset, err := r.db.ResetStuckRecompressFailures(); err != nil {
+		slog.Warn("recompression: failed to reset stuck failures", "error", err)
+	} else if reset > 0 {
+		slog.Info("recompression: reset stuck failure counters", "segments", reset)
+	}
+
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()

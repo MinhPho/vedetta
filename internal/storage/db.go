@@ -838,6 +838,21 @@ func (d *DB) GetSegmentsForRecompression(cameraName string, olderThan time.Time)
 	return scanSegments(rows)
 }
 
+// ResetStuckRecompressFailures clears the failure counter for any segments
+// that previously hit the 3-failure cap without being recompressed. Called
+// at recorder startup so transient failures (e.g. a temporarily missing
+// codec) don't permanently exclude segments from future recompression.
+// Returns the number of rows reset.
+func (d *DB) ResetStuckRecompressFailures() (int64, error) {
+	res, err := d.db.Exec(
+		"UPDATE segments SET recompress_failures = 0 WHERE recompress_failures >= 3 AND recompressed = FALSE",
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // MarkSegmentRecompressed updates a segment after successful recompression.
 func (d *DB) MarkSegmentRecompressed(id int64, newSizeBytes int64) error {
 	_, err := d.db.Exec(`
