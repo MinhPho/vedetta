@@ -26,6 +26,7 @@ type StorageStats struct {
 	DiskLow         bool               `json:"disk_low"`
 	RecordingPaused bool               `json:"recording_paused"`
 	Recompression   RecompressionStats `json:"recompression"`
+	Projection      StorageProjection  `json:"projection"`
 }
 
 // RecompressionStats summarises the tiered storage recompression feature.
@@ -35,6 +36,48 @@ type RecompressionStats struct {
 	LastRun              time.Time `json:"last_run,omitempty"`
 	SegmentsRecompressed int64     `json:"segments_recompressed"`
 	BytesReclaimed       int64     `json:"bytes_reclaimed"`
+}
+
+// StorageProjection projects future storage usage based on current ingest
+// rate, retention config, and observed segment history. Helps answer
+// "will my config fit?" and "how long until disk is full?" before limits
+// are actually hit.
+type StorageProjection struct {
+	// DailyIngestBytes is the observed ingest rate computed from segments
+	// written in the last 24 hours.
+	DailyIngestBytes int64 `json:"daily_ingest_bytes"`
+
+	// SteadyStateBytes is the predicted total storage usage once retention
+	// is fully cycling (daily ingest × retain days, plus a small buffer).
+	SteadyStateBytes int64 `json:"steady_state_bytes"`
+
+	// SteadyStateFits is true when the projected steady state will fit on
+	// the disk with a 5% safety margin.
+	SteadyStateFits bool `json:"steady_state_fits"`
+
+	// HeadroomBytes is the disk space remaining after steady state. Negative
+	// values mean the config will not fit.
+	HeadroomBytes int64 `json:"headroom_bytes"`
+
+	// DaysUntilFull is a linear projection of days until the disk fills at
+	// the current ingest rate, assuming no retention cleanup kicks in.
+	// Only set while the system is still filling (oldest segment younger
+	// than retain_days). Negative means already full.
+	DaysUntilFull *float64 `json:"days_until_full,omitempty"`
+
+	// OldestSegmentDays is the age in days of the oldest segment in the
+	// database. When this exceeds RetainDays, the system is at steady state.
+	OldestSegmentDays float64 `json:"oldest_segment_days"`
+
+	// RetainDays is the configured continuous recording retention.
+	RetainDays int `json:"retain_days"`
+
+	// Status is a human-readable summary: ok, warning, insufficient, critical.
+	// - ok: steady state fits comfortably (<85% of disk)
+	// - warning: steady state uses 85-95% of disk OR <14 days until full
+	// - insufficient: steady state will not fit — config is broken
+	// - critical: disk is already full (disk_low flag tripped)
+	Status string `json:"status"`
 }
 
 // Recorder manages saving video clips for detected events.
@@ -255,9 +298,79 @@ func (r *Recorder) RefreshStats() {
 		BytesReclaimed:       rStats.BytesReclaimed,
 	}
 
+	stats.Projection = r.computeProjection(&stats)
+
 	r.statsMu.Lock()
 	r.cachedStats = stats
 	r.statsMu.Unlock()
+}
+
+// computeProjection builds a StorageProjection from the current stats and
+// recent segment history. Must be called with all stats fields already
+// populated (TotalBytes, DiskAvailable, DiskLow).
+func (r *Recorder) computeProjection(stats *StorageStats) StorageProjection {
+	proj := StorageProjection{
+		RetainDays: r.config.RetainDays,
+		Status:     "ok",
+	}
+
+	if r.config.RetainDays <= 0 {
+		// No retention configured — can't project
+		return proj
+	}
+
+	// Recent ingest rate: bytes added in the last 24h
+	cutoff := time.Now().Add(-24 * time.Hour)
+	recentBytes, err := r.db.SegmentBytesSince(cutoff)
+	if err != nil {
+		slog.Debug("projection: failed to query recent bytes", "error", err)
+		return proj
+	}
+	proj.DailyIngestBytes = recentBytes
+
+	// Oldest segment age
+	oldest, err := r.db.OldestSegmentTime()
+	if err != nil || oldest.IsZero() {
+		// No segments yet or error — can't project further
+		return proj
+	}
+	proj.OldestSegmentDays = time.Since(oldest).Hours() / 24.0
+
+	// Steady state: daily ingest × retain days
+	proj.SteadyStateBytes = recentBytes * int64(r.config.RetainDays)
+
+	totalDisk := int64(stats.DiskAvailable) + stats.TotalBytes
+	if totalDisk <= 0 {
+		return proj
+	}
+
+	const safetyMargin = 0.95
+	safeCapacity := int64(float64(totalDisk) * safetyMargin)
+	proj.HeadroomBytes = safeCapacity - proj.SteadyStateBytes
+	proj.SteadyStateFits = proj.HeadroomBytes >= 0
+
+	// Days until full (linear): only meaningful while still filling
+	stillFilling := proj.OldestSegmentDays < float64(r.config.RetainDays)
+	if stillFilling && recentBytes > 0 {
+		remaining := safeCapacity - stats.TotalBytes
+		days := float64(remaining) / float64(recentBytes)
+		proj.DaysUntilFull = &days
+	}
+
+	// Status classification
+	switch {
+	case stats.DiskLow:
+		proj.Status = "critical"
+	case !proj.SteadyStateFits:
+		proj.Status = "insufficient"
+	case float64(proj.SteadyStateBytes) > float64(safeCapacity)*0.90:
+		// Steady state > 85% of disk (since safeCapacity is already 95% of total)
+		proj.Status = "warning"
+	case proj.DaysUntilFull != nil && *proj.DaysUntilFull < 14:
+		proj.Status = "warning"
+	}
+
+	return proj
 }
 
 // StorageStats returns cached aggregate storage information.

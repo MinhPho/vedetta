@@ -1948,6 +1948,46 @@ func (d *DB) CountObjectReferences(objectID int64) (int, error) {
 	return count, err
 }
 
+// SegmentBytesSince returns the total size_bytes of segments whose start_time
+// is newer than the given cutoff. Used for computing recent ingest rate.
+func (d *DB) SegmentBytesSince(cutoff time.Time) (int64, error) {
+	var bytes sql.NullInt64
+	err := d.db.QueryRow(
+		"SELECT COALESCE(SUM(size_bytes), 0) FROM segments WHERE replace(start_time, 'T', ' ') > replace(?, 'T', ' ')",
+		utc(cutoff).Format("2006-01-02 15:04:05"),
+	).Scan(&bytes)
+	if err != nil {
+		return 0, err
+	}
+	return bytes.Int64, nil
+}
+
+// OldestSegmentTime returns the start_time of the oldest segment, or the zero
+// time if there are no segments.
+func (d *DB) OldestSegmentTime() (time.Time, error) {
+	var oldest sql.NullString
+	err := d.db.QueryRow("SELECT MIN(start_time) FROM segments").Scan(&oldest)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !oldest.Valid {
+		return time.Time{}, nil
+	}
+	for _, layout := range []string{
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02T15:04:05.999999999Z",
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+	} {
+		if t, err := time.Parse(layout, oldest.String); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unparseable start_time: %s", oldest.String)
+}
+
 // GetSetting retrieves the value for a key from the kv_store.
 // Returns an empty string (no error) when the key does not exist.
 func (d *DB) GetSetting(key string) (string, error) {
