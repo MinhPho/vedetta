@@ -52,7 +52,7 @@ type FaceRecognizer struct {
 type FaceRecognizerConfig struct {
 	SCRFDModelPath      string  // path to SCRFD ONNX model (optional, auto-download)
 	MobileFaceNetPath   string  // path to MobileFaceNet ONNX model (optional, auto-download)
-	MinFaceSize         int     // minimum face height in pixels (default 60)
+	MinFaceSize         int     // minimum face height in pixels (default 30)
 	MatchThreshold      float64 // cosine similarity threshold (default 0.55)
 	CropDir             string  // directory to save aligned face crops
 }
