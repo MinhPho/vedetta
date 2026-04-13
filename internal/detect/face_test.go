@@ -208,6 +208,32 @@ func TestPrepareFaceNetInput_Range(t *testing.T) {
 	}
 }
 
+func TestPrepareSCRFDInput_SubImage(t *testing.T) {
+	fr := &FaceRecognizer{}
+
+	// Simulate what happens in production: the full camera frame is 640x360,
+	// and cropRegion returns a SubImage with non-zero Bounds.Min.
+	frame := image.NewRGBA(image.Rect(0, 0, 640, 360))
+	for y := range 360 {
+		for x := range 640 {
+			frame.SetRGBA(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 128, A: 255})
+		}
+	}
+
+	// Crop a person region in the lower-right quadrant (non-zero Min.X, Min.Y).
+	// Before the fix, this panicked with "index out of range" because
+	// prepareSCRFDInput double-counted the SubImage offset.
+	crop := cropRegion(frame, [4]int{200, 150, 500, 350})
+	if crop.Bounds().Dx() == 0 {
+		t.Fatal("crop is empty")
+	}
+
+	buf, _, _, _ := fr.prepareSCRFDInput(crop)
+	if len(buf) != 3*640*640 {
+		t.Fatalf("buffer size = %d, want %d", len(buf), 3*640*640)
+	}
+}
+
 func TestPrepareSCRFDInput_Dimensions(t *testing.T) {
 	fr := &FaceRecognizer{}
 

@@ -19,7 +19,7 @@ const (
 	scrfdInputSize     = 640
 	faceNetInputSize   = 112
 	embeddingDim       = 512
-	defaultMinFaceSize = 60
+	defaultMinFaceSize = 30
 	defaultMatchThresh = 0.55
 )
 
@@ -263,7 +263,7 @@ func (fr *FaceRecognizer) prepareSCRFDInput(img *image.RGBA) ([]float32, float64
 				srcX = bounds.Dx() - 1
 			}
 
-			srcIdx := (srcY+bounds.Min.Y)*img.Stride + (srcX+bounds.Min.X)*4
+			srcIdx := srcY*img.Stride + srcX*4
 			r := (float32(img.Pix[srcIdx+0]) - 127.5) / 128.0
 			g := (float32(img.Pix[srcIdx+1]) - 127.5) / 128.0
 			b := (float32(img.Pix[srcIdx+2]) - 127.5) / 128.0
