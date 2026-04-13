@@ -142,11 +142,6 @@ func (dc *DetectConsumer) OnVideoRTP(pkt *rtp.Packet) {
 		dc.idrCount = 0
 		dc.lastLog = time.Now()
 	}
-	// Rate limit
-	if time.Since(dc.lastFrame) < dc.frameDelay {
-		dc.mu.Unlock()
-		return
-	}
 	dc.mu.Unlock()
 
 	isRandomAccess := h264.IsRandomAccess(au)
@@ -213,17 +208,27 @@ func (dc *DetectConsumer) OnVideoRTP(pkt *rtp.Packet) {
 		nalStream = append(nalStream, nalu...)
 	}
 
+	// Always decode every access unit to keep the H.264 reference frame
+	// chain intact. Skipping P-frames before decode breaks the Decoded
+	// Picture Buffer, causing subsequent P-frames to fail and leaving
+	// the decoder able to produce output only on IDR keyframes.
 	ycbcr := dc.h264Dec.Decode(nalStream)
 	if ycbcr == nil {
 		return
 	}
 
-	rgb24 := ycbcrToRGB24Scaled(ycbcr, dc.width, dc.height)
-
 	dc.mu.Lock()
-	dc.lastFrame = time.Now()
 	dc.frameCount++
+	// Rate-limit output: decode every frame to maintain decoder state,
+	// but only convert and send at the configured FPS.
+	if time.Since(dc.lastFrame) < dc.frameDelay {
+		dc.mu.Unlock()
+		return
+	}
+	dc.lastFrame = time.Now()
 	dc.mu.Unlock()
+
+	rgb24 := ycbcrToRGB24Scaled(ycbcr, dc.width, dc.height)
 
 	select {
 	case dc.frameCh <- RawFrame{Data: rgb24, Width: dc.width, Height: dc.height}:
