@@ -99,6 +99,7 @@ type DetectConfig struct {
 	Motion               MotionConfig `yaml:"motion"`
 	Labels               []string     `yaml:"labels"`                 // Only emit events for these labels; empty = all
 	ObjectMatchThreshold float64      `yaml:"object_match_threshold"` // Cosine similarity threshold for object re-ID (0.0-1.0)
+	MinFaceSize          int          `yaml:"min_face_size"`          // Minimum face height in pixels for recognition (default 30)
 }
 
 type MotionConfig struct {

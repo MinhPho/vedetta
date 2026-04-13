@@ -309,7 +309,8 @@ func initSubsystems(ctx context.Context, cancel context.CancelFunc, cfg *config.
 	sub.detector = detect.New(cfg.Detect)
 
 	fr, frErr := detect.NewFaceRecognizer(detect.FaceRecognizerConfig{
-		CropDir: filepath.Join(cfg.Events.SnapshotPath, "faces"),
+		CropDir:     filepath.Join(cfg.Events.SnapshotPath, "faces"),
+		MinFaceSize: cfg.Detect.MinFaceSize,
 	})
 	if frErr != nil {
 		slog.Warn("face recognition disabled", "error", frErr)
