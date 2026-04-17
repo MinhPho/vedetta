@@ -1,0 +1,30 @@
+name: Build EdgeTPU Image
+
+on:
+  push:
+    branches: [feature/tflite-edgetpu-backend]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    container:
+      image: docker:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Forgejo registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login git.homelab.minhpho.tech -u ${{ github.actor }} --password-stdin
+
+      - name: Build EdgeTPU image
+        run: |
+          export DOCKER_BUILDKIT=1
+          docker build \
+            -f Dockerfile.edgetpu \
+            -t git.homelab.minhpho.tech/minhpho/vedetta:edgetpu \
+            -t git.homelab.minhpho.tech/minhpho/vedetta:edgetpu-${{ github.sha }} \
+            .
+
+      - name: Push to registry
+        run: |
+          docker push git.homelab.minhpho.tech/minhpho/vedetta:edgetpu
+          docker push git.homelab.minhpho.tech/minhpho/vedetta:edgetpu-${{ github.sha }}
