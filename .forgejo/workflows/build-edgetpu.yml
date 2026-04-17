@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Login to Forgejo registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login git.homelab.minhpho.tech -u ${{ github.actor }} --password-stdin
+        run: echo "${{ secrets.FORGEJO_TOKEN }}" | docker login git.homelab.minhpho.tech -u ${{ github.actor }} --password-stdin
 
       - name: Build EdgeTPU image
         run: |
