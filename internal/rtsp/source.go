@@ -207,7 +207,18 @@ func (s *Source) connectOnce(ctx context.Context) error {
 	s.connected = true
 	s.mu.Unlock()
 
-	slog.Info("RTSP connected", "url", SanitizeURL(s.url))
+	videoCodec, audioCodec := "none", "none"
+	if vt := s.VideoTrack(); vt != nil {
+		videoCodec = vt.Codec
+	}
+	if at := s.AudioTrack(); at != nil {
+		audioCodec = at.Codec
+	}
+	slog.Info("RTSP connected",
+		"url", SanitizeURL(s.url),
+		"video_codec", videoCodec,
+		"audio_codec", audioCodec,
+	)
 
 	// Wait blocks until the client encounters a fatal error or is closed
 	waitDone := make(chan error, 1)
