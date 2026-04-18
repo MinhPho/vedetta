@@ -5,7 +5,9 @@ import (
 	"image"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rvben/vedetta/internal/config"
 )
@@ -15,18 +17,24 @@ import (
 type mockBackend struct {
 	name     string
 	output   []float32
-	runCount int
+	runCount int32
 	closed   int
 	runErr   error
+	blockCh  chan struct{} // if non-nil, Run blocks until this channel is closed
 }
 
 func (m *mockBackend) Run(input []float32) ([]float32, error) {
-	m.runCount++
+	atomic.AddInt32(&m.runCount, 1)
+	if m.blockCh != nil {
+		<-m.blockCh
+	}
 	if m.runErr != nil {
 		return nil, m.runErr
 	}
 	return m.output, nil
 }
+
+func (m *mockBackend) runs() int { return int(atomic.LoadInt32(&m.runCount)) }
 
 func (m *mockBackend) Close() { m.closed++ }
 
@@ -274,8 +282,8 @@ func TestDetector_BackendError(t *testing.T) {
 	if detections := d.Detect(img); detections != nil {
 		t.Fatalf("expected nil on backend error, got %d", len(detections))
 	}
-	if mock.runCount != 1 {
-		t.Fatalf("expected 1 run, got %d", mock.runCount)
+	if mock.runs() != 1 {
+		t.Fatalf("expected 1 run, got %d", mock.runs())
 	}
 }
 
@@ -324,6 +332,119 @@ func TestDetector_ConcurrentDetect(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// --- Backend hang recovery (CGO timeout) ---
+
+// TestDetector_Detect_BackendHangs_CallerTimesOut verifies that if backend.Run
+// hangs (CGO calls cannot be canceled from Go), the calling goroutine returns
+// nil within the configured per-call timeout instead of blocking forever.
+func TestDetector_Detect_BackendHangs_CallerTimesOut(t *testing.T) {
+	blockCh := make(chan struct{})
+	defer close(blockCh)
+
+	mock := &mockBackend{name: "blocking", blockCh: blockCh}
+	d := &Detector{
+		backend:      mock,
+		enabled:      true,
+		config:       config.DetectConfig{ScoreThreshold: 0.5},
+		inferTimeout: 200 * time.Millisecond,
+		wedgeLimit:   10 * time.Second,
+		onWedged:     func() {},
+	}
+	defer d.Close()
+
+	img := image.NewRGBA(image.Rect(0, 0, 320, 240))
+
+	start := time.Now()
+	detections := d.Detect(img)
+	elapsed := time.Since(start)
+
+	if detections != nil {
+		t.Errorf("expected nil on backend hang, got %d detections", len(detections))
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Detect blocked for %v, expected ~%v timeout", elapsed, d.inferTimeout)
+	}
+}
+
+// TestDetector_Detect_BackendHangs_DoesNotBlockOtherCallers verifies that one
+// hung backend call does not freeze subsequent callers — without this, a single
+// CGO hang freezes the entire detection pipeline across all cameras.
+func TestDetector_Detect_BackendHangs_DoesNotBlockOtherCallers(t *testing.T) {
+	blockCh := make(chan struct{})
+	defer close(blockCh)
+
+	mock := &mockBackend{name: "blocking", blockCh: blockCh}
+	d := &Detector{
+		backend:      mock,
+		enabled:      true,
+		config:       config.DetectConfig{ScoreThreshold: 0.5},
+		inferTimeout: 200 * time.Millisecond,
+		wedgeLimit:   10 * time.Second,
+		onWedged:     func() {},
+	}
+	defer d.Close()
+
+	img := image.NewRGBA(image.Rect(0, 0, 320, 240))
+
+	// First caller starts the wedged inference and will time out.
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		d.Detect(img)
+	})
+
+	// Give the first caller time to occupy the worker.
+	time.Sleep(50 * time.Millisecond)
+
+	// Second caller must not be blocked behind the wedged backend.
+	start := time.Now()
+	detections := d.Detect(img)
+	elapsed := time.Since(start)
+
+	if detections != nil {
+		t.Errorf("expected nil while backend wedged, got %d detections", len(detections))
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("second Detect blocked for %v while backend wedged", elapsed)
+	}
+
+	wg.Wait()
+}
+
+// TestDetector_Detect_Watchdog_FiresOnSustainedHang verifies the watchdog
+// triggers onWedged after wedgeLimit elapses on a single hung call. In
+// production this calls os.Exit(1) so the process restarts with fresh state.
+func TestDetector_Detect_Watchdog_FiresOnSustainedHang(t *testing.T) {
+	blockCh := make(chan struct{})
+	defer close(blockCh)
+
+	wedgedCh := make(chan struct{}, 1)
+	mock := &mockBackend{name: "blocking", blockCh: blockCh}
+	d := &Detector{
+		backend:      mock,
+		enabled:      true,
+		config:       config.DetectConfig{ScoreThreshold: 0.5},
+		inferTimeout: 50 * time.Millisecond,
+		wedgeLimit:   200 * time.Millisecond,
+		onWedged: func() {
+			select {
+			case wedgedCh <- struct{}{}:
+			default:
+			}
+		},
+	}
+	defer d.Close()
+
+	img := image.NewRGBA(image.Rect(0, 0, 320, 240))
+	go d.Detect(img) // hangs forever in mock
+
+	select {
+	case <-wedgedCh:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchdog did not fire after wedgeLimit")
+	}
 }
 
 // --- CAPIBackend stub ---
