@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/rvben/vedetta/internal/config"
 )
@@ -18,15 +19,38 @@ type Detection struct {
 	Box   [4]int // x1, y1, x2, y2
 }
 
+// inferRequest is sent from a calling goroutine to the inference worker.
+// The worker writes the result back on resultCh; if the caller has already
+// timed out, the worker drops the result via non-blocking send.
+type inferRequest struct {
+	input    []float32
+	resultCh chan inferResult
+}
+
+type inferResult struct {
+	output []float32
+	err    error
+}
+
+const (
+	defaultInferTimeout = 2 * time.Second
+	defaultWedgeLimit   = 30 * time.Second
+)
+
 // Detector runs object detection on image frames.
 // It selects the best available backend automatically.
-// Safe for concurrent use by multiple camera goroutines.
+//
+// Backend calls run on a single dedicated worker goroutine so that a wedged
+// CGO call (notably TFLite/EdgeTPU's TfLiteInterpreterInvoke, which has been
+// observed to hang indefinitely in production) cannot block the calling
+// goroutine and cannot freeze subsequent callers from other cameras. A
+// per-call timeout returns nil to the caller; a watchdog forces process exit
+// if a single call wedges for too long, so docker can restart with fresh
+// interpreter state.
 type Detector struct {
-	mu           sync.Mutex
 	config       config.DetectConfig
 	backend      Backend
 	enabled      bool
-	inputBuf     []float32       // reusable preprocessing buffer, guarded by mu
 	labelAllowed map[string]bool // nil = allow all labels
 
 	// Model type determines pre/post-processing pipeline.
@@ -35,9 +59,23 @@ type Detector struct {
 	modelType string
 
 	// SSD-specific fields (only set when modelType == "ssd").
-	ssdLayout    SSDOutputLayout
-	ssdInputW    int // model input width (e.g. 320 for EfficientDet-Lite0)
-	ssdInputH    int // model input height
+	ssdLayout SSDOutputLayout
+	ssdInputW int // model input width (e.g. 320 for EfficientDet-Lite0)
+	ssdInputH int // model input height
+
+	// Worker plumbing — initialized lazily on first inference call.
+	workerOnce sync.Once
+	stopOnce   sync.Once
+	requestCh  chan inferRequest
+	stopCh     chan struct{}
+
+	// Per-call timeout returned to caller as nil detections.
+	// Watchdog limit forces process exit if a single backend call exceeds it.
+	// onWedged is the watchdog action; defaults to os.Exit(1). Tests inject
+	// a no-op so they don't kill the test binary.
+	inferTimeout time.Duration
+	wedgeLimit   time.Duration
+	onWedged     func()
 }
 
 func New(cfg config.DetectConfig) *Detector {
@@ -89,9 +127,77 @@ func (d *Detector) Available() bool {
 	return d != nil && d.enabled
 }
 
+// ensureWorker lazily starts the inference worker and applies defaults.
+func (d *Detector) ensureWorker() {
+	d.workerOnce.Do(func() {
+		if d.inferTimeout == 0 {
+			d.inferTimeout = defaultInferTimeout
+		}
+		if d.wedgeLimit == 0 {
+			d.wedgeLimit = defaultWedgeLimit
+		}
+		if d.onWedged == nil {
+			limit := d.wedgeLimit
+			d.onWedged = func() {
+				slog.Error("inference wedged beyond limit, exiting for restart",
+					"limit", limit)
+				os.Exit(1)
+			}
+		}
+		d.requestCh = make(chan inferRequest, 1)
+		d.stopCh = make(chan struct{})
+		go d.workerLoop()
+	})
+}
+
+// workerLoop owns d.backend exclusively. It serializes inference calls and
+// arms a watchdog timer around each call so a wedged CGO call eventually
+// triggers a process exit.
+func (d *Detector) workerLoop() {
+	for {
+		select {
+		case <-d.stopCh:
+			return
+		case req, ok := <-d.requestCh:
+			if !ok {
+				return
+			}
+			wedge := time.AfterFunc(d.wedgeLimit, d.onWedged)
+			output, err := d.backend.Run(req.input)
+			wedge.Stop()
+			// Caller may have already timed out; never block the worker.
+			select {
+			case req.resultCh <- inferResult{output: output, err: err}:
+			default:
+			}
+		}
+	}
+}
+
+// runBackend submits an inference request and waits up to inferTimeout for a
+// result. If the worker is already busy with a wedged call, returns
+// immediately with an error so the caller doesn't pile up behind the wedge.
+func (d *Detector) runBackend(input []float32) ([]float32, error) {
+	d.ensureWorker()
+
+	resultCh := make(chan inferResult, 1)
+	select {
+	case d.requestCh <- inferRequest{input: input, resultCh: resultCh}:
+	default:
+		return nil, fmt.Errorf("inference busy (previous call wedged)")
+	}
+
+	select {
+	case res := <-resultCh:
+		return res.output, res.err
+	case <-time.After(d.inferTimeout):
+		return nil, fmt.Errorf("inference timeout after %v", d.inferTimeout)
+	}
+}
+
 // Detect runs object detection on a frame and returns detections above threshold.
-// Safe for concurrent use — serializes access to the backend.
-// Recovers from panics in the inference backend to prevent server crashes.
+// Safe for concurrent use — inference is serialized on a worker goroutine.
+// Returns nil on backend error, panic, hang, or busy worker.
 func (d *Detector) Detect(img *image.RGBA) (result []Detection) {
 	if !d.enabled {
 		return nil
@@ -104,20 +210,14 @@ func (d *Detector) Detect(img *image.RGBA) (result []Detection) {
 		}
 	}()
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	switch d.modelType {
 	case "ssd":
 		bounds := img.Bounds()
-		bufSize := d.ssdInputW * d.ssdInputH * 3
-		if d.inputBuf == nil || len(d.inputBuf) < bufSize {
-			d.inputBuf = make([]float32, bufSize)
-		}
+		buf := make([]float32, d.ssdInputW*d.ssdInputH*3)
 		inputData, scale, padX, padY := prepareSSDInputRGBA(
-			d.inputBuf, img.Pix, bounds.Dx(), bounds.Dy(), d.ssdInputW, d.ssdInputH)
+			buf, img.Pix, bounds.Dx(), bounds.Dy(), d.ssdInputW, d.ssdInputH)
 
-		output, err := d.backend.Run(inputData)
+		output, err := d.runBackend(inputData)
 		if err != nil {
 			slog.Error("inference failed", "error", err)
 			return nil
@@ -126,12 +226,10 @@ func (d *Detector) Detect(img *image.RGBA) (result []Detection) {
 			d.config.ScoreThreshold, bounds.Dx(), bounds.Dy(), scale, padX, padY))
 
 	default: // "yolo"
-		if d.inputBuf == nil || len(d.inputBuf) < 3*modelInputSize*modelInputSize {
-			d.inputBuf = make([]float32, 3*modelInputSize*modelInputSize)
-		}
-		inputData, scale, padX, padY := prepareInputInto(d.inputBuf, img)
+		buf := make([]float32, 3*modelInputSize*modelInputSize)
+		inputData, scale, padX, padY := prepareInputInto(buf, img)
 
-		output, err := d.backend.Run(inputData)
+		output, err := d.runBackend(inputData)
 		if err != nil {
 			slog.Error("inference failed", "error", err)
 			return nil
@@ -142,8 +240,8 @@ func (d *Detector) Detect(img *image.RGBA) (result []Detection) {
 
 // DetectRGB24 runs object detection directly on RGB24 frame data,
 // avoiding the intermediate RGBA conversion.
-// Safe for concurrent use — serializes access to the backend.
-// Recovers from panics in the inference backend to prevent server crashes.
+// Safe for concurrent use — inference is serialized on a worker goroutine.
+// Returns nil on backend error, panic, hang, or busy worker.
 func (d *Detector) DetectRGB24(data []byte, w, h int) (result []Detection) {
 	if !d.enabled {
 		return nil
@@ -156,18 +254,12 @@ func (d *Detector) DetectRGB24(data []byte, w, h int) (result []Detection) {
 		}
 	}()
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
 	switch d.modelType {
 	case "ssd":
-		bufSize := d.ssdInputW * d.ssdInputH * 3
-		if d.inputBuf == nil || len(d.inputBuf) < bufSize {
-			d.inputBuf = make([]float32, bufSize)
-		}
-		inputData, scale, padX, padY := prepareSSDInput(d.inputBuf, data, w, h, d.ssdInputW, d.ssdInputH)
+		buf := make([]float32, d.ssdInputW*d.ssdInputH*3)
+		inputData, scale, padX, padY := prepareSSDInput(buf, data, w, h, d.ssdInputW, d.ssdInputH)
 
-		output, err := d.backend.Run(inputData)
+		output, err := d.runBackend(inputData)
 		if err != nil {
 			slog.Error("inference failed", "error", err)
 			return nil
@@ -176,12 +268,10 @@ func (d *Detector) DetectRGB24(data []byte, w, h int) (result []Detection) {
 			d.config.ScoreThreshold, w, h, scale, padX, padY))
 
 	default: // "yolo"
-		if d.inputBuf == nil || len(d.inputBuf) < 3*modelInputSize*modelInputSize {
-			d.inputBuf = make([]float32, 3*modelInputSize*modelInputSize)
-		}
-		inputData, scale, padX, padY := prepareInputFromRGB24Into(d.inputBuf, data, w, h)
+		buf := make([]float32, 3*modelInputSize*modelInputSize)
+		inputData, scale, padX, padY := prepareInputFromRGB24Into(buf, data, w, h)
 
-		output, err := d.backend.Run(inputData)
+		output, err := d.runBackend(inputData)
 		if err != nil {
 			slog.Error("inference failed", "error", err)
 			return nil
@@ -191,6 +281,11 @@ func (d *Detector) DetectRGB24(data []byte, w, h int) (result []Detection) {
 }
 
 func (d *Detector) Close() {
+	d.stopOnce.Do(func() {
+		if d.stopCh != nil {
+			close(d.stopCh)
+		}
+	})
 	if d.backend != nil {
 		d.backend.Close()
 	}
@@ -256,10 +351,10 @@ func (d *Detector) initSSDLayout(b *TFLiteBackend) error {
 		return fmt.Errorf("ssd model requires 4 output tensors, got %d", b.OutputTensorCount())
 	}
 
-	boxesSize := b.OutputTensorSize(0)  // N * 4
-	classSize := b.OutputTensorSize(1)  // N
-	scoreSize := b.OutputTensorSize(2)  // N
-	countSize := b.OutputTensorSize(3)  // 1
+	boxesSize := b.OutputTensorSize(0) // N * 4
+	classSize := b.OutputTensorSize(1) // N
+	scoreSize := b.OutputTensorSize(2) // N
+	countSize := b.OutputTensorSize(3) // 1
 
 	if classSize == 0 || boxesSize != classSize*4 {
 		return fmt.Errorf("ssd output layout mismatch: boxes=%d classes=%d scores=%d count=%d",
