@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Cameras    []CameraConfig   `yaml:"cameras"`
 	Detect     DetectConfig     `yaml:"detect"`
+	Audio      AudioConfig      `yaml:"audio"`
 	Recording  RecordingConfig  `yaml:"recording"`
 	Events     EventConfig      `yaml:"events"`
 	Storage    StorageConfig    `yaml:"storage"`
@@ -79,6 +80,16 @@ type DetectConfig struct {
 	Labels               []string     `yaml:"labels"`                 // Only emit events for these labels; empty = all
 	ObjectMatchThreshold float64      `yaml:"object_match_threshold"` // Cosine similarity threshold for object re-ID (0.0-1.0)
 	MinFaceSize          int          `yaml:"min_face_size"`          // Minimum face height in pixels for recognition (default 30)
+}
+
+// AudioConfig configures the YAMNet-based sound recognition pipeline.
+// Disabled by default — opt in by setting Enabled: true.
+type AudioConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	ModelPath     string        `yaml:"model_path"`     // Optional override; default downloads YAMNet
+	ScoreThreshold float32      `yaml:"score_threshold"` // Min YAMNet score to emit (default 0.5)
+	Cooldown      time.Duration `yaml:"cooldown"`       // Per-(camera, label) suppression window (default 30s)
+	Labels        []string      `yaml:"labels"`         // Allowlist; empty = curated security default
 }
 
 type MotionConfig struct {
@@ -162,6 +173,11 @@ func Defaults() *Config {
 				MinRegionScore:  0.02,
 			},
 			Labels: []string{"person", "car", "truck", "bus", "motorcycle", "bicycle", "dog", "cat", "bird"},
+		},
+		Audio: AudioConfig{
+			Enabled:        false,
+			ScoreThreshold: 0.5,
+			Cooldown:       30 * time.Second,
 		},
 		Recording: RecordingConfig{
 			Path:             "./recordings",

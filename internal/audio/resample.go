@@ -4,6 +4,14 @@ package audio
 
 import "math"
 
+// WindowSamples is YAMNet's input shape: 0.96 s of audio at 16 kHz mono,
+// rounded up to the bundled CPU model preset. Defined once here so producers
+// (media.AudioConsumer) and consumers (detect.YAMNetBackend) cannot drift.
+const WindowSamples = 15600
+
+// TargetRate is YAMNet's expected sample rate.
+const TargetRate = 16000
+
 // ResampleLinear converts in (PCM int16, single channel) from srcRate to dstRate
 // using linear interpolation. Returns a fresh slice; in is not modified.
 //

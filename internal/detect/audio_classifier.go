@@ -1,7 +1,6 @@
 package detect
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -13,9 +12,12 @@ import (
 // input shape (15600 float32 samples in [-1, 1] at 16 kHz mono). Output is
 // per-class scores in [0, 1] with a fixed length matching the model's label
 // count (521 for YAMNet/AudioSet).
+//
+// The signature is intentionally identical to the video Backend interface so
+// the existing TFLiteBackend can be reused for YAMNet without changes.
 type AudioBackend interface {
 	Run(window []float32) (scores []float32, err error)
-	Close() error
+	Close()
 	Name() string
 }
 
@@ -120,17 +122,14 @@ func (c *AudioClassifier) Classify(window []float32) (scores []float32) {
 
 // Close stops the worker goroutine and releases the backend. The backend
 // reference is preserved so an in-flight workerLoop call doesn't nil-deref.
-func (c *AudioClassifier) Close() error {
+func (c *AudioClassifier) Close() {
 	if c.backend == nil {
-		return nil
+		return
 	}
 	c.stopOnce.Do(func() {
 		if c.stopCh != nil {
 			close(c.stopCh)
 		}
 	})
-	if err := c.backend.Close(); err != nil {
-		return fmt.Errorf("audio backend close: %w", err)
-	}
-	return nil
+	c.backend.Close()
 }

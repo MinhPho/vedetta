@@ -10,13 +10,11 @@ import (
 	"github.com/rvben/vedetta/internal/audio"
 )
 
+// AudioWindowSamples and AudioTargetRate alias the canonical constants in
+// internal/audio so callers in this package can use them without the rename.
 const (
-	// YAMNet input: 0.96 s of audio at 16 kHz = 15360 samples. We round up to
-	// 15600 (the window size used by Google's reference TFLite YAMNet preset)
-	// to match the bundled CPU model's expected input shape.
-	AudioWindowSamples = 15600
-	// AudioTargetRate is YAMNet's expected sample rate.
-	AudioTargetRate = 16000
+	AudioWindowSamples = audio.WindowSamples
+	AudioTargetRate    = audio.TargetRate
 )
 
 // AudioDecoder turns RTP audio packets into PCM int16 samples plus metadata.

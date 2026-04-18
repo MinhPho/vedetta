@@ -29,7 +29,7 @@ func (m *mockAudioBackend) Run(_ []float32) ([]float32, error) {
 	return m.scores, nil
 }
 
-func (m *mockAudioBackend) Close() error { m.closed++; return nil }
+func (m *mockAudioBackend) Close()       { m.closed++ }
 func (m *mockAudioBackend) Name() string { return "mock" }
 
 func TestAudioClassifier_HappyPath(t *testing.T) {
@@ -168,9 +168,7 @@ func TestAudioClassifier_CloseStopsWorker(t *testing.T) {
 	c.onWedged = func() {}
 
 	_ = c.Classify(nil) // start the worker
-	if err := c.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
+	c.Close()
 	if mock.closed != 1 {
 		t.Errorf("backend Close called %d times, want 1", mock.closed)
 	}
