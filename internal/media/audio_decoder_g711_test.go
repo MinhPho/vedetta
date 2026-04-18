@@ -8,7 +8,7 @@ import (
 
 func TestG711Decoder_ULaw(t *testing.T) {
 	dec := NewG711Decoder(false) // false = μ-law
-	defer dec.Close()
+	defer func() { _ = dec.Close() }()
 
 	pkt := &rtp.Packet{Payload: []byte{0xFF, 0xFF, 0xFF, 0xFF}}
 	samples, rate, channels, err := dec.Decode(pkt)
@@ -33,7 +33,7 @@ func TestG711Decoder_ULaw(t *testing.T) {
 
 func TestG711Decoder_ALaw(t *testing.T) {
 	dec := NewG711Decoder(true) // true = A-law
-	defer dec.Close()
+	defer func() { _ = dec.Close() }()
 
 	pkt := &rtp.Packet{Payload: []byte{0xD5, 0xD5}}
 	samples, rate, _, err := dec.Decode(pkt)
@@ -50,7 +50,7 @@ func TestG711Decoder_ALaw(t *testing.T) {
 
 func TestG711Decoder_EmptyPayload(t *testing.T) {
 	dec := NewG711Decoder(false)
-	defer dec.Close()
+	defer func() { _ = dec.Close() }()
 
 	samples, _, _, err := dec.Decode(&rtp.Packet{Payload: nil})
 	if err != nil {

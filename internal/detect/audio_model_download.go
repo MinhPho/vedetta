@@ -16,10 +16,10 @@ const (
 	yamnetModelURL = "https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/latest/yamnet.tflite"
 )
 
-// downloadYAMNetModel returns the path to a cached YAMNet TFLite model,
+// DownloadYAMNetModel returns the path to a cached YAMNet TFLite model,
 // downloading once on first call. The download is atomic (rename from .tmp)
 // so a crashed download won't poison the cache on next start.
-func downloadYAMNetModel() (string, error) {
+func DownloadYAMNetModel() (string, error) {
 	cacheDir := modelCacheDir()
 	destPath := filepath.Join(cacheDir, yamnetModelFile)
 
@@ -38,7 +38,7 @@ func downloadYAMNetModel() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("download yamnet model: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download yamnet model: HTTP %d", resp.StatusCode)
@@ -55,12 +55,12 @@ func downloadYAMNetModel() (string, error) {
 		err = closeErr
 	}
 	if err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("write model: %w", err)
 	}
 
 	if err := os.Rename(tmp, destPath); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("rename model file: %w", err)
 	}
 

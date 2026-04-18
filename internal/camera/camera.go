@@ -85,6 +85,8 @@ type Camera struct {
 	faceCropDir    string
 	faceProcessed  map[int]time.Time
 	degradedReason string
+
+	audioDetector AudioDetectorAPI
 }
 
 // CameraStatus represents the current status of a camera.
@@ -246,12 +248,22 @@ func (c *Camera) saveCachedSnapshot() {
 	c.mu.Unlock()
 }
 
+// SetAudioDetector enables sound recognition for this camera. Must be called
+// before Start; calling later has no effect on the already-spawned goroutine.
+// nil disables audio (the default).
+func (c *Camera) SetAudioDetector(d AudioDetectorAPI) {
+	c.audioDetector = d
+}
+
 // Start begins reading frames from the RTSP stream via the Hub.
 func (c *Camera) Start(ctx context.Context) {
 	slog.Info("starting camera", "name", c.config.Name, "url", rtsp.SanitizeURL(c.config.URL))
 	c.loadCachedSnapshot()
 
 	go c.readFrames(ctx)
+	if c.audioDetector != nil {
+		go c.runAudio(ctx, c.hub.GetOrCreate(c.config.URL), c.audioDetector)
+	}
 }
 
 // readFrames connects to the RTSP stream via the Hub and processes detection frames.
@@ -393,7 +405,7 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 
 		// Generate one annotated frame with ALL bounding boxes (reused for all new events).
 		// Prefer the full-resolution main stream frame; fall back to the detection frame.
-		var cleanFrame *image.RGBA   // clean snapshot for disk (embeddings, crops)
+		var cleanFrame *image.RGBA     // clean snapshot for disk (embeddings, crops)
 		var annotatedFrame *image.RGBA // annotated snapshot for display (MQTT)
 		if c.eventSnapDir != "" {
 			hasNewTrack := false
@@ -508,7 +520,7 @@ func (c *Camera) processFrame(buf []byte, w, h int) {
 				if cleanFrame != nil {
 					snapFile := filepath.Join(c.eventSnapDir, c.config.Name, eventID+".jpg")
 					ev.SnapshotPath = snapFile
-					ev.SnapshotImage = cleanFrame // clean frame for disk (embeddings, crops)
+					ev.SnapshotImage = cleanFrame      // clean frame for disk (embeddings, crops)
 					ev.AnnotatedImage = annotatedFrame // annotated for MQTT display
 					// Scale box to snapshot resolution if different from detect resolution
 					snapW := cleanFrame.Bounds().Dx()

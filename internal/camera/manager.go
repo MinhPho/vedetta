@@ -12,21 +12,22 @@ import (
 
 // Manager manages all camera streams.
 type Manager struct {
-	cameras        map[string]*Camera
-	order          []string // config-file order
-	detector       *detect.Detector
-	motionCfg      config.MotionConfig
-	events         chan<- Event
-	eventEnds      chan<- EventEnd
-	presenceEvents chan<- PresenceEvent
-	hub            *rtsp.Hub
-	snapshotPath   string
+	cameras         map[string]*Camera
+	order           []string // config-file order
+	detector        *detect.Detector
+	motionCfg       config.MotionConfig
+	events          chan<- Event
+	eventEnds       chan<- EventEnd
+	presenceEvents  chan<- PresenceEvent
+	hub             *rtsp.Hub
+	snapshotPath    string
 	snapshotQuality int
-	recordingPath  string
-	faceRecognizer *detect.FaceRecognizer
-	faceEvents     chan<- FaceEvent
-	faceCropDir    string
-	mu             sync.RWMutex
+	recordingPath   string
+	faceRecognizer  *detect.FaceRecognizer
+	faceEvents      chan<- FaceEvent
+	faceCropDir     string
+	audioDetector   AudioDetectorAPI
+	mu              sync.RWMutex
 }
 
 func NewManager(configs []config.CameraConfig, detector *detect.Detector, motion config.MotionConfig, events chan<- Event, eventEnds chan<- EventEnd, presenceEvents chan<- PresenceEvent, hub *rtsp.Hub, snapshotPath string, snapshotQuality int, recordingPath string, faceRecognizer *detect.FaceRecognizer, faceEvents chan<- FaceEvent, faceCropDir string) *Manager {
@@ -55,6 +56,18 @@ func NewManager(configs []config.CameraConfig, detector *detect.Detector, motion
 	}
 
 	return m
+}
+
+// SetAudioDetector enables sound recognition for all current and future
+// cameras managed by m. Pass nil to disable. Must be called before Start;
+// cameras already running will not pick up the change.
+func (m *Manager) SetAudioDetector(d AudioDetectorAPI) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.audioDetector = d
+	for _, cam := range m.cameras {
+		cam.SetAudioDetector(d)
+	}
 }
 
 func (m *Manager) Start(ctx context.Context) {
@@ -112,6 +125,9 @@ func (m *Manager) AddCamera(cfg config.CameraConfig) {
 	cam := NewCamera(cfg, m.detector, m.motionCfg, m.events, m.eventEnds, m.presenceEvents,
 		m.hub, m.snapshotPath, m.snapshotQuality, m.recordingPath,
 		m.faceRecognizer, m.faceEvents, m.faceCropDir)
+	if m.audioDetector != nil {
+		cam.SetAudioDetector(m.audioDetector)
+	}
 	m.cameras[cfg.Name] = cam
 	m.order = append(m.order, cfg.Name)
 }

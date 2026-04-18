@@ -34,17 +34,18 @@ import (
 // subsystems holds all initialized runtime components so both the normal and
 // setup-mode startup paths can share the same initialization logic.
 type subsystems struct {
-	mqttClient     *mqtt.Client
-	detector       *detect.Detector
-	faceRecognizer *detect.FaceRecognizer
-	objectEmbedder *detect.ObjectEmbedder
-	hub            *rtsp.Hub
-	recorder       *recording.Recorder
-	manager        *camera.Manager
-	events         chan camera.Event
-	eventEnds      chan camera.EventEnd
-	presenceEvents chan camera.PresenceEvent
-	faceEvents     chan camera.FaceEvent
+	mqttClient      *mqtt.Client
+	detector        *detect.Detector
+	faceRecognizer  *detect.FaceRecognizer
+	objectEmbedder  *detect.ObjectEmbedder
+	audioClassifier *detect.AudioClassifier
+	hub             *rtsp.Hub
+	recorder        *recording.Recorder
+	manager         *camera.Manager
+	events          chan camera.Event
+	eventEnds       chan camera.EventEnd
+	presenceEvents  chan camera.PresenceEvent
+	faceEvents      chan camera.FaceEvent
 }
 
 func main() {
@@ -322,6 +323,20 @@ func initSubsystems(ctx context.Context, cancel context.CancelFunc, cfg *config.
 
 	sub.manager = camera.NewManager(cfg.Cameras, sub.detector, cfg.Detect.Motion, sub.events, sub.eventEnds, sub.presenceEvents, sub.hub, cfg.Events.SnapshotPath, cfg.Events.SnapshotQuality, cfg.Recording.Path, sub.faceRecognizer, sub.faceEvents, filepath.Join(cfg.Events.SnapshotPath, "faces"))
 
+	if cfg.Audio.Enabled {
+		ac, ad, err := initAudioPipeline(cfg.Audio)
+		if err != nil {
+			slog.Warn("sound recognition disabled", "error", err)
+		} else {
+			sub.audioClassifier = ac
+			sub.manager.SetAudioDetector(ad)
+			slog.Info("sound recognition enabled",
+				"threshold", cfg.Audio.ScoreThreshold,
+				"cooldown", cfg.Audio.Cooldown,
+			)
+		}
+	}
+
 	// Sync zones from config to DB and load them into cameras
 	syncConfigZones(db, cfg.Cameras, sub.manager)
 
@@ -396,7 +411,44 @@ func closeSubsystems(sub *subsystems) {
 	if sub.faceRecognizer != nil {
 		sub.faceRecognizer.Close()
 	}
+	if sub.audioClassifier != nil {
+		sub.audioClassifier.Close()
+	}
 	sub.hub.Close()
+}
+
+// initAudioPipeline downloads the YAMNet model (or uses the configured
+// override), wraps it in an AudioClassifier (worker + watchdog), and returns
+// the wired AudioDetector ready to plug into the camera manager.
+func initAudioPipeline(cfg config.AudioConfig) (*detect.AudioClassifier, *detect.AudioDetector, error) {
+	modelPath := cfg.ModelPath
+	if modelPath == "" {
+		dl, err := detect.DownloadYAMNetModel()
+		if err != nil {
+			return nil, nil, fmt.Errorf("download yamnet: %w", err)
+		}
+		modelPath = dl
+	}
+
+	backend, err := detect.NewYAMNetBackend(modelPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("yamnet backend: %w", err)
+	}
+
+	labels, err := detect.EmbeddedYAMNetLabels()
+	if err != nil {
+		backend.Close()
+		return nil, nil, fmt.Errorf("yamnet labels: %w", err)
+	}
+
+	allowed := cfg.Labels
+	if len(allowed) == 0 {
+		allowed = detect.DefaultAudioLabels
+	}
+
+	classifier := detect.NewAudioClassifier(backend)
+	detector := detect.NewAudioDetector(classifier, labels, allowed, cfg.ScoreThreshold, cfg.Cooldown)
+	return classifier, detector, nil
 }
 
 // runEventLoop starts the goroutine that manages event lifecycles, including
